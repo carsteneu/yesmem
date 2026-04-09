@@ -1,0 +1,6 @@
+{"timestamp":"2026-03-27T07:57:11.639Z","type":"session_meta","payload":{"id":"test-codex-session-001","timestamp":"2026-03-27T07:57:06.851Z","cwd":"/home/testuser/projects/myapp"}}
+{"timestamp":"2026-03-27T07:57:11.640Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Please inspect the parser and implement Codex ingestion."}]}}
+{"timestamp":"2026-03-27T07:57:12.000Z","type":"reasoning","payload":{"summary":[{"text":"Need parser dispatch and source-aware storage."}]}}
+{"timestamp":"2026-03-27T07:57:12.500Z","type":"function_call","payload":{"name":"exec_command","arguments":{"cmd":"rg -n \"ParseSessionFile\" internal"}}}
+{"timestamp":"2026-03-27T07:57:13.100Z","type":"function_call_output","payload":{"call_id":"call_1","output":"Command: /bin/bash -lc 'rg -n \"ParseSessionFile\" internal'\ninternal/indexer/indexer.go:46: parser.ParseSessionFile(jsonlPath)"}}
+{"timestamp":"2026-03-27T07:57:14.200Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"I found the current Claude-specific parser entrypoint and will replace it with an auto-dispatch layer."}]}}

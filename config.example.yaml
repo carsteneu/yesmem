@@ -1,0 +1,259 @@
+# ============================================================================
+# YesMem Configuration
+# Long-term memory system for Claude Code
+# Copy to ~/.claude/yesmem/config.yaml and adjust
+# ============================================================================
+
+# --- Extraction Pipeline ---
+# Sessions are analyzed in multiple passes to extract knowledge.
+# Pass 1: Summarization (summarize_model) — compresses session chunks into summaries
+# Pass 2: Extraction (model) — extracts structured learnings from summaries
+# Quality: Refinement (quality_model) — deduplicates, rates, resolves contradictions
+# Narrative: Session handovers, persona, profiles (narrative_model)
+extraction:
+
+  # Pass 1 — Summarize model. Compresses raw session chunks into focused summaries.
+  # These summaries become the input for Pass 2 extraction.
+  # Haiku is ideal: summarization is a compression task, not creative.
+  # Shortnames: "haiku", "sonnet", "opus" — or full Anthropic model ID
+  # Haiku (~$1.50/mo) = fast, cheap, good at summarization
+  summarize_model: haiku
+
+  # Pass 2 — Extraction model. Reads summaries and extracts structured learnings.
+  # Shortnames: "haiku", "sonnet", "opus" — or full Anthropic model ID
+  # Haiku (~$6/mo)  = finds obvious things, cheapest
+  # Sonnet (~$21/mo) = understands context, good quality/cost balance
+  # Opus (~$104/mo)  = detects nuance, irony, implicit knowledge
+  model: sonnet
+
+  # Narrative generation — session handovers, project profiles, persona traits.
+  # Needs strong language understanding for coherent narrative text.
+  # Recommendation: Opus for best quality of generated text.
+  narrative_model: opus
+
+  # Quality refinement — deduplicates, rates relevance, resolves contradictions.
+  # Also used for Persona synthesis. Falls back to narrative_model if not set.
+  quality_model: sonnet
+
+  # How much session content is sent to the LLM:
+  # "full"        = everything (best quality, higher cost)
+  # "prefiltered" = rule-based pre-filter (saves tokens, may miss things)
+  mode: full
+
+  # Sessions larger than chunk_size tokens are split into parts
+  # and processed sequentially. Larger chunks = better context, more cost.
+  chunk_size: 25000
+
+  # Auto-extract learnings when a new session ends?
+  # If false: manual extraction via "yesmem extract" required.
+  auto_extract: true
+
+  # Only extract sessions from the last N days. 0 = all sessions.
+  # Useful for initial setup to avoid processing years of history.
+  # 30 days ≈ $15-30 vs potentially $500+ for all.
+  max_age_days: 0
+
+  # Max sessions to extract per daemon run. Prevents long-running extraction
+  # jobs from blocking the daemon. 0 = unlimited.
+  max_per_run: 30
+
+# --- LLM Backend & Budgets ---
+llm:
+  # LLM backend for extraction, evolution, and narrative generation.
+  # "auto" = if API key is available → use HTTP API, otherwise → use Claude CLI (default)
+  # "api"  = Anthropic HTTP API only (requires API key, see api section below)
+  # "cli"  = Claude CLI only (uses your Pro/Max/Team subscription quota, no API key needed)
+  #
+  # How to choose:
+  # - You have an API key → use "auto" or "api"
+  # - You have a Pro/Max/Team plan without API key → set provider: "cli"
+  #   The CLI provider calls the "claude" binary directly, so no API key is required.
+  #   Make sure "claude" is in your PATH, or set claude_binary below.
+  provider: auto
+
+  # Path to claude binary (only needed for provider: "cli" if not in PATH)
+  # claude_binary: /usr/local/bin/claude
+
+  # Daily spending limits per model tier (USD). Prevents cost explosion
+  # with many parallel sessions or large backlogs. 0 = no limit.
+  # Only applies to provider: "api" — CLI usage is covered by your subscription.
+  daily_budget_extract_usd: 5.0    # Budget for Pass 1 (extraction) + evolution
+  daily_budget_quality_usd: 2.0    # Budget for narrative + Pass 2 (quality)
+
+# --- Evolution ---
+# Automatic evolution of knowledge over time.
+evolution:
+
+  # Auto-detect contradictions between learnings and resolve them?
+  # e.g. older learning says "Feature X is broken", newer says "Feature X was fixed"
+  # → older gets marked as superseded.
+  auto_resolve: true
+
+  # How long "unfinished" learnings (open tasks, TODOs) stay active (days).
+  # After expiry they are archived. 0 = stay active forever.
+  unfinished_ttl_days: 30
+
+# --- Briefing ---
+# The briefing is generated at each session start and injected as system context.
+# It gives Claude access to relevant knowledge from past sessions.
+briefing:
+
+  # How many recent sessions appear with full details (messages, summary).
+  # Older sessions appear as one-liners only.
+  detailed_sessions: 3
+
+  # Time window for the "other projects" section (days).
+  # Shows activity in other projects so Claude can make cross-connections.
+  # 90 days survives longer vacations without losing context.
+  other_projects_days: 90
+
+  # Max briefing size in tokens. Safety limit so the briefing doesn't
+  # eat up all available context window space for the actual work.
+  max_tokens: 5000
+
+  # Similarity threshold for deduplicating learnings (0.0 - 1.0).
+  # Lower = more aggressive dedup (more gets recognized as duplicate).
+  # Higher = more conservative (only near-identical learnings are merged).
+  dedup_threshold: 0.4
+
+  # Max learnings per category (gotcha, decision, pattern, etc.)
+  # shown in the briefing. Rest is available via get_learnings().
+  max_per_category: 5
+
+  # Languages for stop-word filtering in dedup (ISO 639-1 codes).
+  # Stop words ("the", "a", "der", "die", "das") are ignored when comparing.
+  languages: [en]
+
+# --- Proxy (Infinite Thread) ---
+# The proxy sits between Claude Code and the Anthropic API.
+# It compresses old messages when the context window fills up,
+# allowing conversations to grow indefinitely without context loss.
+proxy:
+  enabled: true
+
+  # Port the proxy listens on. Claude Code connects here instead of
+  # directly to the Anthropic API (via ANTHROPIC_BASE_URL=http://localhost:9099).
+  listen: ":9099"
+
+  # Upstream API — where the proxy forwards requests to.
+  target: "https://api.anthropic.com"
+
+  # Compress when conversation context exceeds this token count.
+  # Lower = more frequent compression (saves cost, loses more detail).
+  # Higher = less frequent compression (better context, higher cost).
+  token_threshold: 250000
+
+  # Stub down to this floor token count during compaction.
+  # Lower = more aggressive compression per cycle.
+  token_minimum_threshold: 100000
+
+  # How many recent messages stay uncompressed during compaction.
+  # These are never compressed so the current working context is preserved.
+  keep_recent: 10
+
+  # Sawtooth caching keeps a frozen cached prefix between stub-cycles.
+  # Disable only for debugging or if upstream cache semantics change.
+  sawtooth_enabled: true
+
+  # Cache TTL for all injected cache_control blocks.
+  # "ephemeral" = 5 minutes, cheapest and safest
+  # "1h"        = 1 hour, survives pauses but costs more on cache writes
+  cache_ttl: "1h"
+
+  # Scale down input_tokens reported to Claude Code to suppress "Context low" warning.
+  # Claude Code has a hardcoded 180k token budget and warns at ~160k (89%).
+  # Since the proxy manages context compression, CC's warning is misleading.
+  # 0 = disabled (report real tokens), 0.7 = report 70% of actual tokens.
+  usage_deflation_factor: 0.7
+
+# --- Embedding (Semantic Search) ---
+# Vector embeddings enable semantic search over learnings.
+# "Find similar concepts" instead of just exact text search.
+embedding:
+  # "local" = local model (no API call, fast, free)
+  # "api"   = Anthropic/OpenAI embedding API (better quality, costs per call)
+  provider: local
+  local:
+    # Local embedding model (go:embed in binary, no download needed).
+    # multilingual-e5-small: 384d vectors, multilingual, ~80MB
+    model: multilingual-e5-small
+    cache_dir: ~/.claude/yesmem/models
+  vector_db:
+    persist_dir: ~/.claude/yesmem/vectors
+    collection: learnings
+
+# --- API ---
+api:
+  # Anthropic API key for extraction, evolution and narrative generation.
+  # Lookup order (first match wins):
+  #   1. ANTHROPIC_API_KEY environment variable
+  #   2. This config field (api_key below)
+  #   3. Auto-detected from Claude Code's config (~/.claude/config.json → primaryApiKey)
+  #
+  # If you don't have an API key (e.g. Pro/Max/Team plan), leave this empty
+  # and set llm.provider to "cli" — that uses the Claude CLI and your
+  # subscription quota instead of direct API calls.
+  api_key:
+
+# --- Cognitive Signals ---
+# The signal bus captures Claude's self-reflection during conversations.
+# Signal tools (_signal_learning_used, _signal_knowledge_gap, etc.) are injected
+# into the tool list and processed asynchronously after each response.
+signals:
+
+  # Enable cognitive signal processing. When disabled, signal tools are not
+  # injected and any signal tool calls from Claude are silently ignored.
+  enabled: true
+
+  # Signal processing mode:
+  # "reflection" = separate async API call to process signals (default)
+  mode: reflection
+
+  # Model for reflection calls. Haiku is sufficient (classification task).
+  # Options: haiku (default), sonnet, opus, or full model ID.
+  model: haiku
+
+  # How often to trigger signal reflection. 1 = every response, 3 = every 3rd.
+  # Higher values reduce cost but miss more signals.
+  every_n_turns: 1
+
+# --- ClaudeMD (Operative Reference) ---
+# Auto-generates a per-project operative reference file (yesmem-ops.md) that gets
+# included in CLAUDE.md. Contains architecture decisions, known pitfalls, patterns
+# and deployment notes distilled from session history.
+claudemd:
+
+  # Enable auto-generation of operative reference files.
+  enabled: true
+
+  # Max learnings per category included in the operative reference.
+  # Categories with more learnings are trimmed to the most relevant ones.
+  max_per_category:
+    gotcha: 15
+    pattern: 10
+    decision: 10
+    explicit_teaching: 5
+    pivot_moment: 5
+
+  # How often to regenerate the operative reference.
+  # Supports Go duration strings: "2h", "30m", "24h", etc.
+  refresh_interval: "2h"
+
+  # Minimum number of sessions a project needs before generating a reference.
+  # Prevents creating sparse/useless files for one-off projects.
+  min_sessions: 3
+
+  # Output filename (placed in project's .claude/ directory).
+  output_file: "yesmem-ops.md"
+
+  # Model for operative reference generation. Empty = use narrative_model.
+  # model: ""
+
+# --- Paths (optional) ---
+# All paths have sensible defaults under ~/.claude/yesmem/.
+# Only set these if you need a custom location.
+# paths:
+#   db: ~/.claude/yesmem/yesmem.db
+#   bleve_index: ~/.claude/yesmem/bleve-index
+#   archive: ~/.claude/yesmem/archive
+#   claude_projects: ~/.claude/projects
