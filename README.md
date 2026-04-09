@@ -211,4 +211,8 @@ YesMem works with both **API keys** (pay-per-token) and **subscription plans** (
 
 ## Built by
 
-[Papoo Software & Media GmbH](https://papoo.de), Bonn, Germany. In production since November 2025. 950+ sessions. Battle-tested.
+Papoo Software & Media GmbH, Bonn, Germany. In production since March 2026, startet at November 2025.
+
+## Sponsor
+
+Sponsored by [ccm19.de](https://www.ccm19.de/en/) - the Cookie Consent Manager from Germany.

@@ -10,7 +10,11 @@ import (
 )
 
 func TestRunSessionEnd_CallsDaemon(t *testing.T) {
-	dir := t.TempDir()
+	dir, err := os.MkdirTemp("", "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
 	sockPath := filepath.Join(dir, "daemon.sock")
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -85,7 +89,11 @@ func TestRunSessionEnd_CallsDaemon(t *testing.T) {
 }
 
 func TestRunSessionEnd_CompactAlsoWorks(t *testing.T) {
-	dir := t.TempDir()
+	dir, err := os.MkdirTemp("", "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
 	sockPath := filepath.Join(dir, "daemon.sock")
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
