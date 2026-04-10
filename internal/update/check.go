@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -60,8 +61,8 @@ func checkRelease(url, currentVersion string) (*UpdateInfo, error) {
 		Changelog: release.Body,
 	}
 
-	info.BinaryURL = findAssetURL(release.Assets, runtime.GOOS, runtime.GOARCH)
-	info.ChecksumURL = findAssetURL(release.Assets, "checksums", "")
+	info.BinaryURL = findAssetURL(release.Assets, release.TagName, runtime.GOOS, runtime.GOARCH)
+	info.ChecksumURL = findAssetURL(release.Assets, "", "checksums", "")
 
 	current, currentErr := ParseVersion(currentVersion)
 	remote, remoteErr := ParseVersion(release.TagName)
@@ -77,11 +78,11 @@ func checkRelease(url, currentVersion string) (*UpdateInfo, error) {
 	return info, nil
 }
 
-func assetName(goos, goarch string) string {
-	return fmt.Sprintf("yesmem_%s_%s.tar.gz", goos, goarch)
+func assetName(version, goos, goarch string) string {
+	return fmt.Sprintf("yesmem_%s_%s_%s.tar.gz", version, goos, goarch)
 }
 
-func findAssetURL(assets []githubAsset, goos, goarch string) string {
+func findAssetURL(assets []githubAsset, version, goos, goarch string) string {
 	if goos == "checksums" {
 		for _, a := range assets {
 			if a.Name == "checksums.txt" {
@@ -90,7 +91,8 @@ func findAssetURL(assets []githubAsset, goos, goarch string) string {
 		}
 		return ""
 	}
-	target := assetName(goos, goarch)
+	v := strings.TrimPrefix(version, "v")
+	target := assetName(v, goos, goarch)
 	for _, a := range assets {
 		if a.Name == target {
 			return a.DownloadURL
