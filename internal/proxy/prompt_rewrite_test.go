@@ -295,3 +295,328 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+// --- replaceSystemText ---
+
+func TestReplaceSystemText_ReplacesExactMatch(t *testing.T) {
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": "Some preamble.\nDon't add features beyond what was asked.\nMore text here."},
+		},
+	}
+
+	modified := replaceSystemText(req, "Don't add features beyond what was asked.", "Fix adjacent issues when clearly appropriate.")
+	if !modified {
+		t.Fatal("expected modification")
+	}
+
+	blocks := req["system"].([]any)
+	result := blocks[0].(map[string]any)["text"].(string)
+
+	if strings.Contains(result, "Don't add features beyond what was asked.") {
+		t.Error("original text should be removed")
+	}
+	if !strings.Contains(result, "Fix adjacent issues when clearly appropriate.") {
+		t.Error("replacement text should be present")
+	}
+	if !strings.Contains(result, "Some preamble.") {
+		t.Error("surrounding text should be preserved")
+	}
+}
+
+func TestReplaceSystemText_ReturnsFalseWhenAbsent(t *testing.T) {
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": "No matching text here."},
+		},
+	}
+
+	if replaceSystemText(req, "nonexistent needle", "replacement") {
+		t.Error("expected false when text not present")
+	}
+}
+
+func TestReplaceSystemText_MultipleBlocks(t *testing.T) {
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": "Block one without match."},
+			map[string]any{"type": "text", "text": "Block two with: needle text here."},
+		},
+	}
+
+	modified := replaceSystemText(req, "needle text", "replaced text")
+	if !modified {
+		t.Fatal("expected modification in second block")
+	}
+
+	blocks := req["system"].([]any)
+	result := blocks[1].(map[string]any)["text"].(string)
+	if !strings.Contains(result, "replaced text") {
+		t.Error("second block should contain replacement")
+	}
+}
+
+func TestReplaceSystemText_PreservesCacheControl(t *testing.T) {
+	req := map[string]any{
+		"system": []any{
+			map[string]any{
+				"type":          "text",
+				"text":          "Text with needle to replace.",
+				"cache_control": map[string]any{"type": "ephemeral"},
+			},
+		},
+	}
+
+	replaceSystemText(req, "needle", "replaced")
+
+	blocks := req["system"].([]any)
+	block := blocks[0].(map[string]any)
+	cc, ok := block["cache_control"]
+	if !ok {
+		t.Fatal("cache_control should be preserved")
+	}
+	if cc.(map[string]any)["type"] != "ephemeral" {
+		t.Error("cache_control type should remain ephemeral")
+	}
+}
+
+// --- RewriteGoldPlating ---
+
+func TestRewriteGoldPlating_Replaces(t *testing.T) {
+	text := "Some intro.\nDon't add features, refactor code, or make \"improvements\" beyond what was asked. A bug fix doesn't need surrounding code cleaned up. A simple feature doesn't need extra configurability. Don't add docstrings.\nMore text."
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": text},
+		},
+	}
+
+	if !RewriteGoldPlating(req) {
+		t.Fatal("expected modification")
+	}
+
+	result := req["system"].([]any)[0].(map[string]any)["text"].(string)
+	if strings.Contains(result, "beyond what was asked") {
+		t.Error("original gold-plating text should be replaced")
+	}
+	if !strings.Contains(result, "adjacent code is broken") {
+		t.Error("replacement should allow adjacent fixes")
+	}
+	if !strings.Contains(result, "Some intro.") {
+		t.Error("surrounding text should be preserved")
+	}
+}
+
+func TestRewriteGoldPlating_ReturnsFalseWhenAbsent(t *testing.T) {
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": "No gold plating text here."},
+		},
+	}
+	if RewriteGoldPlating(req) {
+		t.Error("expected false when text not present")
+	}
+}
+
+// --- RewriteErrorHandling ---
+
+func TestRewriteErrorHandling_Replaces(t *testing.T) {
+	text := "Intro.\nDon't add error handling, fallbacks, or validation for scenarios that can't happen. Trust internal code and framework guarantees. Only validate at system boundaries (user input, external APIs). Don't use feature flags.\nEnd."
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": text},
+		},
+	}
+
+	if !RewriteErrorHandling(req) {
+		t.Fatal("expected modification")
+	}
+
+	result := req["system"].([]any)[0].(map[string]any)["text"].(string)
+	if strings.Contains(result, "scenarios that can't happen") {
+		t.Error("original error handling cap should be replaced")
+	}
+	if !strings.Contains(result, "real boundaries where failures can realistically occur") {
+		t.Error("replacement should specify real boundaries")
+	}
+}
+
+func TestRewriteErrorHandling_ReturnsFalseWhenAbsent(t *testing.T) {
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": "No matching text."},
+		},
+	}
+	if RewriteErrorHandling(req) {
+		t.Error("expected false when text not present")
+	}
+}
+
+// --- RewriteThreeLinesRule ---
+
+func TestRewriteThreeLinesRule_Replaces(t *testing.T) {
+	text := "Some context. Three similar lines of code is better than a premature abstraction. More text."
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": text},
+		},
+	}
+
+	if !RewriteThreeLinesRule(req) {
+		t.Fatal("expected modification")
+	}
+
+	result := req["system"].([]any)[0].(map[string]any)["text"].(string)
+	if strings.Contains(result, "Three similar lines") {
+		t.Error("original three-lines rule should be replaced")
+	}
+	if !strings.Contains(result, "judgment about when to extract") {
+		t.Error("replacement should encourage judgment")
+	}
+}
+
+func TestRewriteThreeLinesRule_ReturnsFalseWhenAbsent(t *testing.T) {
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": "No matching text."},
+		},
+	}
+	if RewriteThreeLinesRule(req) {
+		t.Error("expected false when text not present")
+	}
+}
+
+// --- RewriteSubagentCompleteness ---
+
+func TestRewriteSubagentCompleteness_Replaces(t *testing.T) {
+	text := "You are a subagent. Complete the task fully\u2014don't gold-plate, but don't leave it half-done. Report back."
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": text},
+		},
+	}
+
+	if !RewriteSubagentCompleteness(req) {
+		t.Fatal("expected modification")
+	}
+
+	result := req["system"].([]any)[0].(map[string]any)["text"].(string)
+	if strings.Contains(result, "gold-plate") {
+		t.Error("original gold-plate text should be replaced")
+	}
+	if !strings.Contains(result, "careful senior developer") {
+		t.Error("replacement should set senior-developer standard")
+	}
+}
+
+func TestRewriteSubagentCompleteness_ReturnsFalseWhenAbsent(t *testing.T) {
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": "No matching text."},
+		},
+	}
+	if RewriteSubagentCompleteness(req) {
+		t.Error("expected false when text not present")
+	}
+}
+
+// --- RewriteExploreAgentSpeed ---
+
+func TestRewriteExploreAgentSpeed_Replaces(t *testing.T) {
+	text := "You are an explore agent.\nNOTE: You are meant to be a fast agent that returns output as quickly as possible. In order to achieve this you must:\n- Make efficient use of tools"
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": text},
+		},
+	}
+
+	if !RewriteExploreAgentSpeed(req) {
+		t.Fatal("expected modification")
+	}
+
+	result := req["system"].([]any)[0].(map[string]any)["text"].(string)
+	if strings.Contains(result, "fast agent that returns output as quickly as possible") {
+		t.Error("speed-first bias should be replaced")
+	}
+	if !strings.Contains(result, "thorough in your exploration") {
+		t.Error("replacement should emphasize thoroughness")
+	}
+}
+
+func TestRewriteExploreAgentSpeed_ReturnsFalseWhenAbsent(t *testing.T) {
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": "No matching text."},
+		},
+	}
+	if RewriteExploreAgentSpeed(req) {
+		t.Error("expected false when text not present")
+	}
+}
+
+// --- RewriteSubagentCodeSuppression ---
+
+func TestRewriteSubagentCodeSuppression_Replaces(t *testing.T) {
+	text := "Report results.\nInclude code snippets only when the exact text is load-bearing (e.g., a bug you found, a function signature the caller asked for) \u2014 do not recap code you merely read.\nDone."
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": text},
+		},
+	}
+
+	if !RewriteSubagentCodeSuppression(req) {
+		t.Fatal("expected modification")
+	}
+
+	result := req["system"].([]any)[0].(map[string]any)["text"].(string)
+	if strings.Contains(result, "do not recap code you merely read") {
+		t.Error("code suppression should be replaced")
+	}
+	if !strings.Contains(result, "provide useful context") {
+		t.Error("replacement should allow useful code context")
+	}
+}
+
+func TestRewriteSubagentCodeSuppression_ReturnsFalseWhenAbsent(t *testing.T) {
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": "No matching text."},
+		},
+	}
+	if RewriteSubagentCodeSuppression(req) {
+		t.Error("expected false when text not present")
+	}
+}
+
+// --- RewriteScopeMatching ---
+
+func TestRewriteScopeMatching_Replaces(t *testing.T) {
+	text := "Be careful with actions.\nMatch the scope of your actions to what was actually requested.\nMore instructions."
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": text},
+		},
+	}
+
+	if !RewriteScopeMatching(req) {
+		t.Fatal("expected modification")
+	}
+
+	result := req["system"].([]any)[0].(map[string]any)["text"].(string)
+	if !strings.Contains(result, "closely related issues") {
+		t.Error("replacement should allow adjacent issue fixing")
+	}
+	if !strings.Contains(result, "Be careful with actions.") {
+		t.Error("surrounding text should be preserved")
+	}
+}
+
+func TestRewriteScopeMatching_ReturnsFalseWhenAbsent(t *testing.T) {
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": "No matching text."},
+		},
+	}
+	if RewriteScopeMatching(req) {
+		t.Error("expected false when text not present")
+	}
+}

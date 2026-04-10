@@ -149,7 +149,7 @@ func stripSkillHints(messages []any) []any {
 // Cached as package-level var to avoid per-request allocation.
 var skillEvalBlock = SkillEvalStartMarker + "\n" +
 	"INSTRUCTION: MANDATORY SKILL ACTIVATION SEQUENCE\n" +
-	"Step 1 — EVALUATE: For each available skill and /command listed above, decide: does it apply to the current task? State: [name] YES/NO [reason]\n" +
+	"Step 1 — EVALUATE: For each available skill and /command listed above, decide: does it apply to the current task? Output format: list YES items as [name] YES — [reason]. Combine all NO items on a single line.\n" +
 	"Step 2 — ACTIVATE: IF any YES → Use Skill(name) or /command NOW, before proceeding.\n" +
 	"Step 3 — PROCEED: Only after evaluation is complete.\n" +
 	SkillEvalEndMarker
