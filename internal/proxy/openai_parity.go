@@ -726,9 +726,9 @@ func (s *Server) finalizeOpenAIUsage(reqIdx int, threadID string, estimatedToken
 
 	if s.cacheStatusWriter != nil {
 		s.cacheStatusWriter.Update(time.Now(), usage.TotalInputTokens(), usage.CacheReadInputTokens, usage.CacheCreationInputTokens, threadID)
-		s.cacheStatusWriter.UpdateThreshold(s.effectiveTokenThreshold(model))
+		s.cacheStatusWriter.UpdateThresholdForThread(threadID, s.effectiveTokenThreshold(model))
 		if raw := s.getRawEstimate(threadID); raw > 0 {
-			s.cacheStatusWriter.UpdateRaw(raw)
+			s.cacheStatusWriter.UpdateRawForThread(threadID, raw)
 		}
 	}
 

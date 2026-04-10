@@ -42,17 +42,20 @@ type CacheStatusWriter struct {
 	mu                    sync.Mutex
 	dataDir               string
 	ttlConfig             string
-	lastRequest           time.Time
-	totalTokens           int
-	rawTokenEstimate      int
-	cacheRead             int
-	cacheWrite            int
-	threadID              string
-	tokenThreshold        int
 	tokenMinimumThreshold int
-	active                bool
 	detector              *CacheTTLDetector
 	keepalive             *CacheKeepalive
+	threads               map[string]*statusThreadState
+}
+
+// statusThreadState holds per-session cache status data.
+type statusThreadState struct {
+	lastRequest      time.Time
+	totalTokens      int
+	rawTokenEstimate int
+	cacheRead        int
+	cacheWrite       int
+	tokenThreshold   int
 }
 
 // NewCacheStatusWriter creates and starts a background writer.
@@ -60,8 +63,8 @@ func NewCacheStatusWriter(dataDir string, ttlConfig string, defaultThreshold int
 	w := &CacheStatusWriter{
 		dataDir:               dataDir,
 		ttlConfig:             ttlConfig,
-		tokenThreshold:        defaultThreshold,
 		tokenMinimumThreshold: defaultMinThreshold,
+		threads:               make(map[string]*statusThreadState),
 	}
 	go w.tickLoop()
 	return w
@@ -85,25 +88,32 @@ func (w *CacheStatusWriter) SetKeepalive(ka *CacheKeepalive) {
 func (w *CacheStatusWriter) Update(lastRequest time.Time, totalTokens, cacheRead, cacheWrite int, threadID string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.lastRequest = lastRequest
-	w.totalTokens = totalTokens
-	w.cacheRead = cacheRead
-	w.cacheWrite = cacheWrite
-	w.threadID = threadID
-	w.active = true
+	ts := w.threads[threadID]
+	if ts == nil {
+		ts = &statusThreadState{}
+		w.threads[threadID] = ts
+	}
+	ts.lastRequest = lastRequest
+	ts.totalTokens = totalTokens
+	ts.cacheRead = cacheRead
+	ts.cacheWrite = cacheWrite
 }
 
-// UpdateThreshold sets the current token threshold for statusline display.
-func (w *CacheStatusWriter) UpdateThreshold(threshold int) {
+// UpdateThresholdForThread sets the token threshold for a specific thread.
+func (w *CacheStatusWriter) UpdateThresholdForThread(threadID string, threshold int) {
 	w.mu.Lock()
-	w.tokenThreshold = threshold
+	if ts := w.threads[threadID]; ts != nil {
+		ts.tokenThreshold = threshold
+	}
 	w.mu.Unlock()
 }
 
-// UpdateRaw sets the raw (uncollapsed) token estimate for the terminal display.
-func (w *CacheStatusWriter) UpdateRaw(raw int) {
+// UpdateRawForThread sets the raw token estimate for a specific thread.
+func (w *CacheStatusWriter) UpdateRawForThread(threadID string, raw int) {
 	w.mu.Lock()
-	w.rawTokenEstimate = raw
+	if ts := w.threads[threadID]; ts != nil {
+		ts.rawTokenEstimate = raw
+	}
 	w.mu.Unlock()
 }
 
@@ -117,25 +127,27 @@ func (w *CacheStatusWriter) tickLoop() {
 
 func (w *CacheStatusWriter) writeStatus() {
 	w.mu.Lock()
-	if !w.active {
+	if len(w.threads) == 0 {
 		w.mu.Unlock()
 		return
 	}
 	ttlConfig := w.ttlConfig
-	lastReq := w.lastRequest
-	totalTok := w.totalTokens
-	rawTok := w.rawTokenEstimate
-	cacheRd := w.cacheRead
-	cacheWr := w.cacheWrite
-	tid := w.threadID
-	threshold := w.tokenThreshold
 	minThreshold := w.tokenMinimumThreshold
 	det := w.detector
 	ka := w.keepalive
+
+	// Snapshot all thread states under lock
+	type snapshot struct {
+		id  string
+		ts  statusThreadState
+	}
+	snaps := make([]snapshot, 0, len(w.threads))
+	for id, ts := range w.threads {
+		snaps = append(snaps, snapshot{id: id, ts: *ts})
+	}
 	w.mu.Unlock()
 
-	// Resolve TTL: config takes precedence over detector.
-	// If config says "ephemeral", we use 5min regardless of what the API supports.
+	// Resolve TTL (shared across threads)
 	ttlSec := 300
 	detectedTTL := "unknown"
 	if ttlConfig == "" || ttlConfig == "ephemeral" {
@@ -158,7 +170,7 @@ func (w *CacheStatusWriter) writeStatus() {
 		}
 	}
 
-	// Keepalive status
+	// Keepalive status (shared across threads)
 	var kaMode string
 	var pingIntervalS, pingsRemaining, activeThreads int
 	if ka != nil {
@@ -169,73 +181,77 @@ func (w *CacheStatusWriter) writeStatus() {
 		activeThreads = ks.ActiveThreads
 	}
 
-	remaining := ttlSec - int(time.Since(lastReq).Seconds())
-	if remaining < 0 {
-		remaining = 0
-	}
-
-	state := "warm"
-	if remaining == 0 {
-		state = "cold"
-	} else if remaining < 60 {
-		state = "cooling"
-	}
-
-	tokensK := float64(totalTok) / 1000.0
-	var costPerReq float64
-	switch state {
-	case "warm", "cooling":
-		// Opus 4.6: cache read $0.50/MTok, uncached input $5.00/MTok
-		costPerReq = (tokensK-5)*0.0005 + 5*0.005
-	case "cold":
-		// Opus 4.6: 5min cache write $6.25/MTok, 1h cache write $10.00/MTok
-		writeRate := 0.00625
-		if ttlConfig == "1h" {
-			writeRate = 0.01
-		}
-		costPerReq = tokensK * writeRate
-	}
-
-	status := CacheStatus{
-		TTL:                   ttlConfig,
-		TTLSeconds:            ttlSec,
-		RemainingS:            remaining,
-		CacheState:            state,
-		CostPerReq:            costPerReq,
-		LastRequestTS:         lastReq.Unix(),
-		TotalTokens:           totalTok,
-		RawTokenEstimate:      rawTok,
-		CacheReadTokens:       cacheRd,
-		CacheWriteTokens:      cacheWr,
-		ThreadID:              tid,
-		TokenThreshold:        threshold,
-		TokenMinimumThreshold: minThreshold,
-		DetectedTTL:           detectedTTL,
-		KeepaliveMode:         kaMode,
-		PingIntervalS:         pingIntervalS,
-		PingsRemaining:        pingsRemaining,
-		ActiveThreads:         activeThreads,
-	}
-
 	dir := filepath.Join(w.dataDir, "cache-status")
 	os.MkdirAll(dir, 0755)
 
-	data, err := json.Marshal(status)
-	if err != nil {
-		return
-	}
+	for _, snap := range snaps {
+		ts := snap.ts
 
-	tmp := filepath.Join(dir, "status.json.tmp")
-	target := filepath.Join(dir, "status.json")
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		return
+		remaining := ttlSec - int(time.Since(ts.lastRequest).Seconds())
+		if remaining < 0 {
+			remaining = 0
+		}
+
+		state := "warm"
+		if remaining == 0 {
+			state = "cold"
+		} else if remaining < 60 {
+			state = "cooling"
+		}
+
+		tokensK := float64(ts.totalTokens) / 1000.0
+		var costPerReq float64
+		switch state {
+		case "warm", "cooling":
+			costPerReq = (tokensK-5)*0.0005 + 5*0.005
+		case "cold":
+			writeRate := 0.00625
+			if ttlConfig == "1h" {
+				writeRate = 0.01
+			}
+			costPerReq = tokensK * writeRate
+		}
+
+		threshold := ts.tokenThreshold
+
+		status := CacheStatus{
+			TTL:                   ttlConfig,
+			TTLSeconds:            ttlSec,
+			RemainingS:            remaining,
+			CacheState:            state,
+			CostPerReq:            costPerReq,
+			LastRequestTS:         ts.lastRequest.Unix(),
+			TotalTokens:           ts.totalTokens,
+			RawTokenEstimate:      ts.rawTokenEstimate,
+			CacheReadTokens:       ts.cacheRead,
+			CacheWriteTokens:      ts.cacheWrite,
+			ThreadID:              snap.id,
+			TokenThreshold:        threshold,
+			TokenMinimumThreshold: minThreshold,
+			DetectedTTL:           detectedTTL,
+			KeepaliveMode:         kaMode,
+			PingIntervalS:         pingIntervalS,
+			PingsRemaining:        pingsRemaining,
+			ActiveThreads:         activeThreads,
+		}
+
+		data, err := json.Marshal(status)
+		if err != nil {
+			continue
+		}
+
+		tmp := filepath.Join(dir, fmt.Sprintf("status-%s.json.tmp", snap.id))
+		target := filepath.Join(dir, fmt.Sprintf("status-%s.json", snap.id))
+		if err := os.WriteFile(tmp, data, 0644); err != nil {
+			continue
+		}
+		os.Rename(tmp, target)
 	}
-	os.Rename(tmp, target)
 }
 
-// CacheStatusPath returns the path to the cache status JSON file.
-func CacheStatusPath(dataDir string) string {
-	return filepath.Join(dataDir, "cache-status", "status.json")
+// CacheStatusPath returns the path to the per-thread cache status JSON file.
+func CacheStatusPath(dataDir string, threadID string) string {
+	return filepath.Join(dataDir, "cache-status", fmt.Sprintf("status-%s.json", threadID))
 }
 
 // FormatCacheStatus returns a short status string for the terminal.
