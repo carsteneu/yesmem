@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -47,7 +48,8 @@ func RunUpdate(currentVersion string, logger *log.Logger) (string, error) {
 	}
 
 	dest := BinaryPath()
-	asset := assetName(runtime.GOOS, runtime.GOARCH)
+	v := strings.TrimPrefix(info.Version, "v")
+	asset := assetName(v, runtime.GOOS, runtime.GOARCH)
 	logger.Printf("[update] downloading %s → %s", asset, dest)
 
 	if err := DownloadAndReplace(info.BinaryURL, info.ChecksumURL, asset, dest); err != nil {

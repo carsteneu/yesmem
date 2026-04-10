@@ -13,8 +13,8 @@ func TestCheckForUpdate_NewVersionAvailable(t *testing.T) {
 		TagName: "v1.1.0",
 		Body:    "Bug fixes and improvements",
 		Assets: []githubAsset{
-			{Name: "yesmem_linux_amd64.tar.gz", DownloadURL: "https://example.com/yesmem_linux_amd64.tar.gz"},
-			{Name: "yesmem_darwin_arm64.tar.gz", DownloadURL: "https://example.com/yesmem_darwin_arm64.tar.gz"},
+			{Name: "yesmem_1.1.0_linux_amd64.tar.gz", DownloadURL: "https://example.com/yesmem_1.1.0_linux_amd64.tar.gz"},
+			{Name: "yesmem_1.1.0_darwin_arm64.tar.gz", DownloadURL: "https://example.com/yesmem_1.1.0_darwin_arm64.tar.gz"},
 			{Name: "checksums.txt", DownloadURL: "https://example.com/checksums.txt"},
 		},
 	}
@@ -68,19 +68,19 @@ func TestCheckForUpdate_NonSemverCurrent(t *testing.T) {
 }
 
 func TestAssetName(t *testing.T) {
-	name := assetName("linux", "amd64")
-	if name != "yesmem_linux_amd64.tar.gz" {
-		t.Errorf("assetName = %q, want yesmem_linux_amd64.tar.gz", name)
+	name := assetName("1.1.0", "linux", "amd64")
+	if name != "yesmem_1.1.0_linux_amd64.tar.gz" {
+		t.Errorf("assetName = %q, want yesmem_1.1.0_linux_amd64.tar.gz", name)
 	}
 }
 
 func TestFindAssetURL(t *testing.T) {
 	assets := []githubAsset{
-		{Name: "yesmem_linux_amd64.tar.gz", DownloadURL: "https://example.com/linux"},
-		{Name: "yesmem_darwin_arm64.tar.gz", DownloadURL: "https://example.com/darwin"},
+		{Name: "yesmem_1.1.0_linux_amd64.tar.gz", DownloadURL: "https://example.com/linux"},
+		{Name: "yesmem_1.1.0_darwin_arm64.tar.gz", DownloadURL: "https://example.com/darwin"},
 		{Name: "checksums.txt", DownloadURL: "https://example.com/checksums"},
 	}
-	url := findAssetURL(assets, runtime.GOOS, runtime.GOARCH)
+	url := findAssetURL(assets, "v1.1.0", runtime.GOOS, runtime.GOARCH)
 	if url == "" {
 		t.Error("should find asset for current OS/Arch")
 	}

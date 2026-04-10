@@ -15,7 +15,7 @@ func TestFullUpdateFlow(t *testing.T) {
 	binaryContent := []byte("#!/bin/sh\necho 'yesmem v1.1.0'")
 	archive := createTarGz(t, "yesmem", binaryContent)
 	archiveHash := fmt.Sprintf("%x", sha256.Sum256(archive))
-	checksums := fmt.Sprintf("%s  yesmem_linux_amd64.tar.gz\n%s  yesmem_darwin_arm64.tar.gz\n", archiveHash, archiveHash)
+	checksums := fmt.Sprintf("%s  yesmem_1.1.0_linux_amd64.tar.gz\n%s  yesmem_1.1.0_darwin_arm64.tar.gz\n", archiveHash, archiveHash)
 
 	var srv *httptest.Server
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -25,8 +25,8 @@ func TestFullUpdateFlow(t *testing.T) {
 				TagName: "v1.1.0",
 				Body:    "## What's New\n- Auto-update support",
 				Assets: []githubAsset{
-					{Name: "yesmem_linux_amd64.tar.gz", DownloadURL: srv.URL + "/binary"},
-					{Name: "yesmem_darwin_arm64.tar.gz", DownloadURL: srv.URL + "/binary"},
+					{Name: "yesmem_1.1.0_linux_amd64.tar.gz", DownloadURL: srv.URL + "/binary"},
+					{Name: "yesmem_1.1.0_darwin_arm64.tar.gz", DownloadURL: srv.URL + "/binary"},
 					{Name: "checksums.txt", DownloadURL: srv.URL + "/checksums"},
 				},
 			}
@@ -56,7 +56,7 @@ func TestFullUpdateFlow(t *testing.T) {
 	dest := filepath.Join(tmpDir, "yesmem")
 	os.WriteFile(dest, []byte("old-binary"), 0755)
 
-	asset := assetName("linux", "amd64")
+	asset := assetName("1.1.0", "linux", "amd64")
 	err = DownloadAndReplace(info.BinaryURL, info.ChecksumURL, asset, dest)
 	if err != nil {
 		t.Fatalf("download+replace failed: %v", err)
