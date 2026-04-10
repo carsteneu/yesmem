@@ -414,12 +414,16 @@ func (h *Handler) handleIngestDocs(params map[string]any) Response {
 
 	rules, _ := params["rules"].(bool)
 
-	// Parse trigger_extensions:
-	// - param absent → TriggerExtensions="" → UpsertDocSource preserves existing value
-	// - param present + empty array [] → TriggerExtensions="-" (sentinel) → clears existing value
-	// - param present + values → TriggerExtensions=".go,.mod" → overwrites
+	// Parse trigger_extensions: accepts string (".twig,.html.twig") or array [".twig", ".html.twig"].
+	// Absent → preserves existing value. Empty string/array → clears via sentinel "-".
 	var triggerExts string
-	if rawExts, ok := params["trigger_extensions"].([]any); ok {
+	if rawStr, ok := params["trigger_extensions"].(string); ok {
+		if rawStr == "" {
+			triggerExts = "-"
+		} else {
+			triggerExts = rawStr
+		}
+	} else if rawExts, ok := params["trigger_extensions"].([]any); ok {
 		var extParts []string
 		for _, e := range rawExts {
 			if s, ok := e.(string); ok {
@@ -427,7 +431,7 @@ func (h *Handler) handleIngestDocs(params map[string]any) Response {
 			}
 		}
 		if len(extParts) == 0 {
-			triggerExts = "-" // sentinel: explicitly clear
+			triggerExts = "-"
 		} else {
 			triggerExts = strings.Join(extParts, ",")
 		}

@@ -1,6 +1,8 @@
 package proxy
 
 import (
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -174,6 +176,147 @@ func TestFormatStatusLines_RawSmallerThanActual(t *testing.T) {
 	}
 	if !strings.Contains(lines.CollapsingLine, "Lossless collapsing at 200k to 80k Token") {
 		t.Errorf("CollapsingLine should fall back to old format, got: %s", lines.CollapsingLine)
+	}
+}
+
+func TestCacheStatusPath_PerThread(t *testing.T) {
+	path := CacheStatusPath("/data", "abc-123")
+	if !strings.HasSuffix(path, "cache-status/status-abc-123.json") {
+		t.Errorf("CacheStatusPath should include threadID, got: %s", path)
+	}
+}
+
+func TestCacheStatusWriter_PerThreadIsolation(t *testing.T) {
+	dir := t.TempDir()
+	w := &CacheStatusWriter{
+		dataDir:               dir,
+		ttlConfig:             "1h",
+		tokenMinimumThreshold: 80000,
+		threads:               make(map[string]*statusThreadState),
+	}
+
+	now := time.Now()
+
+	// Update thread A
+	w.Update(now, 100000, 95000, 5000, "thread-aaa")
+	w.writeStatus()
+
+	// Update thread B with different data — older lastRequest, fewer tokens
+	w.Update(now.Add(-30*time.Minute), 50000, 45000, 5000, "thread-bbb")
+	w.writeStatus()
+
+	// Thread A's file must still have thread A's data
+	pathA := CacheStatusPath(dir, "thread-aaa")
+	dataA, err := os.ReadFile(pathA)
+	if err != nil {
+		t.Fatalf("thread A file should exist at %s: %v", pathA, err)
+	}
+	var statusA CacheStatus
+	if err := json.Unmarshal(dataA, &statusA); err != nil {
+		t.Fatalf("thread A file should be valid JSON: %v", err)
+	}
+	if statusA.TotalTokens != 100000 {
+		t.Errorf("thread A tokens = %d, want 100000", statusA.TotalTokens)
+	}
+	if statusA.ThreadID != "thread-aaa" {
+		t.Errorf("thread A threadID = %q, want thread-aaa", statusA.ThreadID)
+	}
+
+	// Thread B's file must have thread B's data
+	pathB := CacheStatusPath(dir, "thread-bbb")
+	dataB, err := os.ReadFile(pathB)
+	if err != nil {
+		t.Fatalf("thread B file should exist at %s: %v", pathB, err)
+	}
+	var statusB CacheStatus
+	if err := json.Unmarshal(dataB, &statusB); err != nil {
+		t.Fatalf("thread B file should be valid JSON: %v", err)
+	}
+	if statusB.TotalTokens != 50000 {
+		t.Errorf("thread B tokens = %d, want 50000", statusB.TotalTokens)
+	}
+	if statusB.ThreadID != "thread-bbb" {
+		t.Errorf("thread B threadID = %q, want thread-bbb", statusB.ThreadID)
+	}
+
+	// No global status.json should exist
+	globalPath := dir + "/cache-status/status.json"
+	if _, err := os.Stat(globalPath); err == nil {
+		t.Errorf("global status.json should NOT exist, but found at %s", globalPath)
+	}
+}
+
+func TestCacheStatusWriter_UpdateThresholdPerThread(t *testing.T) {
+	dir := t.TempDir()
+	w := &CacheStatusWriter{
+		dataDir:               dir,
+		ttlConfig:             "ephemeral",
+		tokenMinimumThreshold: 80000,
+		threads:               make(map[string]*statusThreadState),
+	}
+
+	now := time.Now()
+
+	// Thread A uses Opus (200k threshold)
+	w.Update(now, 100000, 95000, 5000, "thread-aaa")
+	w.UpdateThresholdForThread("thread-aaa", 200000)
+
+	// Thread B uses Sonnet (150k threshold)
+	w.Update(now, 80000, 75000, 5000, "thread-bbb")
+	w.UpdateThresholdForThread("thread-bbb", 150000)
+
+	w.writeStatus()
+
+	pathA := CacheStatusPath(dir, "thread-aaa")
+	dataA, _ := os.ReadFile(pathA)
+	var statusA CacheStatus
+	json.Unmarshal(dataA, &statusA)
+	if statusA.TokenThreshold != 200000 {
+		t.Errorf("thread A threshold = %d, want 200000", statusA.TokenThreshold)
+	}
+
+	pathB := CacheStatusPath(dir, "thread-bbb")
+	dataB, _ := os.ReadFile(pathB)
+	var statusB CacheStatus
+	json.Unmarshal(dataB, &statusB)
+	if statusB.TokenThreshold != 150000 {
+		t.Errorf("thread B threshold = %d, want 150000", statusB.TokenThreshold)
+	}
+}
+
+func TestCacheStatusWriter_UpdateRawPerThread(t *testing.T) {
+	dir := t.TempDir()
+	w := &CacheStatusWriter{
+		dataDir:               dir,
+		ttlConfig:             "ephemeral",
+		tokenMinimumThreshold: 80000,
+		threads:               make(map[string]*statusThreadState),
+	}
+
+	now := time.Now()
+
+	w.Update(now, 100000, 95000, 5000, "thread-aaa")
+	w.UpdateRawForThread("thread-aaa", 250000)
+
+	w.Update(now, 80000, 75000, 5000, "thread-bbb")
+	// Thread B has no raw estimate
+
+	w.writeStatus()
+
+	pathA := CacheStatusPath(dir, "thread-aaa")
+	dataA, _ := os.ReadFile(pathA)
+	var statusA CacheStatus
+	json.Unmarshal(dataA, &statusA)
+	if statusA.RawTokenEstimate != 250000 {
+		t.Errorf("thread A raw = %d, want 250000", statusA.RawTokenEstimate)
+	}
+
+	pathB := CacheStatusPath(dir, "thread-bbb")
+	dataB, _ := os.ReadFile(pathB)
+	var statusB CacheStatus
+	json.Unmarshal(dataB, &statusB)
+	if statusB.RawTokenEstimate != 0 {
+		t.Errorf("thread B raw = %d, want 0", statusB.RawTokenEstimate)
 	}
 }
 

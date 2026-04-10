@@ -101,7 +101,7 @@ func runStatusline() {
 
 		// Read cache status from proxy status.json
 		dataDir := yesmemDataDir()
-		statusPath := proxy.CacheStatusPath(dataDir)
+		statusPath := proxy.CacheStatusPath(dataDir, input.SessionID)
 		ttlStr, expiryCost := formatTTL(statusPath, tokK, coldCost)
 		sb.WriteString("\n")
 		sb.WriteString(ttlStr)

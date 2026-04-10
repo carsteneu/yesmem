@@ -1340,7 +1340,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logger.Printf("[req %d %s tid=%s] FINAL: ~%dk estimated (after all injections)", reqIdx, proj, threadID, finalEstimate/1000)
 	if raw := s.getRawEstimate(threadID); raw > 0 {
-		s.cacheStatusWriter.UpdateRaw(raw)
+		s.cacheStatusWriter.UpdateRawForThread(threadID, raw)
 	}
 	s.forwardWithAnnotation(w, r, body, reqIdx, toolUseIDs, proj, threadID, msgCount, finalEstimate)
 }

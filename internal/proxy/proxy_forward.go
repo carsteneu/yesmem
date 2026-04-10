@@ -129,7 +129,7 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 				jsonResp.Usage.InputTokens, jsonResp.Usage.CacheReadInputTokens, jsonResp.Usage.CacheCreationInputTokens, threadID)
 			var fwdModel struct{ Model string `json:"model"` }
 			json.Unmarshal(body, &fwdModel)
-			s.cacheStatusWriter.UpdateThreshold(s.effectiveTokenThreshold(fwdModel.Model))
+			s.cacheStatusWriter.UpdateThresholdForThread(threadID, s.effectiveTokenThreshold(fwdModel.Model))
 			// Feed TTL detector and reset keepalive (non-streaming path)
 			if s.cacheTTLDetector != nil {
 				prevState := s.cacheTTLDetector.Is1hSupported()
@@ -271,7 +271,7 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 			usage.TotalInputTokens(), usage.CacheReadInputTokens, usage.CacheCreationInputTokens, threadID)
 		var fwdModel struct{ Model string `json:"model"` }
 		json.Unmarshal(body, &fwdModel)
-		s.cacheStatusWriter.UpdateThreshold(s.effectiveTokenThreshold(fwdModel.Model))
+		s.cacheStatusWriter.UpdateThresholdForThread(threadID, s.effectiveTokenThreshold(fwdModel.Model))
 
 		// Feed TTL detector and reset keepalive timer
 		if s.cacheTTLDetector != nil {
