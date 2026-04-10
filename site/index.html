@@ -3,23 +3,34 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>YesMem — Adaptive Context Window for Claude Code</title>
-<meta name="description" content="Persistent memory for Claude Code. Every session starts where it matters, not at zero. Local-first, zero cloud, single Go binary.">
-<meta property="og:title" content="YesMem — Adaptive Context Window for Claude Code">
-<meta property="og:description" content="Persistent memory for Claude Code. Every session starts where it matters, not at zero.">
+<title>YesMem — Persistent Memory &amp; Adaptive Context for Claude Code</title>
+<meta name="description" content="Persistent memory and lossless context collapsing for Claude Code. Every session starts where it matters, not at zero. Local-first MCP server, zero cloud, single Go binary. 50 MCP tools, hybrid search, automatic knowledge extraction.">
+<meta name="keywords" content="Claude Code, MCP server, persistent memory, context window, AI coding assistant, Claude Code memory, knowledge management, developer tools">
+<meta name="author" content="Papoo Software &amp; Media GmbH">
+<meta name="theme-color" content="#0d1117">
+<link rel="canonical" href="https://yesmem.io">
+<meta property="og:title" content="YesMem — Persistent Memory &amp; Adaptive Context for Claude Code">
+<meta property="og:description" content="Persistent memory and lossless context collapsing for Claude Code. Every session starts where it matters, not at zero. Local-first, zero cloud, single Go binary.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://yesmem.io">
+<meta property="og:site_name" content="YesMem">
+<meta property="og:locale" content="en_US">
+<!-- <meta property="og:image" content="https://yesmem.io/og-image.png"> -->
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='16' fill='%230d1117'/><text x='50' y='72' font-size='64' font-family='system-ui' font-weight='700' fill='%2358a6ff' text-anchor='middle'>Y</text></svg>">
 <link rel="stylesheet" href="style.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"YesMem","description":"Persistent memory and adaptive context window for Claude Code. Lossless context collapsing, hybrid search, automatic knowledge extraction.","url":"https://yesmem.io","applicationCategory":"DeveloperApplication","operatingSystem":"Linux, macOS, Windows (WSL2)","license":"https://github.com/carsteneu/yesmem/blob/main/LICENSE","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"author":{"@type":"Organization","name":"Papoo Software & Media GmbH","url":"https://www.papoo.de"},"codeRepository":"https://github.com/carsteneu/yesmem"}
+</script>
 </head>
 <body class="bg-white text-gray-800 font-sans leading-relaxed text-[17px]">
 
 <!-- GitHub icon top right -->
-<a href="https://github.com/carsteneu/yesmem" class="fixed top-5 right-6 z-10 text-gray-400 hover:text-gray-800 transition-colors" title="View on GitHub">
+<a href="https://github.com/carsteneu/yesmem" class="fixed top-5 right-6 z-10 text-gray-400 hover:text-gray-800 transition-colors" title="View on GitHub" rel="noopener noreferrer">
   <svg class="w-7 h-7 fill-current" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
 </a>
 
 <div class="max-w-6xl mx-auto px-6">
+<main>
 
   <!-- Hero -->
   <div class="pt-24 pb-16 grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
@@ -29,7 +40,7 @@
       <h1 class="text-5xl font-bold tracking-tight mb-4">YesMem</h1>
       <p class="text-xl text-gray-500 mb-8">Adaptive context window for Claude Code &ndash; every session starts where it matters, not at zero.</p>
       <div class="bg-gray-50 border-l-[3px] border-blue-600 rounded-r-lg px-7 py-6 text-[0.92em] leading-relaxed">
-        Tuesday morning. New session. You type: <em class="text-gray-800">&ldquo;What did we do last Tuesday?&rdquo;</em> Claude tells you &ndash; the refactoring, the bug in the auth middleware, the decision to switch to connection pooling. <br /><br />You ask: <em class="text-gray-800">&ldquo;What was still open?&rdquo;</em> Claude shows you.  <br />You ask: <em class="text-gray-800">&ldquo;Why did we stop?&rdquo;</em> Claude explains &ndash; you hit a dependency issue, decided to wait for the upstream fix.  <br />You ask: <em class="text-gray-800">&ldquo;What did you think about that approach?&rdquo;</em> Claude gives you its honest assessment from last week&rsquo;s context, not a guess.<br><br>
+        <strong>Tuesday morning. New session.</strong><br /><br />  <strong>You type: </strong> <em class="text-gray-800">&ldquo;What did we do last Tuesday?&rdquo;</em> Claude tells you &ndash; the refactoring, the bug in the auth middleware, the decision to switch to connection pooling. <br /> <strong>You ask: </strong> <em class="text-gray-800">&ldquo;What was still open?&rdquo;</em> Claude shows you.  <br /> <strong>You ask: </strong> <em class="text-gray-800">&ldquo;Why did we stop?&rdquo;</em> Claude explains &ndash; you hit a dependency issue, decided to wait for the upstream fix.  <br /> <strong>You ask: </strong> <em class="text-gray-800">&ldquo;What did you think about that approach?&rdquo;</em> Claude gives you its honest assessment from last week&rsquo;s context, not a guess.<br><br>
         <strong>That&rsquo;s where you start. Not from zero. From where it matters.</strong>
       </div>
     </div>
@@ -63,14 +74,14 @@
   <section class="py-12">
     <h2 class="text-2xl font-semibold tracking-tight mb-7">What You Get</h2>
     <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
-      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><strong class="block mb-2 text-gray-900 text-lg">Nothing is ever lost.</strong> Claude Code&rsquo;s built-in compaction throws away your conversation. YesMem collapses it losslessly instead. Three hours in, you need something from hour one? It&rsquo;s there, word for word.</p></div>
-      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><strong class="block mb-2 text-gray-900 text-lg">Optimal context window.</strong> Set your threshold, resize on the fly. 150K for focused work, 500K for deep research, switch mid-session. No performance degradation, no matter how long you work.</p></div>
-      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><strong class="block mb-2 text-gray-900 text-lg">Better answers out of the box.</strong> You didn&rsquo;t change anything, but Claude suddenly stops cutting corners. YesMem replaces Anthropic&rsquo;s output throttling with quality directives. Same workflow, better results.</p></div>
-      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><strong class="block mb-2 text-gray-900 text-lg">Zero effort knowledge capture.</strong> You finish debugging, close the session, go home. Next morning, Claude already knows what you fixed and why. Extraction happens in the background.</p></div>
-      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><strong class="block mb-2 text-gray-900 text-lg">Knowledge that self-corrects.</strong> Last month you decided on REST. This week you switched to gRPC. Claude doesn&rsquo;t suggest REST anymore. Outdated facts get replaced automatically, your explicit decisions always outrank Claude&rsquo;s guesses.</p></div>
-      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><strong class="block mb-2 text-gray-900 text-lg">Your rules stick.</strong> You wrote careful instructions in CLAUDE.md. After 20 minutes, Claude ignores them, buried under tool outputs. YesMem re-injects your rules every 40k tokens.</p></div>
-      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><strong class="block mb-2 text-gray-900 text-lg">Pick up where you left off.</strong> Not &ldquo;here are 5 bullet points&rdquo; but <em>&ldquo;last time you were debugging the race condition in the proxy&hellip;&rdquo;</em> Immersive handovers, not summaries.</p></div>
-      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><strong class="block mb-2 text-gray-900 text-lg">Costs go down over time.</strong> The longer you work, the more context hits the prompt cache. Collapsing cycles exploit Anthropic&rsquo;s cache TTL. Context gets cheaper, not more expensive.</p></div>
+      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Nothing is ever lost.</h3> Claude Code&rsquo;s built-in compaction throws away your conversation. YesMem collapses it losslessly instead. Three hours in, you need something from hour one? It&rsquo;s there, word for word.</p></div>
+      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Optimal context window.</h3> Set your threshold, resize on the fly. 150K for focused work, 500K for deep research, switch mid-session. No performance degradation, no matter how long you work.</p></div>
+      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Better answers out of the box.</h3> You didn&rsquo;t change anything, but Claude suddenly stops cutting corners. YesMem replaces Anthropic&rsquo;s output throttling with quality directives. Same workflow, better results.</p></div>
+      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Zero effort knowledge capture.</h3> You finish debugging, close the session, go home. Next morning, Claude already knows what you fixed and why. Extraction happens in the background.</p></div>
+      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Knowledge that self-corrects.</h3> Last month you decided on REST. This week you switched to gRPC. Claude doesn&rsquo;t suggest REST anymore. Outdated facts get replaced automatically, your explicit decisions always outrank Claude&rsquo;s guesses.</p></div>
+      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Your rules stick.</h3> You wrote careful instructions in CLAUDE.md. After 20 minutes, Claude ignores them, buried under tool outputs. YesMem re-injects your rules every 40k tokens.</p></div>
+      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Pick up where you left off.</h3> Not &ldquo;here are 5 bullet points&rdquo; but <em>&ldquo;last time you were debugging the race condition in the proxy&hellip;&rdquo;</em> Immersive handovers, not summaries.</p></div>
+      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Costs go down over time.</h3> The longer you work, the more context hits the prompt cache. Collapsing cycles exploit Anthropic&rsquo;s cache TTL. Context gets cheaper, not more expensive.</p></div>
     </div>
   </section>
 
@@ -78,12 +89,12 @@
   <section class="py-12">
     <h2 class="text-2xl font-semibold tracking-tight mb-7">Foundations</h2>
     <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
-      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><strong class="block mb-2 text-gray-900 text-lg">Find anything.</strong> Full-text + semantic search combined. BM25 + 512d vectors, Reciprocal Rank Fusion.</p></div>
-      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><strong class="block mb-2 text-gray-900 text-lg">Your words matter most.</strong> 4-tier trust hierarchy: user_stated &gt; agreed_upon &gt; claude_suggested &gt; llm_extracted.</p></div>
-      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><strong class="block mb-2 text-gray-900 text-lg">Noise fades, signal stays.</strong> Ebbinghaus decay based on conversation turns. Useful knowledge strengthens, irrelevant fades.</p></div>
-      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><strong class="block mb-2 text-gray-900 text-lg">One binary, one command.</strong> No Python, no Node, no Docker, no cloud account. <code class="bg-gray-200 px-1.5 py-0.5 rounded text-sm">yesmem setup</code>, done.</p></div>
-      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><strong class="block mb-2 text-gray-900 text-lg">Your data stays yours.</strong> Everything in ~/.claude/yesmem/. Nothing leaves your machine.</p></div>
-      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><strong class="block mb-2 text-gray-900 text-lg">Free.</strong> FSL-1.1-ALv2. Use it for anything except building a competing product. After 2 years, Apache 2.0.</p></div>
+      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Find anything.</h3> Full-text + semantic search combined. BM25 + 512d vectors, Reciprocal Rank Fusion.</p></div>
+      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Your words matter most.</h3> 4-tier trust hierarchy: user_stated &gt; agreed_upon &gt; claude_suggested &gt; llm_extracted.</p></div>
+      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Noise fades, signal stays.</h3> Ebbinghaus decay based on conversation turns. Useful knowledge strengthens, irrelevant fades.</p></div>
+      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">One binary, one command.</h3> No Python, no Node, no Docker, no cloud account. <code class="bg-gray-200 px-1.5 py-0.5 rounded text-sm">yesmem setup</code>, done.</p></div>
+      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Your data stays yours.</h3> Everything in ~/.claude/yesmem/. Nothing leaves your machine.</p></div>
+      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Free.</h3> FSL-1.1-ALv2. Use it for anything except building a competing product. After 2 years, Apache 2.0.</p></div>
     </div>
   </section>
 
@@ -100,7 +111,7 @@
 
 <span class="text-gray-500"># Done. Open a new Claude Code session.</span></code></pre>
     </div>
-    <p class="text-gray-500 mt-4">Or download the binary from <a href="https://github.com/carsteneu/yesmem/releases" class="text-blue-600 hover:underline">GitHub Releases</a>. Windows via <a href="https://learn.microsoft.com/en-us/windows/wsl/install" class="text-blue-600 hover:underline">WSL2</a>.</p>
+    <p class="text-gray-500 mt-4">Or download the binary from <a href="https://github.com/carsteneu/yesmem/releases" class="text-blue-600 hover:underline" rel="noopener noreferrer">GitHub Releases</a>. Windows via <a href="https://learn.microsoft.com/en-us/windows/wsl/install" class="text-blue-600 hover:underline" rel="noopener noreferrer">WSL2</a>.</p>
   </section>
 
   <!-- Numbers + Architecture -->
@@ -132,14 +143,15 @@
     </div>
   </section>
 
+</main>
 </div>
 
 <footer class="py-12 border-t border-gray-200 text-center text-sm text-gray-400 leading-8">
   <div class="max-w-6xl mx-auto px-6">
-    <a href="https://github.com/carsteneu/yesmem" class="text-gray-500 hover:underline">GitHub</a> · <a href="https://github.com/carsteneu/yesmem/blob/main/LICENSE" class="text-gray-500 hover:underline">FSL-1.1-ALv2</a> · <a href="https://github.com/carsteneu/yesmem/blob/main/Features.md" class="text-gray-500 hover:underline">Features</a><br>
-    Built by <a href="https://www.papoo.de" class="text-gray-500 hover:underline">Papoo Software &amp; Media GmbH</a>, Bonn. In production since March 2026.<br>
-    Sponsored by <a href="https://www.ccm19.de/en/" class="text-gray-500 hover:underline">CCM19</a> &ndash; Cookie Consent Manager from Germany.<br>
-    <a href="https://www.ccm19.de/impressum.html" class="text-gray-500 hover:underline">Impressum</a> · <a href="https://www.ccm19.de/datenschutzerklaerung.html" class="text-gray-500 hover:underline">Datenschutz</a>
+    <a href="https://github.com/carsteneu/yesmem" class="text-gray-500 hover:underline" rel="noopener noreferrer">GitHub</a> · <a href="https://github.com/carsteneu/yesmem/blob/main/LICENSE" class="text-gray-500 hover:underline" rel="noopener noreferrer">FSL-1.1-ALv2</a> · <a href="https://github.com/carsteneu/yesmem/blob/main/Features.md" class="text-gray-500 hover:underline" rel="noopener noreferrer">Features</a><br>
+    Built by <a href="https://www.papoo.de" class="text-gray-500 hover:underline" rel="noopener noreferrer">Papoo Software &amp; Media GmbH</a>, Bonn. In production since March 2026.<br>
+    Sponsored by <a href="https://www.ccm19.de/en/" class="text-gray-500 hover:underline" rel="noopener noreferrer">CCM19</a> &ndash; Cookie Consent Manager from Germany.<br>
+    <a href="https://www.ccm19.de/impressum.html" class="text-gray-500 hover:underline" rel="noopener noreferrer">Impressum</a> · <a href="https://www.ccm19.de/datenschutzerklaerung.html" class="text-gray-500 hover:underline" rel="noopener noreferrer">Datenschutz</a>
   </div>
 </footer>
 

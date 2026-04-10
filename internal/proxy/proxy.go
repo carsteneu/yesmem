@@ -677,7 +677,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// prompt_rewrite: strip output-throttling directives + inject Ant-quality directives
+	// prompt_rewrite: strip output-throttling directives, rewrite quality caps, inject Ant-quality directives
 	if s.cfg.PromptRewrite {
 		if StripOutputEfficiency(req) {
 			s.logger.Printf("[req %d] REWRITE: stripped Output efficiency section", reqIdx)
@@ -685,6 +685,34 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		}
 		if StripToneBrevity(req) {
 			s.logger.Printf("[req %d] REWRITE: stripped 'short and concise' from Tone", reqIdx)
+			needsReserialization = true
+		}
+		if RewriteGoldPlating(req) {
+			s.logger.Printf("[req %d] REWRITE: rewritten gold-plating directive", reqIdx)
+			needsReserialization = true
+		}
+		if RewriteErrorHandling(req) {
+			s.logger.Printf("[req %d] REWRITE: rewritten error handling directive", reqIdx)
+			needsReserialization = true
+		}
+		if RewriteThreeLinesRule(req) {
+			s.logger.Printf("[req %d] REWRITE: rewritten three-lines rule", reqIdx)
+			needsReserialization = true
+		}
+		if RewriteSubagentCompleteness(req) {
+			s.logger.Printf("[req %d] REWRITE: rewritten subagent completeness", reqIdx)
+			needsReserialization = true
+		}
+		if RewriteExploreAgentSpeed(req) {
+			s.logger.Printf("[req %d] REWRITE: rewritten explore agent speed bias", reqIdx)
+			needsReserialization = true
+		}
+		if RewriteSubagentCodeSuppression(req) {
+			s.logger.Printf("[req %d] REWRITE: rewritten subagent code suppression", reqIdx)
+			needsReserialization = true
+		}
+		if RewriteScopeMatching(req) {
+			s.logger.Printf("[req %d] REWRITE: rewritten scope matching", reqIdx)
 			needsReserialization = true
 		}
 		InjectAntDirectives(req)

@@ -194,7 +194,13 @@ func (w *CacheStatusWriter) writeStatus() {
 
 		state := "warm"
 		if remaining == 0 {
-			state = "cold"
+			if pingsRemaining > 0 {
+				// Keepalive is maintaining the cache — estimate remaining warm time
+				remaining = pingsRemaining*pingIntervalS + ttlSec
+				state = "warm"
+			} else {
+				state = "cold"
+			}
 		} else if remaining < 60 {
 			state = "cooling"
 		}

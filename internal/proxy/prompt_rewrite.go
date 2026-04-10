@@ -127,3 +127,90 @@ func InjectPersonaTone(req map[string]any, verbosity string) {
 	}
 	AppendSystemBlock(req, "yesmem-tone", tone)
 }
+
+// replaceSystemText finds old in all system blocks and replaces it with repl.
+// Returns true if any block was modified.
+func replaceSystemText(req map[string]any, old, repl string) bool {
+	blocks := ensureSystemArray(req)
+	modified := false
+	for i, b := range blocks {
+		bm, ok := b.(map[string]any)
+		if !ok {
+			continue
+		}
+		text, _ := bm["text"].(string)
+		if !strings.Contains(text, old) {
+			continue
+		}
+		bm["text"] = strings.Replace(text, old, repl, 1)
+		blocks[i] = bm
+		modified = true
+	}
+	if modified {
+		req["system"] = blocks
+	}
+	return modified
+}
+
+// RewriteGoldPlating replaces the anti-gold-plating directive to allow
+// fixing adjacent issues discovered during investigation.
+func RewriteGoldPlating(req map[string]any) bool {
+	return replaceSystemText(req,
+		"Don't add features, refactor code, or make \"improvements\" beyond what was asked. A bug fix doesn't need surrounding code cleaned up. A simple feature doesn't need extra configurability.",
+		"Don't add unrelated features or speculative improvements. However, if adjacent code is broken, fragile, or directly contributes to the problem being solved, fix it as part of the task. A bug fix should address related issues discovered during investigation.",
+	)
+}
+
+// RewriteErrorHandling replaces the error handling cap to encourage
+// validation at real system boundaries.
+func RewriteErrorHandling(req map[string]any) bool {
+	return replaceSystemText(req,
+		"Don't add error handling, fallbacks, or validation for scenarios that can't happen. Trust internal code and framework guarantees. Only validate at system boundaries (user input, external APIs).",
+		"Add error handling and validation at real boundaries where failures can realistically occur (user input, external APIs, I/O, network). Trust internal code and framework guarantees for truly internal paths.",
+	)
+}
+
+// RewriteThreeLinesRule replaces the rigid three-lines rule with
+// judgment-based extraction guidance.
+func RewriteThreeLinesRule(req map[string]any) bool {
+	return replaceSystemText(req,
+		"Three similar lines of code is better than a premature abstraction.",
+		"Use judgment about when to extract shared logic. Avoid premature abstractions for hypothetical reuse, but do extract when duplication causes real maintenance risk.",
+	)
+}
+
+// RewriteSubagentCompleteness replaces the subagent gold-plating cap
+// with a senior-developer thoroughness standard.
+func RewriteSubagentCompleteness(req map[string]any) bool {
+	return replaceSystemText(req,
+		"Complete the task fully\u2014don't gold-plate, but don't leave it half-done.",
+		"Complete the task fully and thoroughly. Do the work that a careful senior developer would do, including edge cases and fixing obviously related issues you discover. Don't add purely cosmetic or speculative improvements unrelated to the task.",
+	)
+}
+
+// RewriteExploreAgentSpeed replaces the explore agent's speed-over-thoroughness
+// bias with a thoroughness-first directive.
+func RewriteExploreAgentSpeed(req map[string]any) bool {
+	return replaceSystemText(req,
+		"NOTE: You are meant to be a fast agent that returns output as quickly as possible. In order to achieve this you must:",
+		"NOTE: Be thorough in your exploration. Use efficient search strategies but do not sacrifice completeness for speed:",
+	)
+}
+
+// RewriteSubagentCodeSuppression replaces the subagent code snippet
+// suppression with a more permissive context-sharing directive.
+func RewriteSubagentCodeSuppression(req map[string]any) bool {
+	return replaceSystemText(req,
+		"Include code snippets only when the exact text is load-bearing (e.g., a bug you found, a function signature the caller asked for) \u2014 do not recap code you merely read.",
+		"Include code snippets when they provide useful context (e.g., bugs found, function signatures, relevant patterns, code that informs the decision). Summarize rather than quoting large blocks verbatim.",
+	)
+}
+
+// RewriteScopeMatching replaces the strict scope-matching directive
+// to allow fixing closely related issues discovered during work.
+func RewriteScopeMatching(req map[string]any) bool {
+	return replaceSystemText(req,
+		"Match the scope of your actions to what was actually requested.",
+		"Match the scope of your actions to what was actually requested, but do address closely related issues you discover during the work when fixing them is clearly the right thing to do.",
+	)
+}
