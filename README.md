@@ -58,6 +58,10 @@ yesmem setup
 
 Or download the binary from [GitHub Releases](https://github.com/carsteneu/yesmem/releases).
 
+### Windows (via WSL2)
+
+YesMem runs natively on Linux and macOS. On Windows, install Claude Code inside [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) and use the Linux binary — everything works identically (Unix sockets, daemon, proxy, hooks). Native Windows support is not available yet.
+
 ### Build from source
 
 ```bash
