@@ -94,13 +94,14 @@ type ProxyConfig struct {
 	CacheTTL              string  `yaml:"cache_ttl"`               // "ephemeral" (5m, default) or "1h" (extended, 2× write cost)
 	UsageDeflationFactor  float64        `yaml:"usage_deflation_factor"`  // scale input_tokens reported to CC (0=off, 0.7=70%)
 	TokenThresholds       map[string]int `yaml:"token_thresholds"`        // model-specific thresholds: {"opus": 180000, "haiku": 130000}
-	PromptUngate  bool `yaml:"prompt_ungate"`  // strip CLAUDE.md subordination disclaimer (default: true)
-	PromptRewrite bool `yaml:"prompt_rewrite"` // strip output-throttling + inject quality directives (default: false)
-	PromptEnhance bool `yaml:"prompt_enhance"` // CLAUDE.md authority boost, comment discipline, persona tone (default: false)
+	PromptUngate  bool   `yaml:"prompt_ungate"`  // strip CLAUDE.md subordination disclaimer (default: true)
+	PromptRewrite bool   `yaml:"prompt_rewrite"` // strip output-throttling + inject quality directives (default: false)
+	PromptEnhance bool   `yaml:"prompt_enhance"` // CLAUDE.md authority boost, comment discipline, persona tone (default: false)
+	EffortFloor   string `yaml:"effort_floor"`   // minimum effort level: "low", "medium", "high", "max" (default: "" = off)
 
 	CacheKeepaliveEnabled bool   `yaml:"cache_keepalive_enabled"` // send keepalive pings to prevent cache expiry (default: true)
-	CacheKeepaliveMode    string `yaml:"cache_keepalive_mode"`    // "auto" (detect from response), "5m", "1h" (default: "auto")
-	CacheKeepalivePings5m int    `yaml:"cache_keepalive_pings_5m"` // pings per idle phase when TTL=5min (default: 1)
+	CacheKeepaliveMode    string `yaml:"cache_keepalive_mode"`    // "auto" (detect from response), "5m", "1h" (default: "5m")
+	CacheKeepalivePings5m int    `yaml:"cache_keepalive_pings_5m"` // pings per idle phase when TTL=5min (default: 5)
 	CacheKeepalivePings1h int    `yaml:"cache_keepalive_pings_1h"` // pings per idle phase when TTL=1h (default: 1)
 }
 
@@ -231,8 +232,8 @@ func Default() *Config {
 			UsageDeflationFactor:  0.7, // experimental: report 70% of actual tokens to CC
 			PromptUngate:          true, // strip CLAUDE.md disclaimer by default (proven safe)
 			CacheKeepaliveEnabled: true,
-			CacheKeepaliveMode:    "auto",
-			CacheKeepalivePings5m: 6,
+			CacheKeepaliveMode:    "5m",
+			CacheKeepalivePings5m: 5,
 			CacheKeepalivePings1h: 1,
 			TokenThresholds: map[string]int{
 				"opus":   180000,

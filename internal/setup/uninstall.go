@@ -78,6 +78,11 @@ func Uninstall() error {
 	removeBundledCommands(home)
 	fmt.Println("✓")
 
+	// Remove bundled skills installed by YesMem
+	fmt.Print("  Removing bundled skills... ")
+	removeBundledSkills(home)
+	fmt.Println("✓")
+
 	// Remove .mcp.json entries
 	fmt.Print("  Cleaning .mcp.json... ")
 	cleanMCPJSON(filepath.Join(home, ".mcp.json"))
@@ -99,6 +104,16 @@ func Uninstall() error {
 	} else {
 		fmt.Println("✓")
 	}
+
+	// Remove yesmem permissions from project-local settings.local.json files
+	fmt.Print("  Cleaning project settings... ")
+	cleanProjectLocalSettings(home)
+	fmt.Println("✓")
+
+	// Remove YesMem auto-generated section from project MEMORY.md files
+	fmt.Print("  Cleaning project memory files... ")
+	cleanProjectMemoryFiles(home)
+	fmt.Println("✓")
 
 	// Remove ANTHROPIC_BASE_URL from shell profiles
 	fmt.Print("  Cleaning shell profiles... ")
@@ -204,11 +219,11 @@ func cleanSettingsJSON(home string) error {
 		delete(settings, "autoCompactEnabled")
 	}
 
-	// Remove ANTHROPIC_BASE_URL from env block
-	removeProxyEnvVar(settings)
-
-	// Restore ANTHROPIC_API_KEY to pre-install value
+	// Restore ANTHROPIC_API_KEY to pre-install value (must run before removeProxyEnvVar)
 	restoreAPIKeyFromState(dataDir, settings)
+
+	// Replace proxy URL: bypass bridge for API-key users, remove for OAuth users
+	removeProxyEnvVar(settings)
 
 	// Remove yesmem MCP permissions
 	cleanMCPPermissions(settings)
@@ -388,12 +403,22 @@ func cleanClaudeJSON(home string) error {
 		return fmt.Errorf("parse claude.json: %w", err)
 	}
 	mcpServers, ok := config["mcpServers"].(map[string]any)
-	if !ok {
-		return nil
+	if ok {
+		delete(mcpServers, "yesmem")
+		if len(mcpServers) == 0 {
+			delete(config, "mcpServers")
+		}
 	}
-	delete(mcpServers, "yesmem")
-	if len(mcpServers) == 0 {
-		delete(config, "mcpServers")
+	// Remove yesmem skill usage entries
+	if skillUsage, ok := config["skillUsage"].(map[string]any); ok {
+		for k := range skillUsage {
+			if strings.Contains(k, "yesmem") {
+				delete(skillUsage, k)
+			}
+		}
+		if len(skillUsage) == 0 {
+			delete(config, "skillUsage")
+		}
 	}
 	out, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
@@ -468,6 +493,21 @@ func removeBundledCommands(home string) {
 	}
 }
 
+// removeBundledSkills removes YesMem-installed skill directories from ~/.claude/skills/.
+func removeBundledSkills(home string) {
+	entries, err := skills.BundledSkills.ReadDir("bundled-skills")
+	if err != nil {
+		return
+	}
+	skillsDir := filepath.Join(home, ".claude", "skills")
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		os.RemoveAll(filepath.Join(skillsDir, e.Name()))
+	}
+}
+
 // mcpToolNames lists all yesmem MCP tool names for permission cleanup.
 var mcpToolNames = []string{
 	"search", "deep_search", "hybrid_search", "remember", "resolve", "resolve_by_text",
@@ -513,5 +553,89 @@ func cleanStatusLine(settings map[string]any) {
 	cmd, _ := sl["command"].(string)
 	if strings.Contains(cmd, "yesmem") {
 		delete(settings, "statusLine")
+	}
+}
+
+// cleanProjectLocalSettings removes mcp__yesmem__* from permissions.allow
+// in each project's .claude/settings.local.json file.
+func cleanProjectLocalSettings(home string) {
+	data, err := os.ReadFile(filepath.Join(home, ".claude.json"))
+	if err != nil {
+		return
+	}
+	var claudeJSON map[string]any
+	if json.Unmarshal(data, &claudeJSON) != nil {
+		return
+	}
+	projects, ok := claudeJSON["projects"].(map[string]any)
+	if !ok {
+		return
+	}
+	for projPath := range projects {
+		localPath := filepath.Join(projPath, ".claude", "settings.local.json")
+		sdata, err := os.ReadFile(localPath)
+		if err != nil {
+			continue
+		}
+		var settings map[string]any
+		if json.Unmarshal(sdata, &settings) != nil {
+			continue
+		}
+		perms, ok := settings["permissions"].(map[string]any)
+		if !ok {
+			continue
+		}
+		allow, ok := perms["allow"].([]any)
+		if !ok {
+			continue
+		}
+		var cleaned []any
+		for _, v := range allow {
+			s, ok := v.(string)
+			if !ok || !strings.HasPrefix(s, "mcp__yesmem__") {
+				cleaned = append(cleaned, v)
+			}
+		}
+		if len(cleaned) == len(allow) {
+			continue
+		}
+		perms["allow"] = cleaned
+		out, err := json.MarshalIndent(settings, "", "  ")
+		if err != nil {
+			continue
+		}
+		os.WriteFile(localPath, out, 0644)
+	}
+}
+
+const yesmemMemoryMarker = "# --- YesMem Auto-Generated"
+
+// cleanProjectMemoryFiles removes the YesMem auto-generated section from
+// each project's MEMORY.md file in ~/.claude/projects/*/memory/.
+func cleanProjectMemoryFiles(home string) {
+	projectsDir := filepath.Join(home, ".claude", "projects")
+	entries, err := os.ReadDir(projectsDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		memPath := filepath.Join(projectsDir, e.Name(), "memory", "MEMORY.md")
+		data, err := os.ReadFile(memPath)
+		if err != nil {
+			continue
+		}
+		content := string(data)
+		idx := strings.Index(content, yesmemMemoryMarker)
+		if idx < 0 {
+			continue
+		}
+		cleaned := strings.TrimRight(content[:idx], " \t\n\r")
+		if cleaned != "" {
+			cleaned += "\n"
+		}
+		os.WriteFile(memPath, []byte(cleaned), 0644)
 	}
 }

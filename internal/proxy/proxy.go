@@ -49,9 +49,10 @@ type Config struct {
 	UsageDeflationFactor float64
 
 	// System prompt rewriting
-	PromptUngate  bool // strip "may or may not be relevant" disclaimer from CLAUDE.md injection
-	PromptRewrite bool // strip "Output efficiency" + "short and concise", inject Ant-quality directives
-	PromptEnhance bool // CLAUDE.md authority reinforcement, comment discipline, persona-based tone
+	PromptUngate  bool   // strip "may or may not be relevant" disclaimer from CLAUDE.md injection
+	PromptRewrite bool   // strip "Output efficiency" + "short and concise", inject Ant-quality directives
+	PromptEnhance bool   // CLAUDE.md authority reinforcement, comment discipline, persona-based tone
+	EffortFloor   string // minimum effort level: "low", "medium", "high", "max" (empty = off)
 
 	// Cache keepalive
 	CacheKeepaliveEnabled bool
@@ -735,6 +736,14 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		}
 		s.logger.Printf("[req %d] ENHANCE: injected authority + persona tone", reqIdx)
 		needsReserialization = true
+	}
+
+	// effort_floor: ensure output_config.effort is at least the configured minimum
+	if s.cfg.EffortFloor != "" {
+		if EnforceEffortFloor(req, s.cfg.EffortFloor) {
+			s.logger.Printf("[req %d] EFFORT: enforced floor=%s", reqIdx, s.cfg.EffortFloor)
+			needsReserialization = true
+		}
 	}
 
 	// Inject identity hint on first message of a thread so Claude knows the briefing is from itself.

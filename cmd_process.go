@@ -51,6 +51,7 @@ func runProxy() {
 		PromptUngate:         cfg.Proxy.PromptUngate,
 		PromptRewrite:        cfg.Proxy.PromptRewrite,
 		PromptEnhance:        cfg.Proxy.PromptEnhance,
+		EffortFloor:          cfg.Proxy.EffortFloor,
 		CacheKeepaliveEnabled: cfg.Proxy.CacheKeepaliveEnabled,
 		CacheKeepaliveMode:    cfg.Proxy.CacheKeepaliveMode,
 		CacheKeepalivePings5m: cfg.Proxy.CacheKeepalivePings5m,
