@@ -113,15 +113,23 @@ func setProxyEnvVar(settings map[string]any) {
 	settings["env"] = env
 }
 
-// removeProxyEnvVar removes ANTHROPIC_BASE_URL from the settings.json env block.
+// removeProxyEnvVar replaces the yesmem proxy URL in ANTHROPIC_BASE_URL.
+// For API-key users (no subscription), we set it to the real API endpoint
+// to bypass Claude Code's bridge which requires a subscription.
+// For non-API-key users, we remove it entirely.
 func removeProxyEnvVar(settings map[string]any) {
 	env, ok := settings["env"].(map[string]any)
 	if !ok {
 		return
 	}
-	delete(env, "ANTHROPIC_BASE_URL")
-	if len(env) == 0 {
-		delete(settings, "env")
+	// If user has an API key, point to real API to bypass bridge
+	if _, hasKey := env["ANTHROPIC_API_KEY"]; hasKey {
+		env["ANTHROPIC_BASE_URL"] = "https://api.anthropic.com"
+	} else {
+		delete(env, "ANTHROPIC_BASE_URL")
+		if len(env) == 0 {
+			delete(settings, "env")
+		}
 	}
 }
 

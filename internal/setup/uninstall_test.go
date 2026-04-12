@@ -269,6 +269,189 @@ func TestRestorePrimaryApiKeyFromState_RestoresOAuthAccount(t *testing.T) {
 	}
 }
 
+func TestRemoveProxyEnvVar_SetsRealAPIForKeyUsers(t *testing.T) {
+	settings := map[string]any{
+		"env": map[string]any{
+			"ANTHROPIC_API_KEY":  "sk-ant-key",
+			"ANTHROPIC_BASE_URL": "http://localhost:9099",
+		},
+	}
+	removeProxyEnvVar(settings)
+	env := settings["env"].(map[string]any)
+	if env["ANTHROPIC_BASE_URL"] != "https://api.anthropic.com" {
+		t.Fatalf("expected https://api.anthropic.com, got %v", env["ANTHROPIC_BASE_URL"])
+	}
+}
+
+func TestRemoveProxyEnvVar_RemovesForNonKeyUsers(t *testing.T) {
+	settings := map[string]any{
+		"env": map[string]any{
+			"ANTHROPIC_BASE_URL": "http://localhost:9099",
+		},
+	}
+	removeProxyEnvVar(settings)
+	if _, ok := settings["env"]; ok {
+		t.Fatal("env block should be removed when no API key and no other vars")
+	}
+}
+
+func TestUninstallFlow_RestoreKeyThenSetBaseURL(t *testing.T) {
+	dir := t.TempDir()
+	state := map[string]any{"envAPIKey": "sk-ant-original"}
+	data, _ := json.Marshal(state)
+	os.WriteFile(filepath.Join(dir, "install-state.json"), data, 0644)
+
+	settings := map[string]any{
+		"env": map[string]any{
+			"ANTHROPIC_API_KEY":  "sk-ant-installed",
+			"ANTHROPIC_BASE_URL": "http://localhost:9099",
+		},
+	}
+	restoreAPIKeyFromState(dir, settings)
+	removeProxyEnvVar(settings)
+
+	env := settings["env"].(map[string]any)
+	if env["ANTHROPIC_API_KEY"] != "sk-ant-original" {
+		t.Fatalf("expected sk-ant-original, got %v", env["ANTHROPIC_API_KEY"])
+	}
+	if env["ANTHROPIC_BASE_URL"] != "https://api.anthropic.com" {
+		t.Fatalf("expected https://api.anthropic.com, got %v", env["ANTHROPIC_BASE_URL"])
+	}
+}
+
+func TestUninstallFlow_NoKeyRemovesBaseURL(t *testing.T) {
+	dir := t.TempDir()
+	state := map[string]any{"envAPIKey": nil}
+	data, _ := json.Marshal(state)
+	os.WriteFile(filepath.Join(dir, "install-state.json"), data, 0644)
+
+	settings := map[string]any{
+		"env": map[string]any{
+			"ANTHROPIC_API_KEY":  "sk-ant-installed",
+			"ANTHROPIC_BASE_URL": "http://localhost:9099",
+		},
+	}
+	restoreAPIKeyFromState(dir, settings)
+	removeProxyEnvVar(settings)
+
+	env, ok := settings["env"].(map[string]any)
+	if !ok {
+		return // env block removed entirely, fine
+	}
+	if _, hasKey := env["ANTHROPIC_API_KEY"]; hasKey {
+		t.Fatal("API key should be removed")
+	}
+	if _, hasURL := env["ANTHROPIC_BASE_URL"]; hasURL {
+		t.Fatal("BASE_URL should be removed when no API key")
+	}
+}
+
+func TestCleanProjectLocalSettings_RemovesYesmemPermissions(t *testing.T) {
+	home := t.TempDir()
+
+	// Create a project directory with settings.local.json containing yesmem permissions
+	projDir := filepath.Join(home, "myproject", ".claude")
+	os.MkdirAll(projDir, 0755)
+	settings := map[string]any{
+		"permissions": map[string]any{
+			"allow": []any{
+				"WebSearch",
+				"mcp__yesmem__search",
+				"mcp__yesmem__remember",
+				"Bash(git *)",
+			},
+		},
+	}
+	data, _ := json.Marshal(settings)
+	os.WriteFile(filepath.Join(projDir, "settings.local.json"), data, 0644)
+
+	// Create .claude.json with project entry
+	claudeJSON := map[string]any{
+		"projects": map[string]any{
+			filepath.Join(home, "myproject"): map[string]any{
+				"hasTrustDialogAccepted": true,
+			},
+		},
+	}
+	cdata, _ := json.Marshal(claudeJSON)
+	os.WriteFile(filepath.Join(home, ".claude.json"), cdata, 0600)
+
+	cleanProjectLocalSettings(home)
+
+	result, _ := os.ReadFile(filepath.Join(projDir, "settings.local.json"))
+	var got map[string]any
+	json.Unmarshal(result, &got)
+	perms := got["permissions"].(map[string]any)["allow"].([]any)
+	for _, p := range perms {
+		if strings.Contains(p.(string), "yesmem") {
+			t.Fatalf("yesmem permission should be removed: %v", p)
+		}
+	}
+	if len(perms) != 2 {
+		t.Fatalf("expected 2 remaining permissions, got %d: %v", len(perms), perms)
+	}
+}
+
+func TestCleanProjectLocalSettings_NoProjectsNoPanic(t *testing.T) {
+	home := t.TempDir()
+	// No .claude.json — must not panic
+	cleanProjectLocalSettings(home)
+}
+
+func TestCleanClaudeJSON_RemovesYesmemSkillUsage(t *testing.T) {
+	home := t.TempDir()
+	claudeJSON := `{"mcpServers":{},"skillUsage":{"yesmem-sessions":{"usageCount":3},"yesmem-recall":{"usageCount":1},"commit":{"usageCount":5}},"numStartups":10}`
+	os.WriteFile(filepath.Join(home, ".claude.json"), []byte(claudeJSON), 0600)
+
+	cleanClaudeJSON(home)
+
+	data, _ := os.ReadFile(filepath.Join(home, ".claude.json"))
+	var cfg map[string]any
+	json.Unmarshal(data, &cfg)
+	su, ok := cfg["skillUsage"].(map[string]any)
+	if !ok {
+		t.Fatal("skillUsage should still exist (has non-yesmem entries)")
+	}
+	if _, has := su["yesmem-sessions"]; has {
+		t.Fatal("yesmem-sessions should be removed")
+	}
+	if _, has := su["yesmem-recall"]; has {
+		t.Fatal("yesmem-recall should be removed")
+	}
+	if _, has := su["commit"]; !has {
+		t.Fatal("non-yesmem skill should be preserved")
+	}
+	if cfg["numStartups"] != float64(10) {
+		t.Fatal("other fields should be preserved")
+	}
+}
+
+func TestCleanClaudeJSON_RemovesEmptySkillUsage(t *testing.T) {
+	home := t.TempDir()
+	claudeJSON := `{"skillUsage":{"yesmem-sessions":{"usageCount":3}},"numStartups":5}`
+	os.WriteFile(filepath.Join(home, ".claude.json"), []byte(claudeJSON), 0600)
+
+	cleanClaudeJSON(home)
+
+	data, _ := os.ReadFile(filepath.Join(home, ".claude.json"))
+	var cfg map[string]any
+	json.Unmarshal(data, &cfg)
+	if _, ok := cfg["skillUsage"]; ok {
+		t.Fatal("skillUsage should be removed when empty after cleanup")
+	}
+}
+
+func TestCleanClaudeJSON_NoSkillUsageNoPanic(t *testing.T) {
+	home := t.TempDir()
+	claudeJSON := `{"numStartups":5}`
+	os.WriteFile(filepath.Join(home, ".claude.json"), []byte(claudeJSON), 0600)
+
+	err := cleanClaudeJSON(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRestorePrimaryApiKeyFromState_RestoresKey(t *testing.T) {
 	home := t.TempDir()
 	dataDir := t.TempDir()
