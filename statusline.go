@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/user"
 	"strings"
-	"time"
 
 	"github.com/carsteneu/yesmem/internal/proxy"
 )
@@ -153,20 +152,16 @@ func formatTTL(statusPath string, tokK int, coldCost float64) (string, string) {
 		return "", ""
 	}
 
-	now := time.Now().Unix()
-	remaining := int64(status.TTLSeconds) - (now - status.LastRequestTS)
-
 	lines := proxy.FormatStatusLines(status)
 
 	var sb strings.Builder
 
-	if remaining > 0 {
-		color := cBoldGrn
-		if remaining < 60 {
-			color = cBoldYel
-		}
-		sb.WriteString(fmt.Sprintf(" %s%s%s", color, lines.CacheLine, cReset))
-	} else {
+	switch status.CacheState {
+	case "warm":
+		sb.WriteString(fmt.Sprintf(" %s%s%s", cBoldGrn, lines.CacheLine, cReset))
+	case "cooling":
+		sb.WriteString(fmt.Sprintf(" %s%s%s", cBoldYel, lines.CacheLine, cReset))
+	default: // cold
 		sb.WriteString(fmt.Sprintf(" %s%s%s", cBoldRed, lines.CacheLine, cReset))
 	}
 

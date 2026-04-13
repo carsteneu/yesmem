@@ -255,6 +255,10 @@ func (ka *CacheKeepalive) doHTTPPing(body []byte, apiKey string) (cacheRead, cac
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
 
+	if resp.StatusCode != http.StatusOK && ka.cfg.Logger != nil {
+		ka.cfg.Logger.Printf("[keepalive] ping error: HTTP %d body=%s", resp.StatusCode, truncateBytes(respBody, 200))
+	}
+
 	var usage struct {
 		Usage struct {
 			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
@@ -274,6 +278,7 @@ func buildPingBody(original []byte) []byte {
 	m["max_tokens"] = json.RawMessage("1")
 	m["stream"] = json.RawMessage("false")
 	delete(m, "metadata")
+	delete(m, "context_management")
 	out, err := json.Marshal(m)
 	if err != nil {
 		return original
@@ -298,4 +303,11 @@ func (r *bytesReaderImpl) Read(p []byte) (int, error) {
 	n := copy(p, r.data[r.pos:])
 	r.pos += n
 	return n, nil
+}
+
+func truncateBytes(b []byte, max int) string {
+	if len(b) <= max {
+		return string(b)
+	}
+	return string(b[:max]) + "…"
 }
