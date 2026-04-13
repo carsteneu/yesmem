@@ -1,10 +1,13 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -238,6 +241,104 @@ func TestCacheKeepalive_PerThreadTimerIndependence(t *testing.T) {
 		t.Errorf("thread-A should have received pings (independent timer), got 0 — shared timer was starved by thread-B resets")
 	}
 	t.Logf("thread-A pings: %d, thread-B pings: %d", aPings, pingsPerThread["thread-B"].Load())
+}
+
+func TestBuildPingBody_StripsThinkingAndTools(t *testing.T) {
+	original := []byte(`{"model":"claude-opus-4-6","max_tokens":64000,"thinking":{"type":"adaptive"},"tools":[{"name":"test"}],"context_management":{"pruning":true},"messages":[{"role":"user","content":"test"}],"system":[{"type":"text","text":"hello","cache_control":{"type":"ephemeral"}}],"metadata":{"user_id":"u1"}}`)
+
+	result := buildPingBody(original)
+
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(result, &m); err != nil {
+		t.Fatalf("failed to unmarshal ping body: %v", err)
+	}
+
+	if _, ok := m["thinking"]; !ok {
+		t.Error("ping body must preserve 'thinking' — adaptive works with max_tokens=1")
+	}
+	if _, ok := m["context_management"]; ok {
+		t.Error("ping body must not contain 'context_management' — rejected by API")
+	}
+	if _, ok := m["metadata"]; ok {
+		t.Error("ping body must not contain 'metadata'")
+	}
+
+	// tools MUST be preserved — they are part of the cache prefix
+	if _, ok := m["tools"]; !ok {
+		t.Error("ping body must preserve 'tools' (part of cache prefix)")
+	}
+
+	var mt int
+	json.Unmarshal(m["max_tokens"], &mt)
+	if mt != 1 {
+		t.Errorf("expected max_tokens=1, got %d", mt)
+	}
+
+	if _, ok := m["system"]; !ok {
+		t.Error("ping body must preserve 'system' (cache breakpoints)")
+	}
+	if _, ok := m["messages"]; !ok {
+		t.Error("ping body must preserve 'messages'")
+	}
+	if _, ok := m["model"]; !ok {
+		t.Error("ping body must preserve 'model'")
+	}
+}
+
+func TestCacheKeepalive_PingLogsErrorResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(400)
+		fmt.Fprintf(w, `{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: 1 is less than minimum"}}`)
+	}))
+	defer srv.Close()
+
+	var logBuf bytes.Buffer
+	logger := log.New(&logBuf, "", 0)
+
+	ka := NewCacheKeepalive(CacheKeepaliveConfig{
+		Target: srv.URL, Mode: "5m", Pings5m: 1, IntervalOverride: 10 * time.Millisecond,
+		Logger: logger,
+	})
+	body := []byte(`{"model":"test","max_tokens":1024,"messages":[{"role":"user","content":"test"}]}`)
+	ka.Reset("test-thread", body, "test-key")
+	time.Sleep(80 * time.Millisecond)
+	ka.Stop()
+
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "400") {
+		t.Errorf("expected log to contain HTTP status 400, got: %s", logOutput)
+	}
+}
+
+func TestCacheKeepalive_PingStripsThinkingEndToEnd(t *testing.T) {
+	var receivedBody map[string]json.RawMessage
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&receivedBody)
+		fmt.Fprintf(w, `{"type":"message","usage":{"cache_read_input_tokens":100}}`)
+	}))
+	defer srv.Close()
+
+	ka := NewCacheKeepalive(CacheKeepaliveConfig{
+		Target: srv.URL, Mode: "5m", Pings5m: 1, IntervalOverride: 10 * time.Millisecond,
+	})
+	body := []byte(`{"model":"test","max_tokens":64000,"thinking":{"type":"adaptive"},"tools":[{"name":"bash"}],"messages":[{"role":"user","content":"test"}]}`)
+	ka.Reset("test-thread", body, "test-key")
+	time.Sleep(80 * time.Millisecond)
+	ka.Stop()
+
+	if receivedBody == nil {
+		t.Fatal("server received no ping request")
+	}
+	if _, ok := receivedBody["thinking"]; !ok {
+		t.Error("ping request must preserve 'thinking' field (cache prefix)")
+	}
+	// tools MUST be present — part of cache prefix
+	if _, ok := receivedBody["tools"]; !ok {
+		t.Error("ping request must preserve 'tools' field (cache prefix)")
+	}
+	if _, ok := receivedBody["context_management"]; ok {
+		t.Error("ping request must not contain 'context_management'")
+	}
 }
 
 func TestCacheKeepalive_EffectivePings(t *testing.T) {

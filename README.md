@@ -1,10 +1,32 @@
 # YesMem
 
+[![CI](https://github.com/carsteneu/yesmem/actions/workflows/ci.yml/badge.svg)](https://github.com/carsteneu/yesmem/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/carsteneu/yesmem)](https://github.com/carsteneu/yesmem/releases)
+[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)](https://go.dev)
+[![License: FSL-1.1-ALv2](https://img.shields.io/badge/License-FSL--1.1--ALv2-blue)](LICENSE)
+[![LoCoMo](https://img.shields.io/badge/LoCoMo-0.87-brightgreen)](docs/BENCHMARK.md)
+
 **Adaptive context window for Claude Code — every session starts where it matters, not at zero.**
 
-Claude Code has a 1M context window. YesMem makes it adaptive — resize on the fly, lossless. Fresh sessions arrive loaded with what matters. Long sessions stay sharp because stale context collapses automatically. The window gets smaller AND bigger AND smarter.
+Sessions that never forget. Context that collapses losslessly.
+Knowledge that self-corrects. One binary, zero setup friction.
 
-### Where you start
+
+## Install
+
+```bash
+# One-line install (Linux/macOS)
+curl -fsSL https://raw.githubusercontent.com/carsteneu/yesmem/main/scripts/install.sh | bash
+
+# Run setup (MCP server, hooks, proxy, services — one command)
+yesmem setup
+
+# Done. Open a new Claude Code session.
+```
+
+Or download the binary from [GitHub Releases](https://github.com/carsteneu/yesmem/releases).
+
+## Why YesMem
 
 Tuesday morning. New session. You type: *"What did we do last Tuesday?"* Claude tells you — the refactoring, the bug in the auth middleware, the decision to switch to connection pooling. You ask: *"What was still open?"* Claude shows you. You ask: *"Why did we stop?"* Claude explains — you hit a dependency issue, decided to wait for the upstream fix. You ask: *"What did you think about that approach?"* Claude gives you its honest assessment from last week's context, not a guess.
 
@@ -44,19 +66,6 @@ That's where you start. Not from zero. From where it matters.
 - **Your data stays yours,** everything in `~/.claude/yesmem/`. Nothing leaves your machine.
 - **Free:** FSL-1.1-ALv2. Use it for anything except building a competing product. After 2 years, Apache 2.0.
 
-## Install
-
-```bash
-# One-line install (Linux/macOS)
-curl -fsSL https://raw.githubusercontent.com/carsteneu/yesmem/main/scripts/install.sh | bash
-
-# Run setup (MCP server, hooks, proxy, services — one command)
-yesmem setup
-
-# Done. Open a new Claude Code session.
-```
-
-Or download the binary from [GitHub Releases](https://github.com/carsteneu/yesmem/releases).
 
 ### Windows (via WSL2)
 
@@ -86,7 +95,7 @@ All data local. No cloud. No external dependencies. Pure Go — no CGo, no C com
 
 ## Features
 
-See **[Features.md](Features.md)** for the complete technical reference.
+50 MCP tools · ~130 daemon RPCs · 53 CLI commands — **[full reference →](Features.md)**
 
 ### Find & Remember
 - **Find anything across all sessions** — full-text + semantic search combined via Reciprocal Rank Fusion
@@ -133,6 +142,18 @@ The proxy is **optional**. YesMem works fully without it — all MCP tools, brie
 - **~53 CLI commands** — daemon, proxy, setup, extraction, benchmarking, export/import, cost tracking
 - **~130 daemon RPC methods** — full programmatic access
 
+## How YesMem Differs
+
+| Capability | Typical memory tools | YesMem |
+|---|---|---|
+| Knowledge lifecycle | Append-only, manual cleanup | Auto-supersede, decay, contradiction detection |
+| Trust model | All sources equal | 4-tier hierarchy (user > agreed > suggested > extracted) |
+| Context management | External RAG or full rewrite | Transparent proxy — lossless collapse, prompt cache exploitation |
+| Integration | Custom hooks, config files | `yesmem setup` — one command, zero config |
+| Data location | Cloud/hybrid | Local only (`~/.claude/yesmem/`) |
+| Search | Keyword OR semantic | Hybrid BM25 + 512d vectors, Reciprocal Rank Fusion |
+| Architecture | Python/Node service + dependencies | Single Go binary, no CGo, no runtime dependencies |
+
 ## Benchmarks
 
 Real numbers from production use (1000+ sessions, `yesmem stats` and `yesmem benchmark`).
@@ -158,6 +179,8 @@ Real numbers from production use (1000+ sessions, `yesmem stats` and `yesmem ben
 | Recovery | Full, all collapsed content retrievable via `deep_search()` |
 
 The proxy collapses in cycles (sawtooth pattern): context grows, hits the threshold, gets stubbed down, grows again. Prompt cache breakpoints are preserved across cycles. The API never sees more than your configured limit. Session keeps running indefinitely.
+
+![Context collapsing in action — 2M tokens of conversation compressed to 15% context usage](docs/images/max_context.png)
 
 ### LoCoMo benchmark
 
@@ -215,8 +238,13 @@ YesMem works with both **API keys** (pay-per-token) and **subscription plans** (
 
 ## Built by
 
-Papoo Software & Media GmbH, Bonn, Germany. In production since March 2026, startet at November 2025.
+Papoo Software & Media GmbH, Bonn, Germany. In production since March 2026. Private development since November 2025, public since April 2026.
 
 ## Sponsor
 
-Sponsored by [ccm19.de](https://www.ccm19.de/en/) - the Cookie Consent Manager from Germany.
+<details>
+<summary>Sponsored by CCM19</summary>
+
+[ccm19.de](https://www.ccm19.de/en/) — the Cookie Consent Manager from Germany.
+
+</details>
