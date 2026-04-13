@@ -167,6 +167,7 @@ func (ka *CacheKeepalive) Stop() {
 type KeepaliveStatus struct {
 	Mode           string // "auto", "5m", "1h"
 	IntervalS      int    // current ping interval in seconds
+	TotalPings     int    // configured total pings (constant)
 	PingsRemaining int    // max pings remaining across any single thread
 	ActiveThreads  int    // number of tracked threads
 }
@@ -184,6 +185,7 @@ func (ka *CacheKeepalive) Status() KeepaliveStatus {
 	return KeepaliveStatus{
 		Mode:           ka.cfg.Mode,
 		IntervalS:      int(ka.effectiveInterval().Seconds()),
+		TotalPings:     ka.effectivePings(),
 		PingsRemaining: maxRemaining,
 		ActiveThreads:  len(ka.threads),
 	}
