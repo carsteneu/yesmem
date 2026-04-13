@@ -37,7 +37,7 @@ def parse_log(log_path, target_date=None):
     tid_re = re.compile(
         r'\[proxy\] (\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}) '
         r'(?:\x1b\[\d+m|\[[\d;]*m)*'  # skip ANSI escape codes
-        r'\[req (\d+) memory tid=([a-f0-9]+)\]'
+        r'\[req (\d+) (?:memory|yesmem) tid=([a-f0-9][-a-f0-9]*[a-f0-9])\]'
     )
 
     # Single-pass: TID lines come before cache lines for same req_num.
@@ -301,12 +301,13 @@ def main():
     total_reqs = sum(len(e) for e in threads.values())
     print(f"  Threads with >= {args.min_reqs} reqs: {len(threads)} ({total_reqs} requests)")
 
-    # --- Actual costs (all events, not just those with TIDs) ---
+    # --- Actual costs (TID-matched events only, excludes subagents) ---
+    tid_events = [e for events_list in threads.values() for e in events_list]
     print(f"\n{'='*70}")
-    print(f"ACTUAL COSTS (from log data, ALL {len(events)} events)")
+    print(f"ACTUAL COSTS (TID-matched sessions only, {len(tid_events)} events)")
     print(f"{'='*70}")
 
-    all_events = events  # use ALL events for actual cost, not just threaded ones
+    all_events = tid_events
     actual = compute_actual_cost(all_events)
 
     print(f"  Read:      {actual['read_tokens']/1e6:8.1f}M tokens  ${actual['cost_read']:8.2f}")

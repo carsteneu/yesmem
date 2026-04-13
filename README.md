@@ -174,7 +174,7 @@ Real numbers from production use (1000+ sessions, `yesmem stats` and `yesmem ben
 |--------|-------|
 | Collapsing ratio | 87-98% (measured across sessions) |
 | Configurable window | 100k - 1M tokens (per-model thresholds) |
-| Decay stages | 4 (fresh → middle → old → archived) |
+| Pipeline | Stubify → progressive decay → collapse to archive block |
 | Protected content | Decisions, pivot moments, active debug pairs |
 | Recovery | Full, all collapsed content retrievable via `deep_search()` |
 
