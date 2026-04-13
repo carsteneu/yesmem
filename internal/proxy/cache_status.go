@@ -172,11 +172,12 @@ func (w *CacheStatusWriter) writeStatus() {
 
 	// Keepalive status (shared across threads)
 	var kaMode string
-	var pingIntervalS, pingsRemaining, activeThreads int
+	var pingIntervalS, pingsRemaining, totalPings, activeThreads int
 	if ka != nil {
 		ks := ka.Status()
 		kaMode = ks.Mode
 		pingIntervalS = ks.IntervalS
+		totalPings = ks.TotalPings
 		pingsRemaining = ks.PingsRemaining
 		activeThreads = ks.ActiveThreads
 	}
@@ -194,9 +195,15 @@ func (w *CacheStatusWriter) writeStatus() {
 
 		state := "warm"
 		if remaining == 0 {
-			if pingsRemaining > 0 {
-				// Keepalive is maintaining the cache — estimate remaining warm time
-				remaining = pingsRemaining*pingIntervalS + ttlSec
+			if totalPings > 0 && pingIntervalS > 0 {
+				elapsed := int(time.Since(ts.lastRequest).Seconds())
+				totalCoverage := totalPings*pingIntervalS + ttlSec
+				remaining = totalCoverage - elapsed
+				if remaining < 0 {
+					remaining = 0
+				}
+			}
+			if remaining > 0 {
 				state = "warm"
 			} else {
 				state = "cold"
