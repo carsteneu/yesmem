@@ -174,8 +174,9 @@ Real numbers from production use (1000+ sessions, `yesmem stats` and `yesmem ben
 |--------|-------|
 | Collapsing ratio | 87-98% (measured across sessions) |
 | Configurable window | 100k - 1M tokens (per-model thresholds) |
-| Pipeline | Stubify → progressive decay → collapse to archive block |
+| Pipeline | Eager stub → Stubify → progressive decay → collapse to archive block |
 | Protected content | Decisions, pivot moments, active debug pairs |
+| Eager stubbing | Tool results compressed in-place after processing (~25% savings, zero cache cost) |
 | Recovery | Full, all collapsed content retrievable via `deep_search()` |
 
 The proxy collapses in cycles (sawtooth pattern): context grows, hits the threshold, gets stubbed down, grows again. Prompt cache breakpoints are preserved across cycles. The API never sees more than your configured limit. Session keeps running indefinitely.
