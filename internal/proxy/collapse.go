@@ -197,9 +197,6 @@ func buildArchiveBlock(start, end int, stats compactionStats, threadID string) s
 		sb.WriteString("\n\nWendepunkte:")
 		for _, p := range pivots {
 			content := strings.ReplaceAll(p.Content, "\n", " ")
-			if len(content) > 150 {
-				content = content[:150] + "..."
-			}
 			fmt.Fprintf(&sb, "\n  - %s", content)
 		}
 	}
@@ -208,9 +205,6 @@ func buildArchiveBlock(start, end int, stats compactionStats, threadID string) s
 		sb.WriteString("\n\nGotchas:")
 		for _, g := range gotchas {
 			content := strings.ReplaceAll(g.Content, "\n", " ")
-			if len(content) > 120 {
-				content = content[:120] + "..."
-			}
 			fmt.Fprintf(&sb, "\n  - %s", content)
 		}
 	}
@@ -219,9 +213,6 @@ func buildArchiveBlock(start, end int, stats compactionStats, threadID string) s
 		sb.WriteString("\n\nOffen:")
 		for _, u := range unfinished {
 			content := strings.ReplaceAll(u.Content, "\n", " ")
-			if len(content) > 120 {
-				content = content[:120] + "..."
-			}
 			fmt.Fprintf(&sb, "\n  - %s", content)
 		}
 	}

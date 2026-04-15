@@ -160,9 +160,6 @@ func NewExtractAndEvaluateConfig(model string) ForkConfig {
 			// Set session flavor on all learnings for this session
 			if result.SessionFlavor != "" && resp.SessionID != "" {
 				flavor := result.SessionFlavor
-				if runes := []rune(flavor); len(runes) > 80 {
-					flavor = string(runes[:80])
-				}
 				s.queryDaemon("fork_set_session_flavor", map[string]any{
 					"session_id": resp.SessionID,
 					"flavor":     flavor,

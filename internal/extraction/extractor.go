@@ -668,12 +668,7 @@ func parseExtractionResponse(response, sessionID, model string) ([]models.Learni
 	if intensity > 1.0 {
 		intensity = 1.0
 	}
-	// Truncate flavor to 80 runes (UTF-8 safe)
 	flavor := result.SessionFlavor
-	runes := []rune(flavor)
-	if len(runes) > 80 {
-		flavor = string(runes[:80])
-	}
 
 	domain := result.Domain
 	if domain == "" {

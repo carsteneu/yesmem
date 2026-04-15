@@ -542,6 +542,37 @@ func TestBuildArchiveBlock_WithLearnings(t *testing.T) {
 	}
 }
 
+func TestBuildArchiveBlock_NoTruncation(t *testing.T) {
+	longGotcha := "EagerStubToolResults ist der Root Cause für Cache-Miss-Kaskaden nach Collapse. Mechanismus: Turn N schickt Original-Content, Turn N+1 stubbt denselben Content → Prefix bricht."
+	longPivot := "BESTÄTIGT durch A/B-Test: EagerStubToolResults ist Root Cause für Cache-Miss-Kaskaden. Kontrollierter Test: ecb7aee (ohne Eager Stub) = 99% hit bei $0.07/Request."
+	longOpen := "Scanner online testen und finalisieren (Free Scan Feature auf Produktion) — Backend fertig, Frontend-Integration noch offen, Testdaten müssen noch generiert werden."
+
+	stats := compactionStats{
+		ToolStats: "Read×3",
+		Learnings: []ArchiveLearning{
+			{Category: "gotcha", Content: longGotcha, CreatedAt: time.Date(2026, 4, 14, 15, 0, 0, 0, time.UTC)},
+			{Category: "pivot_moment", Content: longPivot, CreatedAt: time.Date(2026, 4, 14, 16, 0, 0, 0, time.UTC)},
+			{Category: "unfinished", Content: longOpen, CreatedAt: time.Date(2026, 4, 14, 17, 0, 0, 0, time.UTC)},
+		},
+	}
+
+	block := buildArchiveBlock(1, 100, stats, "test-thread-123")
+
+	// Full content must appear — no truncation with "..."
+	if !strings.Contains(block, "Prefix bricht.") {
+		t.Error("gotcha was truncated — expected full content including 'Prefix bricht.'")
+	}
+	if !strings.Contains(block, "$0.07/Request.") {
+		t.Error("pivot was truncated — expected full content including '$0.07/Request.'")
+	}
+	if !strings.Contains(block, "generiert werden.") {
+		t.Error("unfinished was truncated — expected full content including 'generiert werden.'")
+	}
+	if strings.Contains(block, "...") {
+		t.Error("found '...' in block — truncation should be removed")
+	}
+}
+
 func TestExtractTimeline_YesmemMCPTools(t *testing.T) {
 	msgs := []any{
 		map[string]any{"role": "system", "content": "sys"},
