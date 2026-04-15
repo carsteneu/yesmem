@@ -24,6 +24,16 @@ func (s *Store) InsertLearning(l *models.Learning) (int64, error) {
 	return ids[0], nil
 }
 
+// HasPulseForSession checks if a pulse learning already exists for the given session.
+func (s *Store) HasPulseForSession(sessionID string) (bool, error) {
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM learnings WHERE session_id = ? AND category = 'pulse'", sessionID).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("check pulse for %s: %w", sessionID, err)
+	}
+	return count > 0, nil
+}
+
 // InsertLearningBatch inserts multiple learnings in a single transaction.
 // Returns the IDs of all inserted learnings. One COMMIT instead of N reduces
 // FTS5 write contention that blocks concurrent BM25 reads.

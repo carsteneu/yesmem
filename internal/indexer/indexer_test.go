@@ -3,6 +3,7 @@ package indexer
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/carsteneu/yesmem/internal/archive"
@@ -154,6 +155,48 @@ func TestNormalizeCommand(t *testing.T) {
 		if got != tt.expected {
 			t.Errorf("normalizeCommand(%q) = %q, want %q", tt.cmd, got, tt.expected)
 		}
+	}
+}
+
+func TestIndexSession_PulseFromAwaySummary(t *testing.T) {
+	idx, store := setupIndexer(t)
+
+	fixture := filepath.Join("..", "parser", "testdata", "session-with-away-summary.jsonl")
+	if _, err := os.Stat(fixture); err != nil {
+		t.Skipf("fixture not found: %v", err)
+	}
+
+	if err := idx.IndexSession(fixture); err != nil {
+		t.Fatalf("IndexSession: %v", err)
+	}
+
+	// Pulse learning should have been created
+	learnings, err := store.GetLearningsByCategory("pulse", "test", 10)
+	if err != nil {
+		t.Fatalf("GetLearningsByCategory: %v", err)
+	}
+	if len(learnings) == 0 {
+		t.Fatal("expected a pulse learning from away_summary, got none")
+	}
+
+	pulse := learnings[0]
+	if pulse.SessionID != "pulse-test-001" {
+		t.Errorf("session_id: got %q, want %q", pulse.SessionID, "pulse-test-001")
+	}
+	if pulse.Source != "system_captured" {
+		t.Errorf("source: got %q, want %q", pulse.Source, "system_captured")
+	}
+	if pulse.Content == "" || !strings.Contains(pulse.Content, "Tree-sitter-Integration") {
+		t.Errorf("content missing expected text, got: %q", pulse.Content)
+	}
+
+	// Re-index should NOT create duplicate pulse
+	if err := idx.IndexSession(fixture); err != nil {
+		t.Fatalf("re-IndexSession: %v", err)
+	}
+	learnings2, _ := store.GetLearningsByCategory("pulse", "test", 10)
+	if len(learnings2) != len(learnings) {
+		t.Errorf("re-index created duplicate pulse: got %d, want %d", len(learnings2), len(learnings))
 	}
 }
 
