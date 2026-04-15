@@ -124,6 +124,7 @@ The proxy is **optional**. YesMem works fully without it — all MCP tools, brie
 - **Claude adapts to your style** — 50+ traits across 6 dimensions, evolving from how you work
 - **Pick up where you left off** — immersive handovers: "last time you were debugging the race condition in the proxy..."
 - **Every session starts ready** — open tasks, project context, your communication style — before you type a character
+- **CC /recap captured** — when Claude Code generates session recaps after idle, YesMem captures them as pulse learnings and weaves them into the session timeline
 
 ### Parallel Work
 - **Spawn parallel agents** — heartbeat monitoring, crash recovery, cascade shutdown
