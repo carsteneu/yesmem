@@ -959,6 +959,13 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 				combined := make([]any, 0, len(frozen.Messages)+len(freshMessages))
 				combined = append(combined, frozen.Messages...)
 				combined = append(combined, freshMessages...)
+				// Eager-stub large tool_results in fresh tail (model already processed them)
+				beforeEager := s.countMessageTokens(combined[len(frozen.Messages):])
+				combined = EagerStubToolResults(combined, len(frozen.Messages), s.countTokens)
+				afterEager := s.countMessageTokens(combined[len(frozen.Messages):])
+				if beforeEager != afterEager {
+					s.logger.Printf("[req %d %s tid=%s] EAGER-STUB: fresh %dk → %dk (saved %dk)", reqIdx, proj, threadID, beforeEager/1000, afterEager/1000, (beforeEager-afterEager)/1000)
+				}
 				req["messages"] = combined
 				needsReserialization = true
 				// Strip embedded CC breakpoints from frozen stubs — they waste cache slots.
@@ -1019,7 +1026,15 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 				}
 				needsReserialization = true
 			} else {
-				// No trigger, no frozen stubs — pass through (early conversation)
+				// No trigger, no frozen stubs — eager-stub to delay first collapse
+				beforeEager := s.countMessageTokens(messages)
+				messages = EagerStubToolResults(messages, 0, s.countTokens)
+				afterEager := s.countMessageTokens(messages)
+				if beforeEager != afterEager {
+					s.logger.Printf("[req %d %s tid=%s] EAGER-STUB: %dk → %dk (saved %dk)", reqIdx, proj, threadID, beforeEager/1000, afterEager/1000, (beforeEager-afterEager)/1000)
+					req["messages"] = messages
+					needsReserialization = true
+				}
 				s.logger.Printf("%s[req %d %s tid=%s] %d messages, ~%dk tokens (sawtooth: no trigger)%s",
 					colorDim, reqIdx, proj, threadID, len(messages), totalTokens/1000, colorReset)
 			}

@@ -57,7 +57,7 @@ func EagerStubToolResults(messages []any, frozenBoundary int, estimateTokens Tok
 				continue
 			}
 
-			content, _ := b["content"].(string)
+			content := extractToolResultText(b)
 			if estimateTokens(content) <= eagerStubTokenThreshold {
 				newBlocks = append(newBlocks, block)
 				continue
