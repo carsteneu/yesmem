@@ -331,6 +331,7 @@ func emitReminder(gotchaText string) {
 	text := gotchaText + "\n---\n" + tsHint
 	out := map[string]any{
 		"hookSpecificOutput": map[string]any{
+			"hookEventName":     "PreToolUse",
 			"additionalContext": text,
 		},
 	}

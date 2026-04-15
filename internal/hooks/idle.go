@@ -68,6 +68,7 @@ func outputStaticReminder() {
 	reminder := `Du hast ein Langzeitgedaechtnis (yesmem). Bei JEDER nicht-trivialen Aufgabe: ZUERST search(thema). Wenn du etwas Wichtiges entdeckst: remember(text, category).`
 	out := map[string]any{
 		"hookSpecificOutput": map[string]any{
+			"hookEventName":     "UserPromptSubmit",
 			"additionalContext": reminder,
 		},
 	}
