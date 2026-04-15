@@ -96,6 +96,8 @@ func buildForkRequest(ctx ForkContext, cfg ForkConfig) ([]byte, error) {
 
 	// Strip anti-distillation (fake tools would pollute fork response)
 	delete(req, "anti_distillation")
+	// Strip context_management — rejected by Anthropic API with 400
+	delete(req, "context_management")
 
 	return json.Marshal(req)
 }

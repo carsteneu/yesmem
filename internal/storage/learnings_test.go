@@ -840,3 +840,31 @@ func TestLearningLineage(t *testing.T) {
 		t.Errorf("no-lineage SourceMsgTo = %d, want -1", got2.SourceMsgTo)
 	}
 }
+
+func TestGetPulseLearningsSince(t *testing.T) {
+	s := mustOpen(t)
+
+	now := time.Now().UTC()
+	old := now.Add(-2 * time.Hour)
+	recent := now.Add(-30 * time.Minute)
+
+	// Insert one old pulse, one recent pulse, one recent non-pulse
+	s.InsertLearning(&models.Learning{SessionID: "s1", Category: "pulse", Content: "old recap", Project: "proj", Source: "system_captured", Confidence: 1.0, CreatedAt: old})
+	s.InsertLearning(&models.Learning{SessionID: "s2", Category: "pulse", Content: "recent recap", Project: "proj", Source: "system_captured", Confidence: 1.0, CreatedAt: recent})
+	s.InsertLearning(&models.Learning{SessionID: "s3", Category: "decision", Content: "not a pulse", Project: "proj", Source: "user_stated", Confidence: 1.0, CreatedAt: recent})
+
+	// Query since 1 hour ago — should get only the recent pulse
+	results, err := s.GetPulseLearningsSince("proj", now.Add(-1*time.Hour), 10)
+	if err != nil {
+		t.Fatalf("GetPulseLearningsSince: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 pulse, got %d", len(results))
+	}
+	if results[0].Content != "recent recap" {
+		t.Errorf("content: got %q, want %q", results[0].Content, "recent recap")
+	}
+	if results[0].SessionID != "s2" {
+		t.Errorf("session_id: got %q, want %q", results[0].SessionID, "s2")
+	}
+}

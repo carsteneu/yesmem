@@ -28,6 +28,8 @@ type SessionMeta struct {
 // rawLine is the top-level structure of each JSONL line.
 type rawLine struct {
 	Type        string          `json:"type"`
+	Subtype     string          `json:"subtype"`
+	ContentStr  json.RawMessage `json:"content"` // string for system events, array for user/assistant — decoded on demand
 	SessionID   string          `json:"sessionId"`
 	CWD         string          `json:"cwd"`
 	GitBranch   string          `json:"gitBranch"`
@@ -132,6 +134,26 @@ func ParseSessionFile(path string) ([]models.Message, *SessionMeta, error) {
 		case "progress":
 			if msg, ok := parseProgressMessage(line, seq, ts); ok {
 				messages = append(messages, msg)
+				seq++
+			}
+
+		case "system":
+			if line.Subtype == "away_summary" && len(line.ContentStr) > 0 {
+				var content string
+				if err := json.Unmarshal(line.ContentStr, &content); err != nil {
+					continue
+				}
+				if content == "" {
+					continue
+				}
+				messages = append(messages, models.Message{
+					SessionID:   meta.SessionID,
+					Role:        "system",
+					MessageType: "pulse",
+					Content:     cleanAwaySummary(content),
+					Timestamp:   ts,
+					Sequence:    seq,
+				})
 				seq++
 			}
 		}
@@ -371,4 +393,14 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen]
+}
+
+// cleanAwaySummary strips CC metadata from away_summary content.
+// Removes <!-- [...] --> comment tags and "(disable recaps in /config)" suffix.
+func cleanAwaySummary(s string) string {
+	if idx := strings.Index(s, "\n\n<!-- "); idx >= 0 {
+		s = s[:idx]
+	}
+	s = strings.TrimSuffix(s, " (disable recaps in /config)")
+	return strings.TrimSpace(s)
 }

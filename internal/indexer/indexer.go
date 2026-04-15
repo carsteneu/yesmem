@@ -100,6 +100,34 @@ func (idx *Indexer) IndexSession(jsonlPath string) error {
 		}
 	}
 
+	// 4b. Store pulse learnings from away_summary events
+	for _, msg := range messages {
+		if msg.MessageType != "pulse" {
+			continue
+		}
+		exists, err := idx.store.HasPulseForSession(sess.ID)
+		if err != nil {
+			log.Printf("warn: pulse dedup check for %s: %v", sess.ID, err)
+			continue
+		}
+		if exists {
+			continue
+		}
+		_, err = idx.store.InsertLearning(&models.Learning{
+			SessionID:  sess.ID,
+			Category:   "pulse",
+			Content:    msg.Content,
+			Project:    projectShort,
+			Confidence: 1.0,
+			Source:     "system_captured",
+			ModelUsed:  "cc_recap",
+			CreatedAt:  msg.Timestamp,
+		})
+		if err != nil {
+			log.Printf("warn: pulse learning for %s: %v", sess.ID, err)
+		}
+	}
+
 	// 5. FTS5 indexing happens automatically via InsertMessages() — no separate step needed
 
 	// 6. Update bloom filter (use sess.ID, not meta.SessionID — for subagents these differ)

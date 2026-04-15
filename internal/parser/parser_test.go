@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/carsteneu/yesmem/internal/models"
 )
 
 func TestParseSessionFile(t *testing.T) {
@@ -106,6 +108,53 @@ func TestParseSessionFile_IgnoresSystemMessages(t *testing.T) {
 	for _, m := range messages {
 		if m.Role == "system" {
 			t.Error("system messages should be ignored")
+		}
+	}
+}
+
+func TestParseSessionFile_AwaySummaryAsPulse(t *testing.T) {
+	messages, meta, err := ParseSessionFile("testdata/session-with-away-summary.jsonl")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if meta.SessionID != "pulse-test-001" {
+		t.Errorf("sessionID: got %q, want %q", meta.SessionID, "pulse-test-001")
+	}
+
+	// Find the pulse message
+	var pulse *models.Message
+	for i := range messages {
+		if messages[i].MessageType == "pulse" {
+			pulse = &messages[i]
+			break
+		}
+	}
+	if pulse == nil {
+		t.Fatal("expected a pulse message from away_summary, got none")
+	}
+
+	if pulse.Role != "system" {
+		t.Errorf("pulse role: got %q, want %q", pulse.Role, "system")
+	}
+
+	// Content should be cleaned: no <!-- --> tags, no "(disable recaps in /config)"
+	if strings.Contains(pulse.Content, "<!-- [IDs:") {
+		t.Error("pulse content should not contain <!-- --> metadata tags")
+	}
+	if strings.Contains(pulse.Content, "disable recaps") {
+		t.Error("pulse content should not contain '(disable recaps in /config)' suffix")
+	}
+
+	// Content should contain the actual summary
+	if !strings.Contains(pulse.Content, "Tree-sitter-Integration") {
+		t.Errorf("pulse content missing expected text, got: %q", pulse.Content)
+	}
+
+	// Regular system messages (without away_summary subtype) should still be ignored
+	for _, m := range messages {
+		if m.Role == "system" && m.MessageType != "pulse" {
+			t.Error("regular system messages should still be ignored")
 		}
 	}
 }
