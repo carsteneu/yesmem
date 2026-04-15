@@ -1,8 +1,11 @@
 package daemon
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/carsteneu/yesmem/internal/models"
 )
 
 // --- handleResolveProject ---
@@ -100,6 +103,69 @@ func TestHandle_ResolveProject_Via_Dispatch(t *testing.T) {
 	})
 	if resp.Error != "" {
 		t.Fatalf("dispatch error: %s", resp.Error)
+	}
+}
+
+// --- handleGetSessionStart ---
+
+func TestHandleGetSessionStart(t *testing.T) {
+	h, s := mustHandler(t)
+
+	// Seed a session with a known start time
+	sess := &models.Session{
+		ID:           "test-session-abc",
+		Project:      "/home/user/myproject",
+		ProjectShort: "myproject",
+		StartedAt:    time.Date(2026, 4, 10, 14, 30, 0, 0, time.UTC),
+		JSONLPath:    "/tmp/test.jsonl",
+		IndexedAt:    time.Now(),
+	}
+	if err := s.UpsertSession(sess); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	resp := h.Handle(Request{
+		Method: "get_session_start",
+		Params: map[string]any{"session_id": "test-session-abc"},
+	})
+	if resp.Error != "" {
+		t.Fatalf("unexpected error: %s", resp.Error)
+	}
+
+	var result struct {
+		StartedAt string `json:"started_at"`
+	}
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	parsed, err := time.Parse(time.RFC3339, result.StartedAt)
+	if err != nil {
+		t.Fatalf("parse time: %v", err)
+	}
+	if !parsed.Equal(sess.StartedAt) {
+		t.Fatalf("expected %v, got %v", sess.StartedAt, parsed)
+	}
+}
+
+func TestHandleGetSessionStart_NotFound(t *testing.T) {
+	h, _ := mustHandler(t)
+	resp := h.Handle(Request{
+		Method: "get_session_start",
+		Params: map[string]any{"session_id": "nonexistent-session"},
+	})
+	if resp.Error == "" {
+		t.Fatal("expected error for nonexistent session")
+	}
+}
+
+func TestHandleGetSessionStart_MissingParam(t *testing.T) {
+	h, _ := mustHandler(t)
+	resp := h.Handle(Request{
+		Method: "get_session_start",
+		Params: map[string]any{},
+	})
+	if resp.Error == "" {
+		t.Fatal("expected error for missing session_id")
 	}
 }
 

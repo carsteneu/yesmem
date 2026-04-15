@@ -433,3 +433,41 @@ func TestSawtoothTrigger_GetLastMessageCount(t *testing.T) {
 		t.Fatalf("expected 0 for t2, got %d", got)
 	}
 }
+
+func TestSawtoothTrigger_SetTokenThreshold(t *testing.T) {
+	st := NewSawtoothTrigger(61*time.Minute, 200000, 80000)
+
+	// 110k < 200k → no trigger
+	reason := st.ShouldTrigger("t1", 110000)
+	if reason != TriggerNone {
+		t.Fatalf("expected TriggerNone before update, got %s", reason)
+	}
+
+	// Lower threshold to 100k (emergency = 110k, so 110k is NOT emergency)
+	st.SetTokenThreshold(100000)
+
+	// 110k > 100k → TriggerTokens (not emergency since 110k <= 110k)
+	reason = st.ShouldTrigger("t1", 110000)
+	if reason != TriggerTokens {
+		t.Fatalf("expected TriggerTokens after update, got %s", reason)
+	}
+}
+
+func TestSawtoothTrigger_SetTokenThreshold_Emergency(t *testing.T) {
+	st := NewSawtoothTrigger(61*time.Minute, 200000, 80000)
+
+	// 110k < 210k emergency → no trigger
+	reason := st.ShouldTrigger("t1", 110000)
+	if reason != TriggerNone {
+		t.Fatalf("expected TriggerNone, got %s", reason)
+	}
+
+	// Lower threshold to 90k → emergency at 100k
+	st.SetTokenThreshold(90000)
+
+	// 110k > 100k emergency → TriggerEmergency
+	reason = st.ShouldTrigger("t1", 110000)
+	if reason != TriggerEmergency {
+		t.Fatalf("expected TriggerEmergency, got %s", reason)
+	}
+}

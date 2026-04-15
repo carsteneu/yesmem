@@ -91,6 +91,174 @@ func EnforceCacheBreakpointLimit(req map[string]any, max int) int {
 	return removed
 }
 
+// StripMessagesCacheControl removes ALL cache_control breakpoints from messages[start:end].
+// Used to clean embedded CC breakpoints from frozen stubs before our pipeline
+// sets exactly one breakpoint via InjectFrozenStubCacheBreakpoint.
+func StripMessagesCacheControl(req map[string]any, start, end int) int {
+	msgs, ok := req["messages"].([]any)
+	if !ok {
+		return 0
+	}
+	if end > len(msgs) {
+		end = len(msgs)
+	}
+	removed := 0
+	for i := start; i < end; i++ {
+		msg, ok := msgs[i].(map[string]any)
+		if !ok {
+			continue
+		}
+		content, ok := msg["content"].([]any)
+		if !ok {
+			continue
+		}
+		for _, block := range content {
+			b, ok := block.(map[string]any)
+			if !ok {
+				continue
+			}
+			if _, has := b["cache_control"]; has {
+				delete(b, "cache_control")
+				removed++
+			}
+		}
+	}
+	return removed
+}
+
+// ShiftMessageBreakpoint moves the cache_control breakpoint from the last user message
+// to the preceding assistant message. This keeps the last user message (which contains
+// ephemeral injections like timestamps, system-reminders, and skill-eval that change
+// between turns) in the write zone, preventing cache-breaking byte changes.
+//
+// Tool-result messages are excluded: they are stable cache anchors that CC does not
+// modify between turns, so their breakpoint position is optimal.
+func ShiftMessageBreakpoint(req map[string]any) bool {
+	msgs, ok := req["messages"].([]any)
+	if !ok || len(msgs) < 2 {
+		return false
+	}
+
+	lastMsg, ok := msgs[len(msgs)-1].(map[string]any)
+	if !ok || lastMsg["role"] != "user" {
+		return false
+	}
+
+	// Tool-results are stable — don't shift
+	if isToolResultMessage(lastMsg) {
+		return false
+	}
+
+	// Find and remove cache_control from the last user message
+	cc := removeCacheControl(lastMsg)
+	if cc == nil {
+		return false
+	}
+
+	// Find the previous assistant message (walk backwards)
+	for i := len(msgs) - 2; i >= 0; i-- {
+		msg, ok := msgs[i].(map[string]any)
+		if !ok {
+			continue
+		}
+		if msg["role"] == "assistant" {
+			if addCacheControlToLastBlock(msg, cc) {
+				return true
+			}
+			break
+		}
+	}
+
+	// No suitable assistant found — restore on original
+	restoreCacheControl(lastMsg, cc)
+	return false
+}
+
+// isToolResultMessage returns true if the message contains tool_result content blocks.
+func isToolResultMessage(msg map[string]any) bool {
+	content, ok := msg["content"].([]any)
+	if !ok {
+		return false
+	}
+	for _, block := range content {
+		b, ok := block.(map[string]any)
+		if !ok {
+			continue
+		}
+		if b["type"] == "tool_result" || b["tool_use_id"] != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// removeCacheControl finds and removes cache_control from a message's content blocks.
+// Returns the removed cache_control value, or nil if none found.
+func removeCacheControl(msg map[string]any) map[string]any {
+	content, ok := msg["content"].([]any)
+	if !ok {
+		return nil
+	}
+	for _, block := range content {
+		b, ok := block.(map[string]any)
+		if !ok {
+			continue
+		}
+		if cc, has := b["cache_control"]; has {
+			ccMap, ok := cc.(map[string]any)
+			if !ok {
+				continue
+			}
+			delete(b, "cache_control")
+			return ccMap
+		}
+	}
+	return nil
+}
+
+// addCacheControlToLastBlock adds cache_control to the last content block of a message.
+// Handles both string content (converts to block array) and existing block arrays.
+func addCacheControlToLastBlock(msg map[string]any, cc map[string]any) bool {
+	switch content := msg["content"].(type) {
+	case string:
+		msg["content"] = []any{
+			map[string]any{
+				"type":          "text",
+				"text":          content,
+				"cache_control": cc,
+			},
+		}
+		return true
+	case []any:
+		if len(content) == 0 {
+			return false
+		}
+		lastBlock, ok := content[len(content)-1].(map[string]any)
+		if !ok {
+			return false
+		}
+		lastBlock["cache_control"] = cc
+		return true
+	}
+	return false
+}
+
+// restoreCacheControl re-adds cache_control to the first content block of a message.
+func restoreCacheControl(msg map[string]any, cc map[string]any) {
+	content, ok := msg["content"].([]any)
+	if !ok {
+		return
+	}
+	for _, block := range content {
+		b, ok := block.(map[string]any)
+		if !ok {
+			continue
+		}
+		b["cache_control"] = cc
+		return
+	}
+}
+
 // InjectFrozenStubCacheBreakpoint adds a cache_control breakpoint on the last content
 // block of messages[frozenCount-1]. This creates a stable cache prefix covering all
 // frozen stubs after a sawtooth collapse, restoring prompt cache efficiency.

@@ -317,6 +317,8 @@ func (h *Handler) Handle(req Request) Response {
 		return h.handleGetLearningsSince(h.resolveProjectParam(req.Params))
 	case "get_session_flavors_since":
 		return h.handleGetSessionFlavorsSince(h.resolveProjectParam(req.Params))
+	case "get_session_start":
+		return h.handleGetSessionStart(req.Params)
 	case "generate_briefing":
 		return h.handleGenerateBriefing(h.resolveProjectParam(req.Params))
 	case "docs_search":

@@ -169,6 +169,7 @@ type Server struct {
 	// Sawtooth cache optimization
 	frozenStubs       *FrozenStubs
 	sawtoothTrigger   *SawtoothTrigger
+	timestampStore    *TimestampStore
 	cacheStatusWriter *CacheStatusWriter
 	cacheKeepalive    *CacheKeepalive
 	cacheTTLDetector  *CacheTTLDetector
@@ -224,6 +225,7 @@ func Run(cfg Config) error {
 		channelInjectCount: make(map[string]int),
 		cacheGate:       NewCacheGate(cacheGapForTTL(cfg.CacheTTL)),
 		frozenStubs:       NewFrozenStubsWithTTL(sawtoothTTLForCacheTTL(cfg.CacheTTL)),
+		timestampStore:    NewTimestampStore(),
 		sawtoothTrigger:   NewSawtoothTrigger(cacheGapForTTL(cfg.CacheTTL), cfg.TokenThreshold, cfg.TokenMinimumThreshold),
 		cacheStatusWriter: NewCacheStatusWriter(cfg.DataDir, cfg.CacheTTL, cfg.TokenThreshold, cfg.TokenMinimumThreshold),
 		cacheTTLDetector:  NewCacheTTLDetectorWithPersist(cfg.DataDir),
@@ -341,9 +343,29 @@ func Run(cfg Config) error {
 		return resp.Value, true
 	})
 
+	// Wire timestamp store persistence via same daemon RPC
+	s.timestampStore.SetPersistFunc(func(key, value string) {
+		if _, err := s.queryDaemon("set_proxy_state", map[string]any{"key": key, "value": value}); err != nil {
+			s.logger.Printf("[timestamps] persist failed for %s: %v", key, err)
+		}
+	})
+	s.timestampStore.SetLoadFunc(func(key string) (string, bool) {
+		result, err := s.queryDaemon("get_proxy_state", map[string]any{"key": key})
+		if err != nil || result == nil {
+			return "", false
+		}
+		var resp struct {
+			Value string `json:"value"`
+		}
+		if json.Unmarshal(result, &resp) != nil || resp.Value == "" {
+			return "", false
+		}
+		return resp.Value, true
+	})
+
 	// Clear persisted cache state if --reset-cache was passed
 	if cfg.ResetCache {
-		for _, prefix := range []string{"frozen:", "decay:"} {
+		for _, prefix := range []string{"frozen:", "decay:", "timestamps:"} {
 			result, err := s.queryDaemon("delete_proxy_state_prefix", map[string]any{"prefix": prefix})
 			if err != nil {
 				s.logger.Printf("[reset-cache] failed to delete %s*: %v", prefix, err)
@@ -451,6 +473,15 @@ func (s *Server) SetTokenThresholdOverride(modelKey string, threshold int) {
 		s.tokenThresholdOverrides[modelKey] = threshold
 	}
 	s.configOverrideMu.Unlock()
+
+	// Propagate global threshold to sawtooth trigger so runtime overrides take effect
+	if modelKey == "" && s.sawtoothTrigger != nil {
+		if threshold > 0 {
+			s.sawtoothTrigger.SetTokenThreshold(threshold)
+		} else {
+			s.sawtoothTrigger.SetTokenThreshold(s.cfg.TokenThreshold)
+		}
+	}
 }
 
 // refreshConfigOverrides loads runtime config overrides from daemon proxy_state.
@@ -633,6 +664,10 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req["messages"] = messages
+
+	// Count ALL raw messages BEFORE sawtooth — this gives the correct total msg:N
+	// for the entire session (CC sends all messages, proxy compacts later).
+	rawMsgCount := len(messages)
 
 	// Use session_id directly as thread ID (unique per CC session).
 	// Prefer X-Claude-Code-Session-Id header (CC v2.1.86+), fallback to body metadata.
@@ -904,6 +939,9 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	// When enabled: use frozen stubs between stub-cycles for cache hits.
 	// When disabled: fall back to progressive decay on every request above threshold.
 
+	sawtoothCutoff := 0 // raw index where fresh tail starts (0 = no frozen stubs)
+	sawtoothStubs := 0  // number of frozen stubs in combined array
+
 	if s.cfg.SawtoothEnabled {
 		// Restore decay state from DB on cold start (before frozen stubs use it)
 		s.decay.LoadFromDB(threadID)
@@ -911,6 +949,8 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		// Check for existing frozen stubs first
 		frozen := s.frozenStubs.Get(threadID, messages)
 		if frozen != nil {
+			sawtoothCutoff = frozen.Cutoff
+			sawtoothStubs = len(frozen.Messages)
 			// Estimate combined token count: frozen prefix + fresh tail + overhead
 			freshMessages := messages[frozen.Cutoff:]
 			freshTokens := s.countMessageTokens(freshMessages)
@@ -928,17 +968,20 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 				combined := make([]any, 0, len(frozen.Messages)+len(freshMessages))
 				combined = append(combined, frozen.Messages...)
 				combined = append(combined, freshMessages...)
-				req["messages"] = combined
-				// Eager-stub large tool_results in the fresh tail (uncached → zero cache cost)
-				beforeEager := s.countMessageTokens(combined)
+				// Eager-stub large tool_results in fresh tail (model already processed them)
+				beforeEager := s.countMessageTokens(combined[len(frozen.Messages):])
 				combined = EagerStubToolResults(combined, len(frozen.Messages), s.countTokens)
-				afterEager := s.countMessageTokens(combined)
+				afterEager := s.countMessageTokens(combined[len(frozen.Messages):])
 				if beforeEager != afterEager {
-					s.logger.Printf("[req %d %s tid=%s] EAGER-STUB: %dk → %dk tokens (saved %dk)",
-						reqIdx, proj, threadID, beforeEager/1000, afterEager/1000, (beforeEager-afterEager)/1000)
+					s.logger.Printf("[req %d %s tid=%s] EAGER-STUB: fresh %dk → %dk (saved %dk)", reqIdx, proj, threadID, beforeEager/1000, afterEager/1000, (beforeEager-afterEager)/1000)
 				}
 				req["messages"] = combined
 				needsReserialization = true
+				// Strip embedded CC breakpoints from frozen stubs — they waste cache slots.
+				// InjectFrozenStubCacheBreakpoint adds exactly one below.
+				if n := StripMessagesCacheControl(req, 0, len(frozen.Messages)); n > 0 {
+					s.logger.Printf("[req %d %s tid=%s] SAWTOOTH: stripped %d embedded breakpoints from frozen stubs", reqIdx, proj, threadID, n)
+				}
 				s.logger.Printf("%s[req %d %s tid=%s] SAWTOOTH: frozen prefix (%d stubs, %dk msg) + %d fresh (%dk msg) + %dk overhead = %dk total%s",
 					colorGreen, reqIdx, proj, threadID, len(frozen.Messages), frozen.Tokens/1000, len(freshMessages), freshTokens/1000, overhead/1000, combinedTokens/1000, colorReset)
 				rawMsgTokens := s.countMessageTokens(messages)
@@ -975,6 +1018,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 				if finalMessages != nil && len(finalMessages) > 0 {
 					// Boundary = last message of original that maps to last stub
 					cutoff := len(messages)
+					sawtoothCutoff = cutoff
 					var boundaryMsg any
 					if cutoff > 0 {
 						boundaryMsg = messages[cutoff-1]
@@ -991,16 +1035,15 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 				}
 				needsReserialization = true
 			} else {
-				// No trigger, no frozen stubs — pass through (early conversation)
-				// Eager-stub large tool_results even before first stub cycle
+				// No trigger, no frozen stubs — eager-stub to delay first collapse
 				beforeEager := s.countMessageTokens(messages)
 				messages = EagerStubToolResults(messages, 0, s.countTokens)
 				afterEager := s.countMessageTokens(messages)
 				if beforeEager != afterEager {
-					s.logger.Printf("[req %d %s tid=%s] EAGER-STUB: %dk → %dk tokens (saved %dk)",
-						reqIdx, proj, threadID, beforeEager/1000, afterEager/1000, (beforeEager-afterEager)/1000)
+					s.logger.Printf("[req %d %s tid=%s] EAGER-STUB: %dk → %dk (saved %dk)", reqIdx, proj, threadID, beforeEager/1000, afterEager/1000, (beforeEager-afterEager)/1000)
+					req["messages"] = messages
+					needsReserialization = true
 				}
-				req["messages"] = messages
 				s.logger.Printf("%s[req %d %s tid=%s] %d messages, ~%dk tokens (sawtooth: no trigger)%s",
 					colorDim, reqIdx, proj, threadID, len(messages), totalTokens/1000, colorReset)
 			}
@@ -1011,6 +1054,72 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			s.setRawEstimate(threadID, totalTokens)
 			_ = s.runStubCycle(messages, req, reqIdx, proj, threadID, overhead, totalTokens, userQuery, isRetryReq)
 			needsReserialization = true
+		}
+	}
+
+	// Persistent timestamp injection: re-injects stored timestamps on ALL previous user messages.
+	// msg:N is computed from position (counting user messages in raw array), NOT from a counter.
+	// The injected data is deterministic (same bytes every turn) = cache-safe after initial miss.
+	if threadID != "" {
+		if currentMsgs, ok := req["messages"].([]any); ok && len(currentMsgs) > 0 {
+			s.timestampStore.Load(threadID)
+
+			// Offset = cutoff - stubsCount: maps combined array index to raw position.
+			// Raw position of message at combined index I = cutoff + (I - stubs).
+			// msgN = rawPos + 1 = cutoff + (I - stubs) + 1 = (cutoff - stubs) + I + 1.
+			msgOffset := sawtoothCutoff - sawtoothStubs
+
+			s.logger.Printf("[req %d %s] timestamps: rawTotal=%d, postSawtooth=%d, cutoff=%d, stubs=%d, offset=%d", reqIdx, proj, rawMsgCount, len(currentMsgs), sawtoothCutoff, sawtoothStubs, msgOffset)
+
+			// Pre-store assistant timestamp BEFORE inject loop so it's available immediately
+			s.responseTsMu.RLock()
+			respTime, hasRespTime := s.responseTimes[threadID]
+			s.responseTsMu.RUnlock()
+			if hasRespTime {
+				respStr := shortWeekday(respTime.Weekday()) + " " + respTime.Format("2006-01-02 15:04:05")
+				for j := len(currentMsgs) - 2; j >= 0; j-- {
+					prevMsg, _ := currentMsgs[j].(map[string]any)
+					if prevMsg == nil || prevMsg["role"] != "assistant" {
+						continue
+					}
+					if !msgHasTextBlock(prevMsg) {
+						s.logger.Printf("[req %d %s] timestamps: skip assistant[%d] no text block", reqIdx, proj, j)
+						continue // skip tool-use-only assistant messages
+					}
+					prevMsgN := msgOffset + j + 1
+					if _, exists := s.timestampStore.Get(threadID, prevMsgN); !exists {
+						s.timestampStore.Store(threadID, prevMsgN, &TimestampMeta{Timestamp: respStr})
+						s.logger.Printf("[req %d %s] timestamps: stored assistant msg:%d ts=%s", reqIdx, proj, prevMsgN, respStr)
+					} else {
+						s.logger.Printf("[req %d %s] timestamps: assistant msg:%d already has ts", reqIdx, proj, prevMsgN)
+					}
+					break
+				}
+			} else {
+				s.logger.Printf("[req %d %s] timestamps: no responseTimes for thread", reqIdx, proj)
+			}
+
+			// Inject [msg:N] (+ timestamp/delta if stored) on all PREVIOUS messages
+			if n := InjectTimestamps(s.timestampStore, threadID, currentMsgs, len(currentMsgs)-1, msgOffset, sawtoothStubs); n > 0 {
+				needsReserialization = true
+				s.logger.Printf("[req %d %s] timestamps: injected %d", reqIdx, proj, n)
+			}
+
+			// Current (last) user message: full timestamp + delta + msg:N from raw count
+			lastMsg, _ := currentMsgs[len(currentMsgs)-1].(map[string]any)
+			if lastMsg != nil && lastMsg["role"] == "user" && !msgHasMetaPrefix(lastMsg) {
+				now := time.Now()
+				nowStr := shortWeekday(now.Weekday()) + " " + now.Format("2006-01-02 15:04:05")
+				entry := &TimestampMeta{Timestamp: nowStr}
+				if hasRespTime {
+					entry.Delta = formatDelta(now.Sub(respTime))
+				}
+				s.timestampStore.Store(threadID, rawMsgCount, entry)
+				prependMeta(lastMsg, BuildMeta(rawMsgCount, entry))
+				needsReserialization = true
+			}
+
+			s.timestampStore.Persist(threadID)
 		}
 	}
 
@@ -1224,13 +1333,10 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	// See fireReflectionCall() in reflection.go.
 	// NEVER put _signal_* tools back here — the model ignores them among 44+ real tools.
 
-	// Metadata injection: timestamp, message index, time-delta for messages after cache breakpoint.
-	// Messages before the breakpoint are cached — modifying them would break the cache.
+	// Legacy assistant annotation: timestamp on last assistant message after cache breakpoint.
+	// User timestamps are now handled by TimestampStore (injected earlier in the pipeline).
 	if threadID != "" {
 		if msgs, ok := req["messages"].([]any); ok && len(msgs) > 0 {
-			now := time.Now()
-			nowStr := shortWeekday(now.Weekday()) + " " + now.Format("2006-01-02 15:04:05")
-
 			// Find last cache_control breakpoint in messages
 			cacheIdx := -1
 			for i, m := range msgs {
@@ -1251,30 +1357,13 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
-
 			startIdx := cacheIdx + 1
 			if startIdx < 0 {
 				startIdx = 0
 			}
-
-			// Retrieve stored response time for assistant annotation
 			s.responseTsMu.RLock()
 			respTime, hasRespTime := s.responseTimes[threadID]
 			s.responseTsMu.RUnlock()
-
-			// 1. Last user message: annotate with [2026-03-13 00:15:42] [msg:N]
-			lastMsg, _ := msgs[len(msgs)-1].(map[string]any)
-			if lastMsg != nil && lastMsg["role"] == "user" {
-				meta := fmt.Sprintf("[%s] [msg:%d]", nowStr, s.msgCounters.nextFor(threadID, len(msgs)-1))
-				if hasRespTime {
-					delta := now.Sub(respTime)
-					meta += " [+" + formatDelta(delta) + "]"
-				}
-				prependMeta(lastMsg, meta)
-				needsReserialization = true
-			}
-
-			// 2. Last assistant message after cache breakpoint: use stored response time
 			if hasRespTime {
 				for i := len(msgs) - 1; i >= startIdx; i-- {
 					msg, _ := msgs[i].(map[string]any)
@@ -1331,6 +1420,12 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Final: upgrade cache TTL + enforce breakpoint limit (must run AFTER all injections + InjectCacheBreakpoints)
+	// Shift the last messages-breakpoint from unstable user message to stable assistant message.
+	// Text user messages change between turns (timestamps, reminders, structure); assistant messages don't.
+	// Tool-result messages are excluded — they are stable cache anchors.
+	if ShiftMessageBreakpoint(req) {
+		needsReserialization = true
+	}
 	// TTL upgrade only for API key auth — subscription (OAuth) users should not get extended TTL.
 	if s.cfg.CacheTTL != "" && s.cfg.CacheTTL != "ephemeral" && IsAPIKeyAuth(r.Header) {
 		if n := UpgradeCacheTTL(req, s.cfg.CacheTTL); n > 0 {
