@@ -473,6 +473,15 @@ func (s *Server) SetTokenThresholdOverride(modelKey string, threshold int) {
 		s.tokenThresholdOverrides[modelKey] = threshold
 	}
 	s.configOverrideMu.Unlock()
+
+	// Propagate global threshold to sawtooth trigger so runtime overrides take effect
+	if modelKey == "" && s.sawtoothTrigger != nil {
+		if threshold > 0 {
+			s.sawtoothTrigger.SetTokenThreshold(threshold)
+		} else {
+			s.sawtoothTrigger.SetTokenThreshold(s.cfg.TokenThreshold)
+		}
+	}
 }
 
 // refreshConfigOverrides loads runtime config overrides from daemon proxy_state.

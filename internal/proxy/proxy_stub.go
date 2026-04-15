@@ -77,12 +77,17 @@ func (s *Server) runStubCycle(messages []any, req map[string]any, reqIdx int, pr
 	// Fetch relevant learnings (used by both Collapse and Compress-only path)
 	var archiveLearnings []ArchiveLearning
 	var archiveFlavors []ArchiveSessionFlavor
-	s.sessionStartMu.RLock()
-	sessionStart := s.sessionStartTime
-	s.sessionStartMu.RUnlock()
-	if sessionStart.IsZero() {
-		// After proxy restart, sessionStartTime is lost — fall back to 24h ago
-		sessionStart = time.Now().Add(-24 * time.Hour)
+	// Query daemon for actual session start from DB (handles resumed sessions correctly)
+	sessionStart := time.Now().Add(-24 * time.Hour)
+	if threadID != "" {
+		if raw, err := s.queryDaemon("get_session_start", map[string]any{"session_id": threadID}); err == nil && raw != nil {
+			var resp struct{ StartedAt string `json:"started_at"` }
+			if json.Unmarshal(raw, &resp) == nil && resp.StartedAt != "" {
+				if t, err := time.Parse(time.RFC3339, resp.StartedAt); err == nil {
+					sessionStart = t.Add(-24 * time.Hour)
+				}
+			}
+		}
 	}
 	{
 		// Fetch learnings — resolve project_short via daemon (handles renames/moves)
@@ -148,7 +153,7 @@ func (s *Server) runStubCycle(messages []any, req map[string]any, reqIdx int, pr
 	if cutoff > 0 {
 		beforeLen := len(finalMessages)
 		finalMessages = CollapseOldMessages(finalMessages, messages, cutoff, sessionStart, time.Now(), archiveLearnings, archiveFlavors, threadID)
-		s.logger.Printf("[req %d] COLLAPSE: %d -> %d messages (learnings=%d)", reqIdx, beforeLen, len(finalMessages), len(archiveLearnings))
+		s.logger.Printf("[req %d] COLLAPSE: %d -> %d messages (learnings=%d flavors=%d proj=%s since=%s)", reqIdx, beforeLen, len(finalMessages), len(archiveLearnings), len(archiveFlavors), proj, sessionStart.Format(time.RFC3339))
 
 		// Re-inject active skills after archive block (Option B)
 		skillBlocks := s.buildSkillBlocksForThread(proj, threadID)

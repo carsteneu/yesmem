@@ -445,6 +445,9 @@ func NewSawtoothTrigger(pauseThreshold time.Duration, tokenThreshold, tokenMinim
 // ShouldTrigger checks if a stub-cycle should run for this thread.
 // rawEstimate is the pre-API-call token estimate (for emergency brake).
 func (st *SawtoothTrigger) ShouldTrigger(threadID string, rawEstimate int) TriggerReason {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
 	emergencyThreshold := st.tokenThreshold + 10_000 // 10k margin above threshold
 
 	// Emergency brake — raw estimate too high, no usage data needed
@@ -457,10 +460,8 @@ func (st *SawtoothTrigger) ShouldTrigger(threadID string, rawEstimate int) Trigg
 		return TriggerTokens
 	}
 
-	st.mu.RLock()
 	tokens, hasTokens := st.lastTotalTokens[threadID]
 	lastTime, hasTime := st.lastRequestTime[threadID]
-	st.mu.RUnlock()
 
 	// No prior data and below threshold → no stub needed
 	if !hasTokens {
@@ -480,6 +481,13 @@ func (st *SawtoothTrigger) ShouldTrigger(threadID string, rawEstimate int) Trigg
 	}
 
 	return TriggerNone
+}
+
+// SetTokenThreshold updates the trigger threshold dynamically (e.g. from runtime config overrides).
+func (st *SawtoothTrigger) SetTokenThreshold(threshold int) {
+	st.mu.Lock()
+	st.tokenThreshold = threshold
+	st.mu.Unlock()
 }
 
 // SetPersistFunc sets the callback for writing token state to persistent storage.

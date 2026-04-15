@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/carsteneu/yesmem/internal/models"
 )
@@ -187,6 +188,20 @@ func (h *Handler) handleListProjects() Response {
 		return errorResponse(err.Error())
 	}
 	return jsonResponse(projects)
+}
+
+func (h *Handler) handleGetSessionStart(params map[string]any) Response {
+	sessionID, _ := params["session_id"].(string)
+	if sessionID == "" {
+		return errorResponse("missing session_id")
+	}
+	sess, err := h.store.GetSession(sessionID)
+	if err != nil {
+		return errorResponse(fmt.Sprintf("session not found: %v", err))
+	}
+	return jsonResponse(map[string]any{
+		"started_at": sess.StartedAt.Format(time.RFC3339),
+	})
 }
 
 func (h *Handler) handleProjectSummary(params map[string]any) Response {
