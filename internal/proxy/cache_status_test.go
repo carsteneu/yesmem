@@ -37,8 +37,8 @@ func TestFormatStatusLines_WarmWithKeepalive(t *testing.T) {
 	if !strings.Contains(lines.CacheLine, "Keepalive until") {
 		t.Errorf("CacheLine should contain 'Keepalive until', got: %s", lines.CacheLine)
 	}
-	if !strings.Contains(lines.CacheLine, "4 ping(s) every 54min") {
-		t.Errorf("CacheLine should contain '4 ping(s) every 54min', got: %s", lines.CacheLine)
+	if !strings.Contains(lines.CacheLine, "4 ping(s) every 54m") {
+		t.Errorf("CacheLine should contain '4 ping(s) every 54m', got: %s", lines.CacheLine)
 	}
 
 	// Line 2: Collapsing + actual usage
@@ -320,6 +320,44 @@ func TestCacheStatusWriter_UpdateRawPerThread(t *testing.T) {
 	}
 }
 
+func TestCacheStatusWriter_KeepaliveRemainingCountsDown(t *testing.T) {
+	dir := t.TempDir()
+	ka := NewCacheKeepalive(CacheKeepaliveConfig{
+		Target:  "http://localhost:0/v1/messages",
+		Mode:    "5m",
+		Pings5m: 6,
+	})
+	// Seed a thread so Status() returns values
+	ka.Reset("thread-aaa", []byte(`{"model":"x","messages":[{"role":"user","content":"hi"}]}`), "key")
+
+	w := &CacheStatusWriter{
+		dataDir:               dir,
+		ttlConfig:             "ephemeral",
+		tokenMinimumThreshold: 80000,
+		keepalive:             ka,
+		threads:               make(map[string]*statusThreadState),
+	}
+
+	// Last real request was 400s ago (100s past 300s TTL expiry)
+	lastReq := time.Now().Add(-400 * time.Second)
+	w.Update(lastReq, 100000, 95000, 5000, "thread-aaa")
+	w.writeStatus()
+
+	pathA := CacheStatusPath(dir, "thread-aaa")
+	dataA, _ := os.ReadFile(pathA)
+	var status CacheStatus
+	json.Unmarshal(dataA, &status)
+
+	// Total coverage = 6*270+300 = 1920s. Elapsed = 400s. Expected remaining ≈ 1520s.
+	expectedRemaining := 6*270 + 300 - 400
+	if status.RemainingS < expectedRemaining-5 || status.RemainingS > expectedRemaining+5 {
+		t.Errorf("remaining_s = %d, want ~%d (should count down)", status.RemainingS, expectedRemaining)
+	}
+	if status.CacheState != "warm" {
+		t.Errorf("cache_state = %q, want warm", status.CacheState)
+	}
+}
+
 func TestFormatStatusLines_KeepaliveUntilCalculation(t *testing.T) {
 	// Cache expires at lastRequest + TTL = now + 3600
 	// Keepalive extends by 4 * 3240s = 12960s from cache expiry
@@ -347,5 +385,39 @@ func TestFormatStatusLines_KeepaliveUntilCalculation(t *testing.T) {
 	}
 	if !strings.Contains(lines.CacheLine, "Keepalive until "+expectedKATime) {
 		t.Errorf("CacheLine should show keepalive end time %s, got: %s", expectedKATime, lines.CacheLine)
+	}
+}
+
+func TestFormatStatusLines_IntervalDisplayAccuracy(t *testing.T) {
+	now := time.Now()
+	tests := []struct {
+		name          string
+		pingIntervalS int
+		wantContains  string
+	}{
+		{"270s shows 4m30s not 4min", 270, "every 4m30s"},
+		{"3240s shows 54m", 3240, "every 54m"},
+		{"300s shows 5m", 300, "every 5m"},
+		{"90s shows 1m30s", 90, "every 1m30s"},
+		{"60s shows 1m", 60, "every 1m"},
+		{"45s shows 45s", 45, "every 45s"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := CacheStatus{
+				TTLSeconds:     300,
+				RemainingS:     250,
+				CacheState:     "warm",
+				LastRequestTS:  now.Unix(),
+				TotalTokens:    100000,
+				DetectedTTL:    "5min",
+				PingIntervalS:  tt.pingIntervalS,
+				PingsRemaining: 6,
+			}
+			lines := FormatStatusLines(s)
+			if !strings.Contains(lines.CacheLine, tt.wantContains) {
+				t.Errorf("interval %ds: want %q in CacheLine, got: %s", tt.pingIntervalS, tt.wantContains, lines.CacheLine)
+			}
+		})
 	}
 }

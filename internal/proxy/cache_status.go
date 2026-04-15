@@ -172,11 +172,12 @@ func (w *CacheStatusWriter) writeStatus() {
 
 	// Keepalive status (shared across threads)
 	var kaMode string
-	var pingIntervalS, pingsRemaining, activeThreads int
+	var pingIntervalS, pingsRemaining, totalPings, activeThreads int
 	if ka != nil {
 		ks := ka.Status()
 		kaMode = ks.Mode
 		pingIntervalS = ks.IntervalS
+		totalPings = ks.TotalPings
 		pingsRemaining = ks.PingsRemaining
 		activeThreads = ks.ActiveThreads
 	}
@@ -194,9 +195,15 @@ func (w *CacheStatusWriter) writeStatus() {
 
 		state := "warm"
 		if remaining == 0 {
-			if pingsRemaining > 0 {
-				// Keepalive is maintaining the cache — estimate remaining warm time
-				remaining = pingsRemaining*pingIntervalS + ttlSec
+			if totalPings > 0 && pingIntervalS > 0 {
+				elapsed := int(time.Since(ts.lastRequest).Seconds())
+				totalCoverage := totalPings*pingIntervalS + ttlSec
+				remaining = totalCoverage - elapsed
+				if remaining < 0 {
+					remaining = 0
+				}
+			}
+			if remaining > 0 {
 				state = "warm"
 			} else {
 				state = "cold"
@@ -302,9 +309,8 @@ func FormatStatusLines(s CacheStatus) StatusLines {
 		if s.PingsRemaining > 0 && s.PingIntervalS > 0 {
 			keepaliveEnd := cacheExpiry.Add(time.Duration(s.PingsRemaining) * time.Duration(s.PingIntervalS) * time.Second)
 			keepaliveEndStr := keepaliveEnd.Format("15:04")
-			intervalMin := s.PingIntervalS / 60
-			lines.CacheLine = fmt.Sprintf("%s | Keepalive until %s with %d ping(s) every %dmin",
-				cachePart, keepaliveEndStr, s.PingsRemaining, intervalMin)
+			lines.CacheLine = fmt.Sprintf("%s | Keepalive until %s with %d ping(s) every %s",
+				cachePart, keepaliveEndStr, s.PingsRemaining, formatInterval(s.PingIntervalS))
 		} else {
 			lines.CacheLine = cachePart
 		}
@@ -353,4 +359,17 @@ func calcColdCost(s CacheStatus) float64 {
 		writeRate = 0.01
 	}
 	return tokK * writeRate
+}
+
+// formatInterval renders seconds as "Xm", "XmYs", or "Ys".
+func formatInterval(totalS int) string {
+	m := totalS / 60
+	s := totalS % 60
+	if m == 0 {
+		return fmt.Sprintf("%ds", s)
+	}
+	if s == 0 {
+		return fmt.Sprintf("%dm", m)
+	}
+	return fmt.Sprintf("%dm%ds", m, s)
 }
