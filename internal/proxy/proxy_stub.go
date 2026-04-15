@@ -171,7 +171,7 @@ func (s *Server) runStubCycle(messages []any, req map[string]any, reqIdx int, pr
 			if json.Unmarshal(pulseResult, &items) == nil {
 				for _, item := range items {
 					archiveFlavors = append(archiveFlavors, ArchiveSessionFlavor{
-						Flavor:    "[recap] " + truncateStr(item.Content, 150),
+						Flavor:    "[recap] " + item.Content,
 						CreatedAt: item.CreatedAt,
 						SessionID: item.SessionID,
 					})
