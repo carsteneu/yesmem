@@ -704,7 +704,7 @@ func (s *Server) finalizeOpenAIUsage(reqIdx int, threadID string, estimatedToken
 	}
 
 	if reqIdx > 0 {
-		s.logger.Printf("[req %d] %s", reqIdx, usage.LogLine(reqIdx, 0, estimatedTokens))
+		s.logger.Printf("[req %d] %s", reqIdx, usage.LogLine(reqIdx, 0, estimatedTokens, threadID))
 	}
 	if s.cfg.SawtoothEnabled && threadID != "" && s.sawtoothTrigger != nil {
 		s.sawtoothTrigger.UpdateAfterResponse(threadID, usage.TotalInputTokens(), msgCount)

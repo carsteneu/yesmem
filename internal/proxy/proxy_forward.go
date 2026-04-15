@@ -244,7 +244,7 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 		if len(estimatedTokens) > 0 {
 			est = estimatedTokens[0]
 		}
-		s.logger.Printf("[req %d] %s", reqIdx, usage.LogLine(reqIdx, 0, est))
+		s.logger.Printf("[req %d] %s", reqIdx, usage.LogLine(reqIdx, 0, est, threadID))
 
 		// Sawtooth: track actual tokens for trigger decisions
 		if s.cfg.SawtoothEnabled && threadID != "" {
