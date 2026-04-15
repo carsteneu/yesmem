@@ -34,6 +34,32 @@ func (s *Store) HasPulseForSession(sessionID string) (bool, error) {
 	return count > 0, nil
 }
 
+// GetPulseLearningsSince returns pulse learnings for a project created after since.
+func (s *Store) GetPulseLearningsSince(project string, since time.Time, limit int) ([]models.Learning, error) {
+	rows, err := s.readerDB().Query(`SELECT id, session_id, content, created_at FROM learnings
+		WHERE category = 'pulse' AND (project = ? OR project IS NULL OR project = '')
+		AND created_at > ? AND superseded_by IS NULL
+		ORDER BY created_at ASC LIMIT ?`,
+		project, since.Format(time.RFC3339), limit)
+	if err != nil {
+		return nil, fmt.Errorf("get pulse learnings: %w", err)
+	}
+	defer rows.Close()
+
+	var result []models.Learning
+	for rows.Next() {
+		var l models.Learning
+		var createdAt string
+		if err := rows.Scan(&l.ID, &l.SessionID, &l.Content, &createdAt); err != nil {
+			return nil, fmt.Errorf("scan pulse: %w", err)
+		}
+		l.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		l.Category = "pulse"
+		result = append(result, l)
+	}
+	return result, nil
+}
+
 // InsertLearningBatch inserts multiple learnings in a single transaction.
 // Returns the IDs of all inserted learnings. One COMMIT instead of N reduces
 // FTS5 write contention that blocks concurrent BM25 reads.

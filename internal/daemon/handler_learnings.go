@@ -137,8 +137,8 @@ func (h *Handler) handleRemember(params map[string]any) Response {
 				l.Importance = 4
 			}
 			h.store.SetImportance(id, l.Importance)
-			h.store.IncrementUseCounts([]int64{id}) // mark as immediately used
-			h.store.SetStability(id, 45.0)          // start at 45 days instead of 30
+			h.store.IncrementUseCounts([]int64{id})      // mark as immediately used
+			h.store.SetStability(id, 45.0)               // start at 45 days instead of 30
 			h.store.IncrementNoiseCounts([]int64{oldID}) // old learning was wrong in this context
 
 			switch level {
@@ -628,6 +628,23 @@ func (h *Handler) handleGetSessionFlavorsSince(params map[string]any) Response {
 		return errorResponse(err.Error())
 	}
 	return jsonResponse(flavors)
+}
+
+func (h *Handler) handleGetPulseLearningsSince(params map[string]any) Response {
+	project, _ := params["project"].(string)
+	sinceStr, _ := params["since"].(string)
+	limit := intOr(params, "limit", 20)
+
+	since, err := time.Parse(time.RFC3339, sinceStr)
+	if err != nil {
+		return errorResponse("invalid 'since' timestamp: " + err.Error())
+	}
+
+	pulses, err := h.store.GetPulseLearningsSince(project, since, limit)
+	if err != nil {
+		return errorResponse(err.Error())
+	}
+	return jsonResponse(pulses)
 }
 
 // autoResolveGaps resolves any knowledge gaps that match terms in the new learning content.

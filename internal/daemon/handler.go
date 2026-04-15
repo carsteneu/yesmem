@@ -26,14 +26,14 @@ func (h *Handler) onMutation() {
 
 // Handler processes socket requests using the daemon's resources.
 type Handler struct {
-	store   *storage.Store
-	bloom   *bloom.Manager
-	dataDir string // ~/.claude/yesmem/ — set by daemon after construction
+	store            *storage.Store
+	bloom            *bloom.Manager
+	dataDir          string        // ~/.claude/yesmem/ — set by daemon after construction
 	agentTerminal    string        // preferred terminal for agent windows — set by daemon from config
-	agentMaxRuntime time.Duration // max runtime per agent — set by daemon from config
-	agentMaxTurns   int           // max relay turns per agent — set by daemon from config
-	agentMaxDepth   int           // max spawn depth — set by daemon from config
-	agentTokenBudget int          // max tokens per agent — set by daemon from config
+	agentMaxRuntime  time.Duration // max runtime per agent — set by daemon from config
+	agentMaxTurns    int           // max relay turns per agent — set by daemon from config
+	agentMaxDepth    int           // max spawn depth — set by daemon from config
+	agentTokenBudget int           // max tokens per agent — set by daemon from config
 
 	// Optional: vector search (set via SetEmbedding)
 	indexer             *embedding.Indexer
@@ -83,9 +83,9 @@ type Handler struct {
 	pidMap   map[string]int
 
 	// Window tracking for xdotool push (session_id → X11 window ID string)
-	windowMapMu  sync.Mutex
-	windowMap    map[string]string
-	terminalMap  map[string]string // session_id → terminal type (ghostty, gnome-terminal, etc.)
+	windowMapMu sync.Mutex
+	windowMap   map[string]string
+	terminalMap map[string]string // session_id → terminal type (ghostty, gnome-terminal, etc.)
 
 	// Project name resolution cache (directory path → resolved project_short)
 	projectCacheMu sync.RWMutex
@@ -317,6 +317,8 @@ func (h *Handler) Handle(req Request) Response {
 		return h.handleGetLearningsSince(h.resolveProjectParam(req.Params))
 	case "get_session_flavors_since":
 		return h.handleGetSessionFlavorsSince(h.resolveProjectParam(req.Params))
+	case "get_pulse_learnings_since":
+		return h.handleGetPulseLearningsSince(h.resolveProjectParam(req.Params))
 	case "get_session_start":
 		return h.handleGetSessionStart(req.Params)
 	case "generate_briefing":

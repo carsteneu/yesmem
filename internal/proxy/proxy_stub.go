@@ -3,6 +3,7 @@ package proxy
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -81,7 +82,9 @@ func (s *Server) runStubCycle(messages []any, req map[string]any, reqIdx int, pr
 	sessionStart := time.Now().Add(-24 * time.Hour)
 	if threadID != "" {
 		if raw, err := s.queryDaemon("get_session_start", map[string]any{"session_id": threadID}); err == nil && raw != nil {
-			var resp struct{ StartedAt string `json:"started_at"` }
+			var resp struct {
+				StartedAt string `json:"started_at"`
+			}
 			if json.Unmarshal(raw, &resp) == nil && resp.StartedAt != "" {
 				if t, err := time.Parse(time.RFC3339, resp.StartedAt); err == nil {
 					sessionStart = t.Add(-24 * time.Hour)
@@ -94,7 +97,9 @@ func (s *Server) runStubCycle(messages []any, req map[string]any, reqIdx int, pr
 		resolveResult, _ := s.queryDaemon("resolve_project", map[string]any{"project_dir": proj})
 		projShort := proj
 		if resolveResult != nil {
-			var resolved struct{ ProjectShort string `json:"project_short"` }
+			var resolved struct {
+				ProjectShort string `json:"project_short"`
+			}
 			if json.Unmarshal(resolveResult, &resolved) == nil && resolved.ProjectShort != "" {
 				projShort = resolved.ProjectShort
 			}
@@ -148,6 +153,36 @@ func (s *Server) runStubCycle(messages []any, req map[string]any, reqIdx int, pr
 				}
 			}
 		}
+
+		// Fetch pulse learnings (CC recaps) and merge into timeline
+		pulseResult, err := s.queryDaemon("get_pulse_learnings_since", map[string]any{
+			"project": projShort,
+			"since":   sessionStart.Format(time.RFC3339),
+			"limit":   20,
+		})
+		if err != nil {
+			s.logger.Printf("[req %d] pulse fetch failed: %v", reqIdx, err)
+		} else if pulseResult != nil {
+			var items []struct {
+				Content   string `json:"content"`
+				CreatedAt string `json:"created_at"`
+				SessionID string `json:"session_id"`
+			}
+			if json.Unmarshal(pulseResult, &items) == nil {
+				for _, item := range items {
+					archiveFlavors = append(archiveFlavors, ArchiveSessionFlavor{
+						Flavor:    "[recap] " + item.Content,
+						CreatedAt: item.CreatedAt,
+						SessionID: item.SessionID,
+					})
+				}
+			}
+		}
+
+		// Sort merged timeline chronologically
+		sort.Slice(archiveFlavors, func(i, j int) bool {
+			return archiveFlavors[i].CreatedAt < archiveFlavors[j].CreatedAt
+		})
 	}
 
 	if cutoff > 0 {
