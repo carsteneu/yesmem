@@ -545,8 +545,8 @@ func prependMeta(msg map[string]any, meta string) {
 
 	switch content := msg["content"].(type) {
 	case string:
-		if len(content) > 0 && content[0] == '[' && len(content) > 20 && content[20] == ']' {
-			return // already has metadata
+		if hasMetaPrefix(content) {
+			return
 		}
 		msg["content"] = prefix + content
 	case []any:
@@ -556,11 +556,62 @@ func prependMeta(msg map[string]any, meta string) {
 				continue
 			}
 			text, _ := b["text"].(string)
-			if len(text) > 0 && text[0] == '[' && len(text) > 20 && text[20] == ']' {
-				return // already has metadata
+			if hasMetaPrefix(text) {
+				return
 			}
 			b["text"] = prefix + text
 			return
+		}
+	}
+}
+
+// hasMetaPrefix returns true if text already starts with a timestamp/msg annotation.
+func hasMetaPrefix(text string) bool {
+	if len(text) < 6 || text[0] != '[' {
+		return false
+	}
+	end := len(text)
+	if end > 40 {
+		end = 40
+	}
+	return strings.Contains(text[:end], "[msg:")
+}
+
+// stripMetaPrefixText removes any leading [timestamp] [msg:N] [+delta] annotations from text.
+func stripMetaPrefixText(text string) string {
+	if !hasMetaPrefix(text) {
+		return text
+	}
+	// Strip consecutive [...] blocks at the start
+	s := text
+	for strings.HasPrefix(s, "[") {
+		end := strings.Index(s, "] ")
+		if end < 0 {
+			break
+		}
+		s = s[end+2:]
+	}
+	return s
+}
+
+// stripMetaPrefix removes any [timestamp] [msg:N] [+delta] prefix from a message's text content.
+func stripMetaPrefix(msg map[string]any) {
+	switch content := msg["content"].(type) {
+	case string:
+		if hasMetaPrefix(content) {
+			msg["content"] = stripMetaPrefixText(content)
+		}
+	case []any:
+		for _, block := range content {
+			b, ok := block.(map[string]any)
+			if !ok || b["type"] != "text" {
+				continue
+			}
+			text, _ := b["text"].(string)
+			if hasMetaPrefix(text) {
+				b["text"] = stripMetaPrefixText(text)
+			}
+			return // only first text block
 		}
 	}
 }
