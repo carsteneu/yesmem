@@ -368,6 +368,214 @@ func TestInjectFrozenStubCacheBreakpoint_NoopIfAlreadyHasBreakpoint(t *testing.T
 	}
 }
 
+// --- ShiftMessageBreakpoint tests ---
+
+func TestShiftMessageBreakpoint_MovesToAssistant(t *testing.T) {
+	req := map[string]any{
+		"messages": []any{
+			map[string]any{"role": "assistant", "content": []any{
+				map[string]any{"type": "text", "text": "I'll help you with that."},
+			}},
+			map[string]any{"role": "user", "content": []any{
+				map[string]any{"type": "text", "text": "what's the status?",
+					"cache_control": map[string]any{"type": "ephemeral"}},
+			}},
+		},
+	}
+
+	shifted := ShiftMessageBreakpoint(req)
+	if !shifted {
+		t.Fatal("expected shift to succeed")
+	}
+
+	msgs := req["messages"].([]any)
+
+	// Assistant should now have cache_control
+	assistant := msgs[0].(map[string]any)
+	aContent := assistant["content"].([]any)
+	aBlock := aContent[len(aContent)-1].(map[string]any)
+	if _, ok := aBlock["cache_control"]; !ok {
+		t.Error("expected cache_control on assistant's last content block")
+	}
+
+	// User should no longer have cache_control
+	user := msgs[1].(map[string]any)
+	uContent := user["content"].([]any)
+	uBlock := uContent[0].(map[string]any)
+	if _, ok := uBlock["cache_control"]; ok {
+		t.Error("expected cache_control removed from user message")
+	}
+}
+
+func TestShiftMessageBreakpoint_KeepsToolResult(t *testing.T) {
+	req := map[string]any{
+		"messages": []any{
+			map[string]any{"role": "assistant", "content": []any{
+				map[string]any{"type": "text", "text": "Let me check."},
+			}},
+			map[string]any{"role": "user", "content": []any{
+				map[string]any{"type": "tool_result", "tool_use_id": "toolu_123",
+					"content":       "file contents here",
+					"cache_control": map[string]any{"type": "ephemeral"}},
+			}},
+		},
+	}
+
+	shifted := ShiftMessageBreakpoint(req)
+	if shifted {
+		t.Fatal("expected NO shift for tool_result messages")
+	}
+
+	// User (tool_result) should still have cache_control
+	msgs := req["messages"].([]any)
+	user := msgs[1].(map[string]any)
+	uContent := user["content"].([]any)
+	uBlock := uContent[0].(map[string]any)
+	if _, ok := uBlock["cache_control"]; !ok {
+		t.Error("tool_result should keep its cache_control")
+	}
+}
+
+func TestShiftMessageBreakpoint_NoPreviousAssistant(t *testing.T) {
+	req := map[string]any{
+		"messages": []any{
+			map[string]any{"role": "user", "content": []any{
+				map[string]any{"type": "text", "text": "hello",
+					"cache_control": map[string]any{"type": "ephemeral"}},
+			}},
+		},
+	}
+
+	shifted := ShiftMessageBreakpoint(req)
+	if shifted {
+		t.Fatal("expected NO shift when no previous assistant")
+	}
+
+	// User should still have cache_control (restored)
+	msgs := req["messages"].([]any)
+	user := msgs[0].(map[string]any)
+	uContent := user["content"].([]any)
+	uBlock := uContent[0].(map[string]any)
+	if _, ok := uBlock["cache_control"]; !ok {
+		t.Error("cache_control should be preserved when shift fails")
+	}
+}
+
+func TestShiftMessageBreakpoint_LastMessageNotUser(t *testing.T) {
+	req := map[string]any{
+		"messages": []any{
+			map[string]any{"role": "user", "content": "question"},
+			map[string]any{"role": "assistant", "content": []any{
+				map[string]any{"type": "text", "text": "answer",
+					"cache_control": map[string]any{"type": "ephemeral"}},
+			}},
+		},
+	}
+
+	shifted := ShiftMessageBreakpoint(req)
+	if shifted {
+		t.Fatal("expected NO shift when last message is assistant")
+	}
+}
+
+func TestShiftMessageBreakpoint_EmptyMessages(t *testing.T) {
+	req := map[string]any{"messages": []any{}}
+	shifted := ShiftMessageBreakpoint(req)
+	if shifted {
+		t.Fatal("expected NO shift for empty messages")
+	}
+}
+
+func TestShiftMessageBreakpoint_NoCacheControl(t *testing.T) {
+	req := map[string]any{
+		"messages": []any{
+			map[string]any{"role": "assistant", "content": "response"},
+			map[string]any{"role": "user", "content": []any{
+				map[string]any{"type": "text", "text": "no breakpoint here"},
+			}},
+		},
+	}
+
+	shifted := ShiftMessageBreakpoint(req)
+	if shifted {
+		t.Fatal("expected NO shift when user message has no cache_control")
+	}
+}
+
+func TestShiftMessageBreakpoint_AssistantStringContent(t *testing.T) {
+	req := map[string]any{
+		"messages": []any{
+			map[string]any{"role": "assistant", "content": "plain string response"},
+			map[string]any{"role": "user", "content": []any{
+				map[string]any{"type": "text", "text": "question",
+					"cache_control": map[string]any{"type": "ephemeral"}},
+			}},
+		},
+	}
+
+	shifted := ShiftMessageBreakpoint(req)
+	if !shifted {
+		t.Fatal("expected shift to succeed even with string assistant content")
+	}
+
+	// Assistant content should be converted to block array with cache_control
+	msgs := req["messages"].([]any)
+	assistant := msgs[0].(map[string]any)
+	aContent, ok := assistant["content"].([]any)
+	if !ok {
+		t.Fatal("expected assistant content to be converted to array")
+	}
+	lastBlock := aContent[len(aContent)-1].(map[string]any)
+	if _, ok := lastBlock["cache_control"]; !ok {
+		t.Error("expected cache_control on converted assistant block")
+	}
+}
+
+func TestShiftMessageBreakpoint_SkipsIntermediateUserMessages(t *testing.T) {
+	// Multiple messages — should find the assistant right before the last user
+	req := map[string]any{
+		"messages": []any{
+			map[string]any{"role": "user", "content": "first question"},
+			map[string]any{"role": "assistant", "content": []any{
+				map[string]any{"type": "text", "text": "first answer"},
+			}},
+			map[string]any{"role": "user", "content": []any{
+				map[string]any{"type": "tool_result", "tool_use_id": "t1", "content": "result"},
+			}},
+			map[string]any{"role": "assistant", "content": []any{
+				map[string]any{"type": "text", "text": "second answer"},
+			}},
+			map[string]any{"role": "user", "content": []any{
+				map[string]any{"type": "text", "text": "follow-up",
+					"cache_control": map[string]any{"type": "ephemeral"}},
+			}},
+		},
+	}
+
+	shifted := ShiftMessageBreakpoint(req)
+	if !shifted {
+		t.Fatal("expected shift to succeed")
+	}
+
+	msgs := req["messages"].([]any)
+
+	// Second assistant (index 3) should get cache_control
+	assistant2 := msgs[3].(map[string]any)
+	a2Content := assistant2["content"].([]any)
+	a2Block := a2Content[len(a2Content)-1].(map[string]any)
+	if _, ok := a2Block["cache_control"]; !ok {
+		t.Error("expected cache_control on second assistant (closest to last user)")
+	}
+
+	// First assistant (index 1) should NOT get cache_control
+	assistant1 := msgs[1].(map[string]any)
+	a1Content := assistant1["content"].([]any)
+	a1Block := a1Content[len(a1Content)-1].(map[string]any)
+	if _, ok := a1Block["cache_control"]; ok {
+		t.Error("first assistant should NOT have cache_control")
+	}
+}
+
 func TestIsAPIKeyAuth(t *testing.T) {
 	tests := []struct {
 		name   string

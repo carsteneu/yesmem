@@ -93,7 +93,7 @@ func TestUsageLogLine_WithCache(t *testing.T) {
 		OutputTokens:             1523,
 		Complete:                 true,
 	}
-	line := u.LogLine(5, 23, 65000, "test-thread-123")
+	line := u.LogLine(5, 23, 65000)
 	if line == "" {
 		t.Error("log line should not be empty")
 	}
@@ -117,7 +117,7 @@ func TestUsageLogLine_NoCache(t *testing.T) {
 		OutputTokens: 1523,
 		Complete:     true,
 	}
-	line := u.LogLine(5, 0, 0, "")
+	line := u.LogLine(5, 0, 0)
 	if strings.Contains(line, "cache:") {
 		t.Errorf("log line should not show cache when no caching: %q", line)
 	}

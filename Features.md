@@ -556,8 +556,7 @@ Thread identification uses the `X-Claude-Code-Session-Id` header sent by Claude 
 When estimated tokens exceed the threshold, the proxy runs:
 
 ```
-StripReminders → stripSkillHints → CompressContext → EagerStubToolResults
-→ CalcCollapseCutoff → CollapseOldMessages
+StripReminders → stripSkillHints → CompressContext → CalcCollapseCutoff → CollapseOldMessages
 → ReplaceSystemBlock (Narrative) → StripOldNarratives → reexpandStubs
 → UpgradeCacheTTL → EnforceCacheBreakpointLimit
 ```
@@ -569,32 +568,6 @@ StripCLAUDEMDDisclaimer → StripOutputEfficiency → StripToneBrevity
 ```
 
 ### Context Compression (CompressContext)
-
-Runs on every request before the main stubbing pipeline. Targets old, already-processed content:
-
-### Eager Tool-Result Stubbing (EagerStubToolResults)
-
-Proactively compresses large tool_results in the **fresh tail** (uncached zone after the frozen stub boundary) once Claude has processed them. This exploits a key architectural insight: messages after the frozen boundary are not yet cached by Anthropic's prompt cache, so modifying them costs nothing.
-
-| Property | Value |
-|----------|-------|
-| Threshold | >500 tokens |
-| Condition | tool_result has a following assistant turn (already processed) |
-| Cache impact | Zero — operates exclusively in uncached fresh tail |
-| Savings | ~25% context reduction per request in active sessions |
-
-**Rule-based summaries per tool type:**
-
-| Tool | Stub format |
-|------|-------------|
-| Read | `[Read path — N lines \| func1(), func2()]` — file path + extracted function signatures |
-| Grep | `[Grep 'pattern' in path — N matches]` — search pattern + match count |
-| Bash | `[Bash: command — N lines]` + head/tail 3 lines — command + first/last output |
-| Glob | `[Glob 'pattern' — N results]` + first 10 paths |
-| Agent | `[Agent: description — first 200 chars]` |
-| Other | `[ToolName result — N lines archived]` |
-
-The stubs preserve `tool_use_id` for API pair validation. Re-reading the original content is always possible by calling the tool again — stubs are pointers back to the source, not lossy compression.
 
 Before stubbing or collapse, a compression pass removes low-value content:
 - Only targets messages outside the `keepRecent` window (default 10)

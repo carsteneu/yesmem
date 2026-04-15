@@ -71,17 +71,13 @@ func (u *UsageTracker) CacheHitRate() float64 {
 }
 
 // LogLine formats a usage log line for a completed request.
-func (u *UsageTracker) LogLine(reqIdx, stubCount, estimatedTokens int, threadID string) string {
+func (u *UsageTracker) LogLine(reqIdx, stubCount, estimatedTokens int) string {
 	total := u.TotalInputTokens()
 	if total == 0 && u.OutputTokens == 0 {
 		return ""
 	}
 
-	tidPart := ""
-	if threadID != "" {
-		tidPart = fmt.Sprintf(" tid=%s", threadID)
-	}
-	line := fmt.Sprintf("[req %d%s] in=%d out=%d", reqIdx, tidPart, total, u.OutputTokens)
+	line := fmt.Sprintf("[req %d] in=%d out=%d", reqIdx, total, u.OutputTokens)
 
 	// Cache breakdown
 	if u.CacheReadInputTokens > 0 || u.CacheCreationInputTokens > 0 {

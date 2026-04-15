@@ -97,7 +97,6 @@ func RunAssist(dataDir string) {
 	text := "YesMem knows similar issues:\n" + strings.Join(lines, "\n")
 	out := map[string]any{
 		"hookSpecificOutput": map[string]any{
-			"hookEventName":     "PostToolUseFailure",
 			"additionalContext": text,
 		},
 	}

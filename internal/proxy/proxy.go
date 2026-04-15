@@ -929,16 +929,12 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 				combined = append(combined, frozen.Messages...)
 				combined = append(combined, freshMessages...)
 				req["messages"] = combined
-				// Eager-stub large tool_results in the fresh tail (uncached → zero cache cost)
-				beforeEager := s.countMessageTokens(combined)
-				combined = EagerStubToolResults(combined, len(frozen.Messages), s.countTokens)
-				afterEager := s.countMessageTokens(combined)
-				if beforeEager != afterEager {
-					s.logger.Printf("[req %d %s tid=%s] EAGER-STUB: %dk → %dk tokens (saved %dk)",
-						reqIdx, proj, threadID, beforeEager/1000, afterEager/1000, (beforeEager-afterEager)/1000)
-				}
-				req["messages"] = combined
 				needsReserialization = true
+				// Strip embedded CC breakpoints from frozen stubs — they waste cache slots.
+				// InjectFrozenStubCacheBreakpoint adds exactly one below.
+				if n := StripMessagesCacheControl(req, 0, len(frozen.Messages)); n > 0 {
+					s.logger.Printf("[req %d %s tid=%s] SAWTOOTH: stripped %d embedded breakpoints from frozen stubs", reqIdx, proj, threadID, n)
+				}
 				s.logger.Printf("%s[req %d %s tid=%s] SAWTOOTH: frozen prefix (%d stubs, %dk msg) + %d fresh (%dk msg) + %dk overhead = %dk total%s",
 					colorGreen, reqIdx, proj, threadID, len(frozen.Messages), frozen.Tokens/1000, len(freshMessages), freshTokens/1000, overhead/1000, combinedTokens/1000, colorReset)
 				rawMsgTokens := s.countMessageTokens(messages)
@@ -992,15 +988,6 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 				needsReserialization = true
 			} else {
 				// No trigger, no frozen stubs — pass through (early conversation)
-				// Eager-stub large tool_results even before first stub cycle
-				beforeEager := s.countMessageTokens(messages)
-				messages = EagerStubToolResults(messages, 0, s.countTokens)
-				afterEager := s.countMessageTokens(messages)
-				if beforeEager != afterEager {
-					s.logger.Printf("[req %d %s tid=%s] EAGER-STUB: %dk → %dk tokens (saved %dk)",
-						reqIdx, proj, threadID, beforeEager/1000, afterEager/1000, (beforeEager-afterEager)/1000)
-				}
-				req["messages"] = messages
 				s.logger.Printf("%s[req %d %s tid=%s] %d messages, ~%dk tokens (sawtooth: no trigger)%s",
 					colorDim, reqIdx, proj, threadID, len(messages), totalTokens/1000, colorReset)
 			}
@@ -1331,6 +1318,12 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Final: upgrade cache TTL + enforce breakpoint limit (must run AFTER all injections + InjectCacheBreakpoints)
+	// Shift the last messages-breakpoint from unstable user message to stable assistant message.
+	// Text user messages change between turns (timestamps, reminders, structure); assistant messages don't.
+	// Tool-result messages are excluded — they are stable cache anchors.
+	if ShiftMessageBreakpoint(req) {
+		needsReserialization = true
+	}
 	// TTL upgrade only for API key auth — subscription (OAuth) users should not get extended TTL.
 	if s.cfg.CacheTTL != "" && s.cfg.CacheTTL != "ephemeral" && IsAPIKeyAuth(r.Header) {
 		if n := UpgradeCacheTTL(req, s.cfg.CacheTTL); n > 0 {
