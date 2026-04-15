@@ -25,3 +25,4 @@ yesmem.db
 channel/node_modules/
 bunfig.toml
 .codex
+.last-sync-hash
