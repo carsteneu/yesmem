@@ -189,6 +189,12 @@ func TestIndexSession_PulseFromAwaySummary(t *testing.T) {
 	if pulse.Content == "" || !strings.Contains(pulse.Content, "Tree-sitter-Integration") {
 		t.Errorf("content missing expected text, got: %q", pulse.Content)
 	}
+	if pulse.CreatedAt.IsZero() {
+		t.Error("created_at should be set to JSONL event timestamp, got zero")
+	}
+	if pulse.CreatedAt.Hour() != 8 || pulse.CreatedAt.Minute() != 28 {
+		t.Errorf("created_at should match JSONL timestamp 08:28, got %s", pulse.CreatedAt.Format("15:04:05"))
+	}
 
 	// Re-index should NOT create duplicate pulse
 	if err := idx.IndexSession(fixture); err != nil {

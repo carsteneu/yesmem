@@ -121,6 +121,7 @@ func (idx *Indexer) IndexSession(jsonlPath string) error {
 			Confidence: 1.0,
 			Source:     "system_captured",
 			ModelUsed:  "cc_recap",
+			CreatedAt:  msg.Timestamp,
 		})
 		if err != nil {
 			log.Printf("warn: pulse learning for %s: %v", sess.ID, err)
