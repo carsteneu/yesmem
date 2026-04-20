@@ -83,6 +83,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add Capability Memory spec and Phase 2 implementation plan
 - Add pulse/recap feature to Features.md and README.md
 
+### Testing
+
+- Raise tool definition budget to 21000 chars, count to 60
+
 ## [1.1.34] - 2026-04-15
 
 ### Added
