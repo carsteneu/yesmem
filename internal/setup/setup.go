@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,8 +24,9 @@ import (
 	"github.com/carsteneu/yesmem/internal/extraction"
 )
 
-// Run executes the interactive install wizard.
-func Run() error {
+// Run executes the install. Non-interactive by default (uses sensible defaults).
+// Pass interactive=true for the classic wizard with model/provider prompts.
+func Run(interactive bool) error {
 	home, _ := os.UserHomeDir()
 	binaryPath, _ := os.Executable()
 	dataDir := filepath.Join(home, ".claude", "yesmem")
@@ -33,6 +36,59 @@ func Run() error {
 	fmt.Println("  ====================")
 	fmt.Println("  Long-term memory for Claude Code")
 	fmt.Println()
+
+	if interactive {
+		return runInteractive(home, dataDir, binaryPath)
+	}
+	return runDefaults(home, dataDir, binaryPath)
+}
+
+func runDefaults(home, dataDir, binaryPath string) error {
+	chosenModel := DefaultExtractionModel
+	autoExtract := true
+	autoStart := runtime.GOOS == "linux" || runtime.GOOS == "darwin"
+	chosenTerminal := orchestrator.DetectTerminal()
+
+	envKey := os.Getenv("ANTHROPIC_API_KEY")
+	userType := promptUserType(detectUserTypeDefault(home, envKey))
+	fmt.Println()
+
+	var provider, apiKey string
+	switch userType {
+	case "api":
+		provider = "api"
+		if envKey == "" {
+			if s, err := readSettingsJSON(home); err == nil {
+				if env, ok := s["env"].(map[string]any); ok {
+					if k, ok := env["ANTHROPIC_API_KEY"].(string); ok && k != "" {
+						envKey = k
+					}
+				}
+			}
+		}
+		apiKey = promptAPIKey(envKey)
+		if apiKey == "" {
+			fmt.Println("  → No API key provided, falling back to Claude Code subscription")
+			provider = "cli"
+			apiKey, _ = findClaudeCodeKey(home)
+		}
+	default:
+		provider = "cli"
+		apiKey, _ = findClaudeCodeKey(home)
+	}
+
+	fmt.Println()
+	fmt.Println("  Installing:")
+	fmt.Printf("    Model:    %s\n", chosenModel)
+	fmt.Printf("    Provider: %s\n", provider)
+	fmt.Printf("    Config:   %s/config.yaml\n", dataDir)
+	fmt.Println()
+
+	binaryPath = ensurePermanentLocation(home, binaryPath)
+	return executeSetup(home, dataDir, binaryPath, chosenModel, apiKey, provider, chosenTerminal, autoExtract, autoStart)
+}
+
+func runInteractive(home, dataDir, binaryPath string) error {
 
 	// Step 1: Choose extraction model
 	fmt.Println("[1/3] LLM Model for knowledge extraction:")
@@ -255,6 +311,11 @@ func executeSetup(home, dataDir, binaryPath, model, apiKey, provider, terminal s
 		return "", ensureCodexSetup(home, binaryPath)
 	})
 
+	// 9b. Install codebase-memory-mcp CLI for code intelligence
+	withSpinner("Installing codebase-memory-mcp", func() (string, error) {
+		return ensureCBMBinary(dataDir)
+	})
+
 	// 10. Auto-start service
 	if autoStart {
 		withSpinner("Setting up auto-start", func() (string, error) {
@@ -328,6 +389,9 @@ func executeSetup(home, dataDir, binaryPath, model, apiKey, provider, terminal s
 	fmt.Println()
 	fmt.Println("  Next: Open a new Claude Code or Codex session.")
 	fmt.Println("  YesMem tools are automatically available.")
+	fmt.Println()
+	fmt.Printf("  Config:  %s/config.yaml\n", dataDir)
+	fmt.Printf("  Logs:    %s/logs/\n", dataDir)
 
 	// Check if yesmem is reachable in current PATH
 	if _, err := exec.LookPath("yesmem"); err != nil {
@@ -1169,4 +1233,69 @@ Document:
 		return "", fmt.Errorf("translate: %w", err)
 	}
 	return response, nil
+}
+
+const cbmRepo = "DeusData/codebase-memory-mcp"
+
+// ensureCBMBinary downloads the codebase-memory-mcp CLI binary if not present.
+// Downloads the latest release from GitHub for the current platform.
+func ensureCBMBinary(dataDir string) (string, error) {
+	cliDir := filepath.Join(dataDir, "cli")
+	binPath := filepath.Join(cliDir, "codebase-memory-mcp")
+
+	// Already installed — check version
+	if _, err := os.Stat(binPath); err == nil {
+		out, err := exec.Command(binPath, "--version").Output()
+		if err == nil {
+			return strings.TrimSpace(string(out)) + " (existing)", nil
+		}
+	}
+
+	os.MkdirAll(cliDir, 0755)
+
+	// Determine platform
+	goos := runtime.GOOS
+	goarch := runtime.GOARCH
+	asset := fmt.Sprintf("codebase-memory-mcp-%s-%s.tar.gz", goos, goarch)
+
+	// Download latest release asset via GitHub redirect
+	url := fmt.Sprintf("https://github.com/%s/releases/latest/download/%s", cbmRepo, asset)
+	client := &http.Client{Timeout: 20 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return "", fmt.Errorf("download CBM: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("download CBM: HTTP %d for %s", resp.StatusCode, asset)
+	}
+
+	// Write to temp file, extract, install
+	tmpTar := filepath.Join(os.TempDir(), asset)
+	f, err := os.Create(tmpTar)
+	if err != nil {
+		return "", fmt.Errorf("create temp: %w", err)
+	}
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		f.Close()
+		return "", fmt.Errorf("write temp: %w", err)
+	}
+	f.Close()
+
+	// Extract with tar (single binary inside)
+	out, err := exec.Command("tar", "xzf", tmpTar, "-C", cliDir).CombinedOutput()
+	os.Remove(tmpTar)
+	if err != nil {
+		return "", fmt.Errorf("extract CBM: %s: %w", string(out), err)
+	}
+
+	os.Chmod(binPath, 0755)
+
+	// Verify
+	version, err := exec.Command(binPath, "--version").Output()
+	if err != nil {
+		return "", fmt.Errorf("verify CBM: %w", err)
+	}
+
+	return strings.TrimSpace(string(version)), nil
 }

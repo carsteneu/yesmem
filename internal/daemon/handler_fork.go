@@ -10,7 +10,8 @@ import (
 	"github.com/carsteneu/yesmem/internal/models"
 )
 
-// handleForkSetSessionFlavor sets session_flavor on all active learnings for a session.
+// handleForkSetSessionFlavor sets session_flavor on learnings without one.
+// Preserves earlier phase flavors when extraction runs multiple times on long sessions.
 // Called by the proxy's extract_and_evaluate fork type via queryDaemon.
 func (h *Handler) handleForkSetSessionFlavor(params map[string]any) Response {
 	sessionID, _ := params["session_id"].(string)
@@ -18,7 +19,7 @@ func (h *Handler) handleForkSetSessionFlavor(params map[string]any) Response {
 	if sessionID == "" || flavor == "" {
 		return errorResponse("session_id and flavor required")
 	}
-	n, err := h.store.UpdateSessionFlavor(sessionID, flavor)
+	n, err := h.store.UpdateSessionFlavorOnlyEmpty(sessionID, flavor)
 	if err != nil {
 		return errorResponse(fmt.Sprintf("update session flavor: %v", err))
 	}

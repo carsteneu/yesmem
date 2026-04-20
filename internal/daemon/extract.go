@@ -172,6 +172,10 @@ func runInitialExtraction(ext extraction.SessionExtractor, evoExt *extraction.Ex
 		}
 	}
 
+	// ━━━ Phase 3.75: Code Descriptions (LLM — 1 project per cycle, most active first) ━━━
+	log.Printf("━━━ Phase 3.75: Code Descriptions ━━━")
+	GenerateCodeDescriptions(store, cfg, qualityClient)
+
 	// ━━━ Phase 4: Narratives (LLM — session handovers, uses quality model) ━━━
 	if pendingNarratives > 0 {
 		if !extraction.HasBudget(qualityClient) {

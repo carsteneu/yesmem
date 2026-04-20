@@ -90,6 +90,10 @@ type Handler struct {
 	// Project name resolution cache (directory path → resolved project_short)
 	projectCacheMu sync.RWMutex
 	projectCache   map[string]string
+
+	// Code graph per project — lazy initialized on first MCP tool access
+	codeGraphMu sync.RWMutex
+	codeGraphs  map[string]*codeGraphEntry
 }
 
 // recentLearning holds a recently remembered learning with its ID for injection.
@@ -317,6 +321,8 @@ func (h *Handler) Handle(req Request) Response {
 		return h.handleGetLearningsSince(h.resolveProjectParam(req.Params))
 	case "get_session_flavors_since":
 		return h.handleGetSessionFlavorsSince(h.resolveProjectParam(req.Params))
+	case "get_session_flavors_for_session":
+		return h.handleGetSessionFlavorsForSession(req.Params)
 	case "get_pulse_learnings_since":
 		return h.handleGetPulseLearningsSince(h.resolveProjectParam(req.Params))
 	case "get_session_start":
@@ -475,6 +481,25 @@ func (h *Handler) Handle(req Request) Response {
 			return errorResponse(fmt.Sprintf("reload_vectors failed: %v", err))
 		}
 		return jsonResponse(map[string]any{"status": "ok", "count": h.vectorStore.Count()})
+
+	// Code Intelligence tools
+	case "search_code_index":
+		return h.handleSearchCodeIndex(req.Params)
+	case "search_code":
+		return h.handleSearchCode(req.Params)
+	case "get_code_context":
+		return h.handleGetCodeContext(req.Params)
+	case "get_dependency_map":
+		return h.handleGetDependencyMap(req.Params)
+	case "graph_traverse":
+		return h.handleGraphTraverse(req.Params)
+	case "get_file_index":
+		return h.handleGetFileIndex(req.Params)
+	case "get_code_snippet":
+		return h.handleGetCodeSnippet(req.Params)
+	case "get_file_symbols":
+		return h.handleGetFileSymbols(req.Params)
+
 	default:
 		return errorResponse(fmt.Sprintf("unknown method: %s", req.Method))
 	}

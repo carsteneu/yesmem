@@ -10,6 +10,18 @@ import (
 	"time"
 )
 
+const DefaultExtractionModel = "sonnet"
+
+// detectUserTypeDefault picks a sensible default for the user-type prompt.
+// An explicit ANTHROPIC_API_KEY env beats everything else; otherwise CLI
+// (which also covers Claude Code subscription users with oauthAccount).
+func detectUserTypeDefault(home, envKey string) string {
+	if envKey != "" {
+		return "api"
+	}
+	return "cli"
+}
+
 // permanentDirs lists directories that are considered permanent (not Downloads, tmp, etc.)
 var permanentDirs = []string{
 	"/usr/local/bin",

@@ -709,3 +709,19 @@ func parseIntSlice(params map[string]any, key string) []int64 {
 	}
 	return ids
 }
+
+// handleGetSessionFlavorsForSession returns all distinct flavors for a single session.
+// Unlike handleGetSessionFlavorsSince (which groups by session_id for multi-session overview),
+// this returns all phase flavors within one session to show its evolution.
+func (h *Handler) handleGetSessionFlavorsForSession(params map[string]any) Response {
+	sessionID, _ := params["session_id"].(string)
+	if sessionID == "" {
+		return errorResponse("session_id required")
+	}
+
+	flavors, err := h.store.GetSessionFlavorsForSession(sessionID)
+	if err != nil {
+		return errorResponse(err.Error())
+	}
+	return jsonResponse(flavors)
+}

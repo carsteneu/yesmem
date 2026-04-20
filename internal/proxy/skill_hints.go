@@ -148,7 +148,7 @@ func stripSkillHints(messages []any) []any {
 // itself comes from Claude Code's system prompt — this only provides the trigger.
 // Cached as package-level var to avoid per-request allocation.
 var skillEvalBlock = SkillEvalStartMarker + "\n" +
-	"INSTRUCTION: MANDATORY SKILL ACTIVATION SEQUENCE\n" +
+	"INSTRUCTION: MANDATORY SKILL ACTIVATION SEQUENCE (on user text input only — skip on tool_result turns)\n" +
 	"Step 1 — EVALUATE: For each available skill and /command listed above, decide: does it apply to the current task? Output format: list YES items as [name] YES — [reason]. Combine all NO items on a single line.\n" +
 	"Step 2 — ACTIVATE: IF any YES → Use Skill(name) or /command NOW, before proceeding.\n" +
 	"Step 3 — PROCEED: Only after evaluation is complete.\n" +

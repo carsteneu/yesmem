@@ -54,6 +54,7 @@ type extractionResult struct {
 	SessionEmotionalIntensity float64        `json:"session_emotional_intensity"`
 	SessionFlavor             string         `json:"session_flavor"`
 	// CLI provider returns categorized fields instead of flat learnings array
+	Facts             []learningItem `json:"facts"`
 	Gotchas           []learningItem `json:"gotchas"`
 	ExplicitTeachings []learningItem `json:"explicit_teachings"`
 	Decisions         []learningItem `json:"decisions"`
@@ -62,6 +63,7 @@ type extractionResult struct {
 	Unfinished        []learningItem `json:"unfinished"`
 	Relationships     []learningItem `json:"relationships"`
 	PivotMoments      []learningItem `json:"pivot_moments"`
+	Syntheses         []learningItem `json:"syntheses"`
 }
 
 // allLearnings merges categorized fields into the flat learnings array,
@@ -69,6 +71,7 @@ type extractionResult struct {
 func (r *extractionResult) allLearnings() []learningItem {
 	all := append([]learningItem{}, r.Learnings...)
 	for cat, items := range map[string][]learningItem{
+		"fact":              r.Facts,
 		"gotcha":            r.Gotchas,
 		"explicit_teaching": r.ExplicitTeachings,
 		"decision":          r.Decisions,
@@ -77,6 +80,7 @@ func (r *extractionResult) allLearnings() []learningItem {
 		"unfinished":        r.Unfinished,
 		"relationship":      r.Relationships,
 		"pivot_moment":      r.PivotMoments,
+		"synthesis":          r.Syntheses,
 	} {
 		for _, item := range items {
 			if item.Category == "" {
@@ -679,6 +683,7 @@ func parseExtractionResponse(response, sessionID, model string) ([]models.Learni
 
 	// Category mapping from schema enum to internal names
 	categoryMap := map[string]string{
+		"fact":              "fact",
 		"explicit_teaching": "explicit_teaching",
 		"gotcha":            "gotcha",
 		"decision":          "decision",
@@ -687,6 +692,7 @@ func parseExtractionResponse(response, sessionID, model string) ([]models.Learni
 		"unfinished":        "unfinished",
 		"relationship":      "relationship",
 		"pivot_moment":      "pivot_moment",
+		"synthesis":          "synthesis",
 	}
 
 	for _, item := range result.allLearnings() {

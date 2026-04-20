@@ -2,12 +2,14 @@ package briefing
 
 import (
 	"fmt"
+	"log"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/carsteneu/yesmem/internal/codescan"
 	"github.com/carsteneu/yesmem/internal/models"
 	"github.com/carsteneu/yesmem/internal/storage"
 )
@@ -23,6 +25,9 @@ type Generator struct {
 	strings        Strings
 	recovery       *RecoveryConfig
 	skipUnfinished bool
+	codeScanner    *codescan.CachedScanner
+	codeGraph      *codescan.CodeGraph // built during briefing, available for MCP tools
+	codeMapText    string              // built during briefing, appended post-refine
 }
 
 // New creates a briefing generator with auto-loaded strings.
@@ -73,6 +78,18 @@ func (g *Generator) SetSkipUnfinished(skip bool) {
 // SetStrings sets translated UI strings for the briefing.
 func (g *Generator) SetStrings(s Strings) {
 	g.strings = s
+}
+
+// CodeGraph returns the code graph built during the last Generate() call.
+// Returns nil if no briefing has been generated yet or the project had no source files.
+func (g *Generator) CodeGraph() *codescan.CodeGraph {
+	return g.codeGraph
+}
+
+// CodeMap returns the rendered code map built during Generate.
+// Append post-refine to bypass LLM compression.
+func (g *Generator) CodeMap() string {
+	return g.codeMapText
 }
 
 // Generate produces a narrative briefing for the given project directory.
@@ -169,6 +186,9 @@ func (g *Generator) Generate(projectDir string) string {
 		b.WriteString("\n")
 		b.WriteString(mm)
 	}
+
+	// Knowledge Index Phase A — enriched briefing sections
+	b.WriteString(g.renderKnowledgeIndex(s, projectDir, projectShort, docSources))
 
 	result := b.String()
 
@@ -308,7 +328,11 @@ func (g *Generator) loadNarratives(projectShort string) []NarrativeSummary {
 	}
 	// Fetch more than needed so consolidation still yields enough
 	learnings, err := g.store.GetRecentNarratives(projectShort, 10)
-	if err != nil || len(learnings) == 0 {
+	if err != nil {
+		log.Printf("[briefing] loadNarratives failed for %q: %v", projectShort, err)
+		return nil
+	}
+	if len(learnings) == 0 {
 		return nil
 	}
 
@@ -385,7 +409,11 @@ func (g *Generator) renderAwakening(s Strings, learnings []models.Learning, tota
 // loadClusters fetches learning clusters and splits them into strong (confidence >= 0.5) and weak.
 func (g *Generator) loadClusters(projectShort string) (strong, weak []ClusterSummary) {
 	clusters, err := g.store.GetLearningClusters(projectShort)
-	if err != nil || len(clusters) == 0 {
+	if err != nil {
+		log.Printf("[briefing] loadClusters failed for %q: %v", projectShort, err)
+		return nil, nil
+	}
+	if len(clusters) == 0 {
 		return nil, nil
 	}
 
@@ -663,9 +691,11 @@ func (g *Generator) loadDocSources(projectShort string) []DocSourceSummary {
 	var result []DocSourceSummary
 	for _, s := range sources {
 		result = append(result, DocSourceSummary{
-			Name:       s.Name,
-			Version:    s.Version,
-			ChunkCount: s.ChunkCount,
+			Name:        s.Name,
+			Version:     s.Version,
+			ChunkCount:  s.ChunkCount,
+			TriggerExts: s.TriggerExtensions,
+			DocType:     s.DocType,
 		})
 	}
 	return result

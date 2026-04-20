@@ -125,6 +125,8 @@ type DocSourceSummary struct {
 	Name       string
 	Version    string
 	ChunkCount int
+	TriggerExts string
+	DocType     string
 }
 
 // ClusterSummary is a single knowledge cluster for the Metamemory display.

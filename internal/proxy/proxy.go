@@ -82,6 +82,7 @@ const (
 	colorLightGreen = "\033[92m" // FINAL without compression
 	colorBlue       = "\033[34m" // injection
 	colorOrange     = "\033[33m" // skip / retry
+	colorYellow     = "\033[33m" // warnings
 	colorRed        = "\033[31m" // errors
 )
 
@@ -138,6 +139,7 @@ type Server struct {
 	// Briefing cache — loaded once per thread, injected as user/assistant message pair
 	briefingMu   sync.RWMutex
 	briefingText string
+	codeMapText  string
 
 	// Cognitive signal bus — routes _signal_* tool calls to handlers
 	signalBus *SignalBus
@@ -567,7 +569,13 @@ func (s *Server) queryDaemon(method string, params map[string]any) (json.RawMess
 		return nil, fmt.Errorf("dial daemon: %w", err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	// Briefing generation can take 10-20s (LLM refinement + scanner);
+	// other RPCs (search, learnings) are fast and fine with 5s.
+	deadline := 5 * time.Second
+	if method == "generate_briefing" {
+		deadline = 30 * time.Second
+	}
+	conn.SetDeadline(time.Now().Add(deadline))
 
 	// JSON-RPC style request/response (matches daemon.SocketServer protocol)
 	type request struct {
@@ -770,6 +778,12 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		s.logger.Printf("[req %d] ENHANCE: injected authority + persona tone", reqIdx)
+		needsReserialization = true
+	}
+
+	// thinking normalization: convert thinking.type "enabled" → "adaptive" for models that require it
+	if NormalizeThinkingType(req) {
+		s.logger.Printf("[req %d] THINKING: normalized type=enabled → adaptive for %s", reqIdx, model)
 		needsReserialization = true
 	}
 
@@ -1290,6 +1304,17 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 				req["messages"] = injectAssociativeContext(currentMessages, thinkReminder, s.cfg.SawtoothEnabled)
 				needsReserialization = true
 			}
+		}
+
+		// Briefing injection: prepend user/assistant turn pair at beginning of messages.
+		// Static per session → stable prefix → cacheable. Must be before dialog injection.
+		if s.injectBriefingTurn(req, reqIdx, proj, threadID) {
+			needsReserialization = true
+		}
+
+		// Code Map injection: insert after briefing turn pair.
+		if s.injectCodeMapTurn(req, reqIdx, proj, threadID) {
+			needsReserialization = true
 		}
 
 		// Dialog injection: append at end of messages with pseudo-padding for alternation.

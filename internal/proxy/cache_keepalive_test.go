@@ -109,8 +109,8 @@ func TestCacheKeepalive_PingModifiesMaxTokens(t *testing.T) {
 	time.Sleep(80 * time.Millisecond)
 	ka.Stop()
 
-	if receivedMaxTokens != 1 {
-		t.Errorf("ping should set max_tokens=1, got %d", receivedMaxTokens)
+	if receivedMaxTokens != 8000 {
+		t.Errorf("ping should set max_tokens=8000, got %d", receivedMaxTokens)
 	}
 }
 
@@ -253,8 +253,14 @@ func TestBuildPingBody_StripsThinkingAndTools(t *testing.T) {
 		t.Fatalf("failed to unmarshal ping body: %v", err)
 	}
 
+	// thinking MUST be preserved (it's part of the cache prefix).
+	// To avoid "max_tokens > budget_tokens" with adaptive thinking,
+	// max_tokens is raised to 8000 instead of stripping thinking.
 	if _, ok := m["thinking"]; !ok {
-		t.Error("ping body must preserve 'thinking' — adaptive works with max_tokens=1")
+		t.Error("ping body must preserve 'thinking' — it's part of the cache prefix")
+	}
+	if mt, ok := m["max_tokens"]; !ok || string(mt) != "8000" {
+		t.Errorf("ping body must have max_tokens=8000 (got %s)", string(mt))
 	}
 	if _, ok := m["context_management"]; ok {
 		t.Error("ping body must not contain 'context_management' — rejected by API")
@@ -270,8 +276,8 @@ func TestBuildPingBody_StripsThinkingAndTools(t *testing.T) {
 
 	var mt int
 	json.Unmarshal(m["max_tokens"], &mt)
-	if mt != 1 {
-		t.Errorf("expected max_tokens=1, got %d", mt)
+	if mt != 8000 {
+		t.Errorf("expected max_tokens=8000, got %d", mt)
 	}
 
 	if _, ok := m["system"]; !ok {

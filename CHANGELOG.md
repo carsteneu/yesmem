@@ -9,11 +9,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Install wizard picks CLI vs API key, default model sonnet
+- Follow parent process CWD for worktree routing
+- Fault-tolerant CBM indexing for worktrees
+- Worktree-aware CodeGraph cache
+- Worktree-aware filesystem fallback for code tools
+- ExtractSymbol for all Go symbol types + get_file_symbols tool
+- CBM binary auto-download + managed CLI location
+- CBM index mtime invalidation + Module fallback + get_code_snippet
+- Add get_code_snippet tool — full function body from source
+- Persistent SQLite cache for project scan results
+- Add Active Zones — recently changed packages from git log
+- CBM graph enrichment — entry points, test coverage, change coupling, key files, imports
+- Code Map injection as separate user/assistant turn
+- Proxy user/assistant turn injection for briefing
+- Complete briefing in daemon RPC (add RefineBriefing + Open Work)
+- Split Code Map into separate codemap-hook
+- Auto-index projects in codebase-memory-mcp via CLI
+- Phase C Karpathy Compilation — LLM-generated package descriptions + cross-package links
+- Learning annotations in code map + get_file_index MCP tool (Phase B completion)
+- Integration test — TreeSitterScanner + CodeGraph end-to-end on own repo
+- Code Intelligence MCP handlers — search_code_index, search_code, get_code_context, get_dependency_map, graph_traverse with lazy CodeGraph init
+- In-memory CodeGraph with traversal, search, and cycle detection
+- TreeSitterScanner with AST-based signatures + import extraction for 15 languages
+- Knowledge Index Phase B — code scanner with adaptive tier rendering
+- Knowledge Index Phase A — Doc Index, Health, Recent Context in briefing
+- Auto-generated changelog with sync integration
 - Non-interactive default install
 
 ### Changed
 
+- Whitelist mode for docs/ in sync-public.sh
+- Harden public sync pipeline
+- Move Knowledge Index sections (Doc Index, Health, Recent Context) into Code Map turn
+- Expand Code Map — all packages get individual rows
+- Extract GenerateFullBriefing as single source of truth
+- Rewrite Code Map render to Spec Ebene 1 table format
+- Replace TreeSitter scanner with codebase-memory-mcp CLI
+- Wire TreeSitterScanner into briefing, render imports in code map, expose CodeGraph
+- Add gotreesitter v0.13.4 (pure Go tree-sitter, 206 grammars, no CGO)
+- Consistent session_flavor JSON key, remove redundant DISTINCT
 - Remove pulse content truncation from timeline
+
+### Fixed
+
+- Keepalive ping strips thinking — adaptive conflicts with max_tokens=1
+- Add error logging to silent-fail load functions in briefing
+- Normalize thinking.type=enabled to adaptive for opus-4-6+/sonnet-4-6
+- Merge Module nodes into File query for complete scan
+- Packed-refs fallback + unique project key for scan cache
+- Code Map injection debugging + dedup marker fix
+- Code review — lazy-init briefingText + pass projectDir
+- Consistent ## Code Map headers across all tiers
+- Suppress empty Code Map for projects with no recognized packages
+- Inject Code Map post-refine so it survives LLM compression
+- Increase queryDaemon timeout to 30s for generate_briefing
+- Pass full CWD path to briefing for Code Map scanner
+- Harden TreeSitter scanner against OOM + panics
+- Add gopath, .worktrees, testdata to scanner skip list (OOM crash)
+- Move Code Descriptions to Phase 3.75 (before heavy Narratives/Clustering)
+- Phase 4.75 rate-limit to 1 project per extraction cycle
+- Code Intelligence review fixes — real grep, glob matching, memory cleanup ordering
+- Skill-eval block scope to user text input only, skip tool_result turns
+- Preserve session flavors across extraction runs, fetch all phases for current session
+
+### Reverted
+
+- Remove Go-specific filesystem fallbacks from code tools
+- Revert "feat(codescan): worktree-aware filesystem fallback for code tools"
 
 ### Documentation
 
@@ -251,10 +314,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rate-limit tracking implementation plan (8 tasks, TDD)
 - Rate-limit tracking design spec (v1.0.1)
 
-## [1.0.0] - 2026-04-06
+## [safety-before-rebase-2026-04-16] - 2026-04-16
 
 ### Added
 
+- Add cap_store — sandboxed capability database with CRUD MCP tool
+- Add register_capabilities MCP tool, /build-tool skill, review fixes
+- Add briefing capability hints, /build-tool skill, review fixes
+- Add Capability Memory handlers, MCP tools, and tests
+- Add 'capability' as valid learning category
+- Auto-generated changelog with sync integration
+- Non-interactive default install
+- Integrate pulse learnings into collapse session timeline
+- Capture CC away_summary as pulse learnings
+- Add --per-commit mode to sync-public.sh
+- Re-enable eager tool-result stubbing (cache-safe with breakpoint shift)
+- Persistent timestamp + msg:N injection on all messages
+- Selective cache breakpoint shift for text-only turns
+- Eager tool-result stubbing in fresh tail
+- Cache cost analysis script for proxy log evaluation
+- Effort_floor proxy setting
+- Auto-collect commit messages from private repo
+- Extended prompt rewrites — 7 new quality directives
+- Make update — check, upgrade, build, test dependencies in one step
+- Persist FrozenStubs and DecayTracker across proxy restarts
+- Activate fork_coverage tracking — dead code revived
+- Fork reflection propagates message range to learnings
+- Batch extraction sets lineage from chunk message range
+- Chunker carries message index range (FromMsgIdx/ToMsgIdx)
+- Persist and read learning lineage (source_msg_from/to)
+- Learning lineage — source message attribution
+- Terminal shows collapsing savings — raw vs actual tokens
+- Optimize skill trigger descriptions for better MCP tool activation
+- Include LoCoMo benchmark in production binary
+- Add _meta maxResultSizeChars to large MCP tool results
+- Use X-Claude-Code-Session-Id header in proxy
+- Resolve Claude Code auth conflict in setup
+- Store API key in settings.json + cache-TTL hint (v1.0.3)
+- Throttle extraction when API utilization exceeds 50%
+- Parse rate-limit headers + cache breakdown in forward path
+- _track_usage handler accepts cache + rate-limit fields
+- TrackTokenUsage with cache_read/cache_write breakdown
+- ShouldThrottle + Utilization with fallback chain
+- RateLimitInfo struct + ParseRateLimitHeaders
 - Fork reflection — quality filter, importance, emotional_intensity
 - CI workflow with macOS matrix, update release pipeline
 - GitHub Actions release pipeline via GoReleaser
@@ -685,6 +787,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Consistent session_flavor JSON key, remove redundant DISTINCT
+- Remove pulse content truncation from timeline
+- Change keepalive defaults to 5m mode with 5 pings
+- SEO optimization — meta tags, structured data, semantic HTML
+- Landing page content refresh
+- Compact skill-eval output format
+- Remove bleve dependency, add creack/pty
+- Landing page styling and content refresh
+- Dependencies + make test scope
+- Translate all German strings to English
+- Rename docs/ to yesdocs/ for internal docs, new docs/ for public
+- Split SSE weights into 3 parts for GitHub compatibility
+- Move MultiAgentFeatures.md to docs/, include BENCHMARK.md in public sync
+- V0.52 — cache breakdown columns in token_usage
 - Archive unused test scripts and prototype code
 - Simplify sync-public.sh — exclude entire docs/ directory
 - Split learnings.go into 7 concern-based files
@@ -774,6 +890,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Address pre-merge code review findings for Capability Memory
+- Exclude capabilities from evolution pipeline, clean embedding text
+- Skill-eval block scope to user text input only, skip tool_result turns
+- Preserve session flavors across extraction runs, fetch all phases for current session
+- Truncate pulse content to 150 chars in session timeline
+- Set created_at on pulse learnings from JSONL event timestamp
+- Strip context_management from fork requests
+- Remove truncation from archive block learnings and session flavors
+- Use session start from DB for collapse learning query + propagate threshold to sawtooth
+- Append no-echo instruction to rotating timestamp hints
+- Restore TotalPings + cache countdown display lost in overbroad revert
+- Restore threadID in usage log lines lost in overbroad revert
+- Restore hookEventName, .gitignore and sync excludes lost in overbroad revert
+- Keepalive interval display uses exact minutes+seconds
+- Add missing hookEventName to hook JSON output
+- Cache status countdown uses elapsed time, usage log includes threadID
+- Sync script excludes cache_cost_analysis.py, .last-sync-hash stays local
+- Correct collapsing pipeline description in README
+- Keepalive ping strips context_management + statusline uses CacheState
+- Uninstall properly restores Claude Code working state
+- Cache status display considers keepalive pings
+- Per-thread cache status files prevent cross-session timestamp bleed
+- Accept string type for trigger_extensions in ingest_docs handler
+- Include version in asset filename to match GoReleaser naming
+- Use short temp dir for unix socket in macOS CI tests
+- Use root-anchored excludes for git internal files
+- Go version 1.24 → 1.25 in CI workflows + add FSL 1.1 license
+- Hook-check no longer blocks all bash commands on stale gotcha
+- IVF index always-current — save on shutdown, staleness check, periodic save
+- Fork extraction on subscription — extract OAuth token from Bearer header, send as x-api-key
+- Skip fork extraction on subscription (no API key for /v1/messages)
+- Fork extraction auth on subscription — forward original request headers
+- Persist rate limits in OpenAI-parity path (subscription fix)
+- Throttle all background LLM calls when API utilization exceeds 50%
+- Update Opus pricing to 4.6 rates ($5/$25 per MTok)
+- Collapsing savings display — correct raw source and drift
+- Persist raw token estimate in FrozenStubs for collapsing display
+- Set raw estimate in frozen-prefix path for collapsing display
+- Daemon retry on cold start — 100% cache hit after deploy
+- Re-persist frozen stubs when initial persist fails after deploy
+- Normalize zero-value lineage to -1 sentinel — prevents false attribution on non-extraction learnings
+- Add self-test to security scanner + symlink for superpowers plans
+- Security scanner was broken — --dry-run prevented actual scan
+- Neutralize hardcoded paths in tests for public release
+- Remove LFS tracking, store SSE weights as regular git objects
+- Broaden API key pattern in sync security scanner
+- Make yesmem-docs skill description generic
+- Correct embedding model references across all active docs
+- Permissions.allow serializes as [] not null after uninstall
+- Init missing maps in graceful shutdown test setup
+- Inject recovery block post-refine so it survives briefing refinement
+- Session-end hook via daemon RPC instead of direct DB access
+- Remove double v-prefix in version output
 - Fork agent parity — session flavor, project, metadata, dedup
 - Register statusline in setup, migrate, and uninstall
 - Per-thread state isolation across all proxy paths
@@ -1024,6 +1193,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
+- Reduce daemon RSS ~52% — SSE singleton, weight release, parser buffers
+- Preserve tools in fork requests for cache prefix compatibility
+- Keepalive pings 12→6 + statusline refreshInterval
+- Slim down MCP tool descriptions — 24863 to 16836 chars (-32%)
+- Default to ephemeral cache TTL (5min) instead of 1h
+- Force tool rotation in agentic benchmark mode
 - Batch extraction cycle replaces immediate settled-trigger
 - Extraction config defaults + distillation batching
 - Briefing + extraction cost optimizations (~$11.50/day savings)
@@ -1051,12 +1226,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Reverted
 
+- Remove eager tool-result stubbing (breaks cache anchors)
 - Revert "feat(scoring): session-correction-rate als Quality-Signal (2e)"
 - Revert "feat(storage): switch SQLite driver from modernc to ncruces/go-sqlite3"
 - Remove dynamic persona dimensions + self-reflection
 
 ### Documentation
 
+- Add Capability Memory spec and Phase 2 implementation plan
+- Add pulse/recap feature to Features.md and README.md
+- Restore cache keepalive cost analysis lost in overbroad revert
+- Add eager tool-result stubbing to Features.md, README, and landing page
+- Eager tool-result stubbing implementation plan
+- Add community files — issue templates, contributing guide, code of conduct
+- README overhaul — badges, comparison table, context screenshot
+- Add plan for cache-status via daemon-RPC
+- Add yesmem.io landing page with GitHub Pages deployment
+- Add Windows WSL2 install note to README
+- Update README — sponsor section, production date correction
+- Rewrite README for launch — adaptive context window pitch, benefit-oriented features, install script
+- Update Features.md with 7 undocumented features from recent commits
+- Add cost analyses + learning lineage plan, ignore .codex
+- Update Features.md with 12 missing features from recent commits
+- Add Opus benchmark results and retrieval ceiling finding
+- Add LoCoMo benchmark methodology and results
+- Add defense-in-depth security plan
+- Rate-limit tracking implementation plan (8 tasks, TDD)
+- Rate-limit tracking design spec (v1.0.1)
 - Clarify proxy is optional, add API key vs subscription guidance
 - Add project audit report 2026-04-01
 - Add typed association and loop detector plan/spec documents
@@ -1191,4 +1387,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [1.0.3]: https://github.com/carsteneu/yesmem/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/carsteneu/yesmem/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/carsteneu/yesmem/compare/v1.0.0...v1.0.1
-[1.0.0]: https://github.com/carsteneu/yesmem/releases/tag/v1.0.0
+[1.0.0]: https://github.com/carsteneu/yesmem/compare/safety-before-rebase-2026-04-16...v1.0.0
+[safety-before-rebase-2026-04-16]: https://github.com/carsteneu/yesmem/releases/tag/safety-before-rebase-2026-04-16

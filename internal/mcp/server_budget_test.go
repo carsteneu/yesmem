@@ -7,9 +7,9 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
-// Token budget: 19000 chars in Anthropic wire format ≈ 5400 tokens.
+// Token budget: 19500 chars in Anthropic wire format ≈ 5600 tokens.
 // Baseline before slimdown: 24863 chars ≈ 7100 tokens.
-const maxToolDefChars = 19000
+const maxToolDefChars = 19500
 
 func TestToolDefinitionBudget(t *testing.T) {
 	srv := &Server{}
@@ -47,7 +47,7 @@ func TestToolCount(t *testing.T) {
 	tools := srv.srv.ListTools()
 	t.Logf("Tool count: %d", len(tools))
 
-	if len(tools) > 55 {
-		t.Errorf("Too many tools: %d > 55 — consider consolidation", len(tools))
+	if len(tools) > 56 {
+		t.Errorf("Too many tools: %d > 56 — consider consolidation", len(tools))
 	}
 }

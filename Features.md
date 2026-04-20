@@ -91,6 +91,7 @@ Learnings are the core knowledge unit — extracted insights from sessions that 
 | `strategic` | Long-term goals and business context | `remember()` MCP only |
 | `narrative` | Session summaries and milestone narratives | Daemon-generated (not in `validCategories` — created programmatically) |
 | `recurrence_alert` | Recurring pattern warnings from cluster analysis | Phase 4.6 auto-generated (not in `validCategories` — created programmatically) |
+| `pulse` | CC `/recap` session summaries captured from `away_summary` JSONL events when user returns after idle | Parser + Indexer (automatic via fsnotify watcher) |
 
 ### 2.2 Saving: `remember()`
 
@@ -615,6 +616,7 @@ When token estimates exceed the threshold:
 3. **Orphan safety:** If cutoff lands on `tool_result`, shifts forward to avoid orphaned pairs
 4. Archive block contains: message count, `get_compacted_stubs()` hint, tool usage summary, files touched, and structured sections:
    - **Sessions** — extracted session flavors (summaries) grouped by date with timestamps
+   - **Recaps** — CC `/recap` events integrated chronologically into the session timeline, prefixed with `[recap]`. These are Claude Code's own session summaries generated when the user returns after idle, captured as pulse learnings from JSONL events.
    - **Wendepunkte** — pivot moments from extraction (why directions changed, with context)
    - **Commits** — git commits with short hash, message, and timestamp, grouped by date
    - **Gotchas** — active warnings from the collapsed period

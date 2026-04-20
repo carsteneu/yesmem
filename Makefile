@@ -8,8 +8,8 @@ VERSION   := $(shell git describe --tags --always 2>/dev/null || echo "dev")
 # Go build settings
 export GOROOT  := $(HOME)/memory/go-sdk/go
 export PATH    := $(GOROOT)/bin:$(PATH)
-export GOPATH  := $(CURDIR)/gopath
-export GOCACHE := $(CURDIR)/gocache
+export GOPATH  := $(HOME)/.cache/yesmem/gopath
+export GOCACHE := $(HOME)/.cache/yesmem/gocache
 export CGO_ENABLED := 0
 
 LDFLAGS := -X main.version=$(VERSION)
