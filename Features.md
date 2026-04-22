@@ -2238,21 +2238,91 @@ update:
 
 ## Differentiators
 
-What makes YesMem unique compared to other memory systems:
+What makes YesMem fundamentally different — not "also does X", but "nobody else can do X":
 
-1. **Source Attribution** — every learning tracks origin (user_stated, claude_suggested, llm_extracted). No other system in 31 analyzed research papers has this.
-2. **5-Count Scoring** — orthogonal counters prevent scoring inflation from mere visibility
-3. **Ebbinghaus Decay** — scientifically grounded spaced repetition, not arbitrary TTLs
-4. **Emotional Memory** — sessions rated by intensity, learnings from breakthroughs score higher
-5. **Persona Engine** — persistent identity across sessions, not just fact storage
-6. **Infinite Thread** — proxy-based context compression with sawtooth caching, progressive decay, and context recovery
-7. **Domain-agnostic Engine** — same mechanisms work for code, marketing, legal, finance
-8. **Two-layer Architecture** — raw material (sessions/docs) preserved for deep search; distillate (learnings) for quick access
-9. **Zero-dependency Binary** — single Go binary with embedded SSE model, no external services
-10. **Cognitive Signals** — self-reflection loop that improves knowledge quality over time
-11. **Associative Context** — automatic semantic priming on every user message
-12. **Trust-Based Evolution** — high-trust learnings resist blind superseding
-13. **Hook Integration** — event-driven, not polling; gotcha prevention before errors happen
-14. **Cross-Platform Memory** — HTTP API enables external integrations (OpenClaw) alongside native Unix socket
-15. **Fixation Detection** — automatic detection of pathological error loops with proportional scoring penalty
-16. **Multi-Agent Memory Safety** — shared long-term memory with dialog-extract-block, conflict detection, agent-role scoping, and auto-broadcast
+### The Moat: Wire-Level Control
+
+1. **Invisible Memory** — YesMem sits between Claude Code and the Anthropic API as an HTTP proxy. Memory is injected, context is compressed, and sessions are managed *before the model sees anything*. The user never calls a "remember" tool — it just happens. No other memory system operates at the wire level.
+2. **Infinite Thread** — Conversations don't hit context limits. The proxy progressively compresses old messages through 4 decay stages (full → summary → stub → collapsed), with sawtooth cache management that recovers context on demand. Other systems tell you to start a new chat.
+3. **Real-Time Background Extraction** — A forked agent pipeline extracts learnings *while the session is still running*, not after it ends. By the time you finish a debugging session, the insights are already indexed and searchable.
+4. **Associative Priming** — Every user message triggers automatic semantic search. Relevant memories are injected into the next model response — invisibly, at the proxy layer. The model gets context it didn't ask for, and the user gets answers informed by past sessions without doing anything.
+
+### Things Nobody Else Has
+
+5. **Source Attribution** — Every learning tracks its origin: `user_stated > agreed_upon > claude_suggested > llm_extracted`. We analyzed 31 memory-related research papers. None of them track provenance. This means YesMem can distinguish "the user told me this" from "I inferred this" — and weight them differently.
+6. **Fixation Detection** — When the model gets stuck in a loop (same error, same fix attempt, same failure), YesMem detects it automatically and penalizes the scoring of the learnings that caused the loop. Other systems let you spiral; YesMem breaks the cycle.
+7. **Gotcha Prevention** — The hook system intercepts tool calls *before execution*. Failed commands are auto-learned; on the next attempt, relevant gotchas are injected as warnings so the model can course-correct. After 3+ repeated failures of the same pattern, the command is hard-blocked — the model can't make the same mistake a fourth time. Prevention escalates: context first, then a wall.
+8. **Multi-Agent Memory Safety** — Multiple Claude Code agents share long-term memory with conflict detection, dialog-extract-block protocol, agent-role scoping, and auto-broadcast. This isn't "shared database" — it's coordinated memory with write isolation.
+9. **Emotional Memory** — Sessions are rated by intensity (breakthroughs, frustration, pivots). Learnings from high-intensity sessions score higher in retrieval. The system remembers *what mattered*, not just what happened.
+
+### Architectural Advantages
+
+10. **Zero-Dependency Binary** — Single Go binary, ~30MB, with a 512-dimensional embedding model compiled in via `go:embed`. No Python, no pip, no Docker, no external services. `curl | sh` and you're running.
+11. **Two-Layer Architecture** — Raw material (full session transcripts, indexed documents) is preserved for deep search. Distilled learnings provide fast access. You get both precision and recall — grep through old conversations *or* get instant structured answers.
+12. **Trust-Based Evolution** — Learnings have trust levels. A `user_stated` fact resists being overwritten by an `llm_extracted` inference. High-trust knowledge requires high-trust evidence to supersede. This prevents hallucination-driven memory corruption.
+13. **Ebbinghaus Decay** — Memory fading follows spaced-repetition curves grounded in cognitive science, not arbitrary TTLs. Frequently accessed learnings stay fresh; unused ones fade predictably. Decisions and pivot moments decay slower than routine observations.
+14. **Orthogonal Scoring** — Five independent counters (use, citation, retrieval, injection, feedback) prevent a learning from becoming "important" just because it was retrieved often. A learning that gets injected 50 times but never cited is noise, not signal.
+15. **Persona Continuity** — Not just fact storage — a persistent identity model that evolves across sessions. Traits, preferences, communication style, expertise areas. Session 1036 knows who you are because sessions 1–1035 built that understanding incrementally.
+
+## 20. Scheduled Agents
+
+Cron-based task scheduler built into the daemon. Define recurring or one-shot jobs that spawn agents automatically.
+
+### Two Execution Modes
+
+| Mode | How | Visibility | Overhead | Use case |
+|------|-----|-----------|----------|----------|
+| `agent` | Spawns PTY bridge + tmux window | Visible | Full briefing + agent lifecycle | Complex tasks, debugging, coding plans |
+| `headless` | Runs `claude -p` as subprocess | Silent | Minimal — no lifecycle management | Routine automation, cron jobs, data collection |
+
+### MCP Interface
+
+Single `schedule` tool with four actions:
+
+```
+schedule(action="create", name="daily-reddit", cron="0 9 * * *", prompt="...", mode="headless")
+schedule(action="list")
+schedule(action="delete", id="sched-daily-reddit-12345")
+schedule(action="run", id="sched-daily-reddit-12345")   # manual trigger
+```
+
+### Task Delivery
+
+The scheduler writes the task prompt to a job-specific scratchpad section **before** spawning the agent. The agent reads its task from the briefing — no relay timing issues.
+
+```
+Scratchpad section: sched-<job-name>
+Content: ## SCHEDULED TASK [<job-name>]
+         Job-ID: <id>
+         <wrapped prompt with focus instructions>
+```
+
+### Agent Lifecycle
+
+- **Pre-spawn cleanup** — stops any existing agent on the same section
+- **Idle timeout** — 10-minute unified timeout across all agent states (running, frozen, idle)
+- **Watchdog goroutine** — polls agent status every 30 seconds, stops idle agents
+
+### Headless Mode
+
+Uses `claude -p` (Claude Code non-interactive mode) as a daemon subprocess:
+- Full MCP tool access (caps, cap_store, haiku, scratchpad)
+- Runs through the proxy (subscription-based, no API key needed)
+- Output captured and written to scratchpad
+- No tmux window, no PTY bridge, no watchdog needed
+
+### Caps as Automation Primitives
+
+Caps are ideal for scheduled tasks because they are predictable: defined schema, known handler, deterministic behavior. The agent activates the cap and executes it — no improvisation needed.
+
+### Comparison with Anthropic Scheduled Tasks
+
+| | Anthropic Cloud Routines | Desktop Scheduled Tasks | YesMem Scheduler |
+|---|---|---|---|
+| Runs on | Anthropic cloud | Local (app open) | Local (daemon) |
+| Memory | None (fresh each run) | None | Full persistent memory |
+| Local files | No (fresh clone) | Yes | Yes |
+| MCP servers | Connectors only | Local | Full local MCP |
+| Caps/Tools | N/A | N/A | Reusable caps + cap_store |
+| Cost | API tokens + $0.08/h | Subscription | Subscription |
+| Limits | Pro: 5/day, Max: 15/day | Desktop-bound | Unlimited (self-hosted) |

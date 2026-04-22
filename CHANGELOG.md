@@ -53,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Add pre-modification dump, update rewrite targets for CC ~2.1.117
 - Keepalive ping strips thinking — adaptive conflicts with max_tokens=1
 - Add error logging to silent-fail load functions in briefing
 - Normalize thinking.type=enabled to adaptive for opus-4-6+/sonnet-4-6
@@ -80,6 +81,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Remove stale Bleve reference, update vector store description
+- Restructure Differentiators into marketing-quality categories
+- Add untracked docs/plans to .gitignore and sync-public blocklist
+- Corrected CC system prompt diff analysis (March vs April 2026)
+- Add Scheduled Agents and Headless Mode to Features.md and README.md
+- Rename yesdocs/analysen/ to yesdocs/analysis/, add CC system prompt diff
+- Align build-tool skill with CAPS-md-spec
+- Add yesmem-build-tool as bundled skill
 - Add Capability Memory spec and Phase 2 implementation plan
 - Add pulse/recap feature to Features.md and README.md
 

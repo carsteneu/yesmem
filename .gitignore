@@ -27,3 +27,7 @@ bunfig.toml
 .codex
 .last-sync-hash
 *.cast
+docs/claude-code-repl-reference.md
+yesdocs/hn-launch-post.md
+yesdocs/plans/2026-04-20-caps-inject-error-fallback.md
+yesdocs/plans/2026-04-21-rename-capability-to-craft.md

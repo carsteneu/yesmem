@@ -699,6 +699,18 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	s.logger.Printf("req %d: %d messages total", reqIdx, msgCount)
 	logCacheBreakpointLocations(req, s.logger)
 
+	// Pre-modification dump: capture the raw request before any proxy changes.
+	if os.Getenv("YESMEM_PROXY_DEBUG") == "1" {
+		if preBody, err := json.Marshal(req); err == nil {
+			dumpDir := filepath.Join(s.cfg.DataDir, "debug")
+			os.MkdirAll(dumpDir, 0755)
+			ts := time.Now().Format("20060102-150405")
+			dumpPath := fmt.Sprintf("%s/req_%s_%d_pre.json", dumpDir, ts, reqIdx)
+			os.WriteFile(dumpPath, preBody, 0644)
+			s.logger.Printf("[req %d] pre-dump %dk to %s", reqIdx, len(preBody)/1024, dumpPath)
+		}
+	}
+
 	// Cache bug mitigations (CC Bun fork issues):
 	// Bug 1: Normalize cch= sentinel patterns in message content to prevent
 	// Bun's string replacement from corrupting the wrong occurrence.
@@ -723,10 +735,11 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 
 	// prompt_rewrite: strip output-throttling directives, rewrite quality caps, inject Ant-quality directives
 	if s.cfg.PromptRewrite {
-		if StripOutputEfficiency(req) {
-			s.logger.Printf("[req %d] REWRITE: stripped Output efficiency section", reqIdx)
-			needsReserialization = true
-		}
+		// StripOutputEfficiency: disabled — Anthropic replaced # Output efficiency with # Text output (CC ~2.1.117)
+		// if StripOutputEfficiency(req) {
+		// 	s.logger.Printf("[req %d] REWRITE: stripped Output efficiency section", reqIdx)
+		// 	needsReserialization = true
+		// }
 		if StripToneBrevity(req) {
 			s.logger.Printf("[req %d] REWRITE: stripped 'short and concise' from Tone", reqIdx)
 			needsReserialization = true
