@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -206,15 +207,15 @@ func (ka *CacheKeepalive) sendPingForThread(threadID string, expectedGen uint64)
 	ka.mu.Unlock()
 
 	pingBody := buildPingBody(body)
-	cacheRead, cacheWrite := ka.doHTTPPing(pingBody, apiKey)
+	cacheRead, cacheWrite, outputTokens := ka.doHTTPPing(pingBody, apiKey)
 
 	if ka.cfg.OnPing != nil {
 		ka.cfg.OnPing(threadID, cacheRead, cacheWrite)
 	}
 
 	if ka.cfg.Logger != nil {
-		ka.cfg.Logger.Printf("[keepalive] ping tid=%s cache_read=%d cache_write=%d remaining=%d mode=%s",
-			threadID, cacheRead, cacheWrite, remaining, ka.cfg.Mode)
+		ka.cfg.Logger.Printf("[keepalive] ping tid=%s cache_read=%d cache_write=%d out=%d remaining=%d mode=%s",
+			threadID, cacheRead, cacheWrite, outputTokens, remaining, ka.cfg.Mode)
 	}
 
 	ka.mu.Lock()
@@ -239,10 +240,10 @@ func (ka *CacheKeepalive) evictStaleLocked() {
 	}
 }
 
-func (ka *CacheKeepalive) doHTTPPing(body []byte, apiKey string) (cacheRead, cacheWrite int) {
+func (ka *CacheKeepalive) doHTTPPing(body []byte, apiKey string) (cacheRead, cacheWrite, outputTokens int) {
 	req, err := http.NewRequest("POST", ka.cfg.Target+"/v1/messages", nil)
 	if err != nil {
-		return 0, 0
+		return 0, 0, 0
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", apiKey)
@@ -252,7 +253,7 @@ func (ka *CacheKeepalive) doHTTPPing(body []byte, apiKey string) (cacheRead, cac
 
 	resp, err := ka.client.Do(req)
 	if err != nil {
-		return 0, 0
+		return 0, 0, 0
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
@@ -265,19 +266,35 @@ func (ka *CacheKeepalive) doHTTPPing(body []byte, apiKey string) (cacheRead, cac
 		Usage struct {
 			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 			CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+			OutputTokens             int `json:"output_tokens"`
 		} `json:"usage"`
 	}
 	json.Unmarshal(respBody, &usage)
-	return usage.Usage.CacheReadInputTokens, usage.Usage.CacheCreationInputTokens
+	return usage.Usage.CacheReadInputTokens, usage.Usage.CacheCreationInputTokens, usage.Usage.OutputTokens
 }
 
-// buildPingBody sets max_tokens=1 and stream=false on the request body.
+// buildPingBody sets max_tokens=8000 and stream=false on the request body.
+// Keeps thinking intact (it's part of the cache key / request hash).
+// max_tokens=8000 is above the implicit budget for adaptive thinking
+// (avoids "max_tokens must be greater than thinking.budget_tokens").
+// Cost: each ping can produce up to 8000 thinking tokens if the model
+// decides to think — in practice these are near-zero because the input
+// asks nothing new.
 func buildPingBody(original []byte) []byte {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(original, &m); err != nil {
 		return original
 	}
-	m["max_tokens"] = json.RawMessage("1")
+	maxTok := 8000
+	if raw, ok := m["thinking"]; ok {
+		var thinking struct {
+			BudgetTokens int `json:"budget_tokens"`
+		}
+		if json.Unmarshal(raw, &thinking) == nil && thinking.BudgetTokens >= maxTok {
+			maxTok = thinking.BudgetTokens + 1000
+		}
+	}
+	m["max_tokens"] = json.RawMessage(fmt.Sprintf("%d", maxTok))
 	m["stream"] = json.RawMessage("false")
 	delete(m, "metadata")
 	delete(m, "context_management")

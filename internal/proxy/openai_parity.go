@@ -188,11 +188,12 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 
 	briefingText := ""
 	if len(messages) <= 6 {
-		if briefing := s.loadBriefing(ctx.Project); briefing != "" {
-			briefingText = briefing
-			AppendSystemBlock(req, "yesmem-briefing", briefing)
+		cwd := extractWorkingDirectory(req)
+		if data := s.loadBriefing(ctx.Project, cwd); data.Text != "" {
+			briefingText = data.Text
+			AppendSystemBlock(req, "yesmem-briefing", data.Text)
 			s.logger.Printf("[req %d] %sOpenAI pipeline: briefing injected (%db) project=%s%s",
-				ctx.ReqIdx, colorBlue, len(briefing), ctx.Project, colorReset)
+				ctx.ReqIdx, colorBlue, len(data.Text), ctx.Project, colorReset)
 		}
 	}
 

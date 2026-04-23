@@ -96,8 +96,7 @@ func (s *Server) proxyCall(method string) mcpserver.ToolHandlerFunc {
 		if model := currentClientModel(); model != "" {
 			params["_client_model"] = model
 		}
-		// Inject working directory so daemon can set agent workDir
-		if cwd, err := os.Getwd(); err == nil {
+		if cwd := callerCWD(); cwd != "" {
 			params["_cwd"] = cwd
 		}
 
@@ -644,8 +643,7 @@ func (s *Server) proxyCallFormat(method string, formatter func(json.RawMessage) 
 		if sid := os.Getenv("CLAUDE_SESSION_ID"); sid != "" {
 			params["_session_id"] = sid
 		}
-		// Inject working directory so daemon can set agent workDir
-		if cwd, err := os.Getwd(); err == nil {
+		if cwd := callerCWD(); cwd != "" {
 			params["_cwd"] = cwd
 		}
 
@@ -1169,6 +1167,76 @@ func (s *Server) registerTools() {
 			mcplib.WithString("phase", mcplib.Required(), mcplib.Description("Work phase description")),
 			mcplib.WithString("id", mcplib.Description("Agent ID (auto-resolved)")),
 		), s.proxyCall("update_agent_status"))
+
+	// Code Intelligence tools
+	s.srv.AddTool(
+		mcplib.NewTool("search_code_index",
+			mcplib.WithDescription("Search code graph for symbols by name pattern."),
+			mcplib.WithString("pattern", mcplib.Required(), mcplib.Description("Substring match")),
+			mcplib.WithString("project", mcplib.Required(), mcplib.Description("Project")),
+			mcplib.WithString("kind", mcplib.Description("function|type|method|package")),
+			mcplib.WithString("file_pattern", mcplib.Description("File path filter")),
+			mcplib.WithNumber("limit", mcplib.Description("Max results")),
+		), s.proxyCall("search_code_index"))
+
+	s.srv.AddTool(
+		mcplib.NewTool("search_code",
+			mcplib.WithDescription("Grep source files, enriched with graph context (containing function, callers)."),
+			mcplib.WithString("pattern", mcplib.Required(), mcplib.Description("Text pattern")),
+			mcplib.WithString("project", mcplib.Required(), mcplib.Description("Project")),
+			mcplib.WithString("file_pattern", mcplib.Description("Glob or substring filter")),
+			mcplib.WithNumber("limit", mcplib.Description("Max results")),
+		), s.proxyCall("search_code"))
+
+	s.srv.AddTool(
+		mcplib.NewTool("get_code_context",
+			mcplib.WithDescription("Symbol details: signature, file, connected nodes."),
+			mcplib.WithString("qualified_name", mcplib.Required(), mcplib.Description("From search_code_index")),
+			mcplib.WithString("project", mcplib.Required(), mcplib.Description("Project")),
+			mcplib.WithBoolean("include_neighbors", mcplib.Description("Include edges")),
+		), s.proxyCall("get_code_context"))
+
+	s.srv.AddTool(
+		mcplib.NewTool("get_code_snippet",
+			mcplib.WithDescription("Full symbol body from source (func, var, const, type). Two modes: (1) qualified_name from search_code_index, (2) file + start_line + end_line for arbitrary range."),
+			mcplib.WithString("qualified_name", mcplib.Description("From search_code_index")),
+			mcplib.WithString("project", mcplib.Required(), mcplib.Description("Project")),
+			mcplib.WithString("file", mcplib.Description("Relative file path for range mode")),
+			mcplib.WithNumber("start_line", mcplib.Description("Start line (1-based) for range mode")),
+			mcplib.WithNumber("end_line", mcplib.Description("End line (1-based, inclusive) for range mode")),
+		), s.proxyCall("get_code_snippet"))
+
+	s.srv.AddTool(
+		mcplib.NewTool("get_file_symbols",
+			mcplib.WithDescription("List all top-level symbols in a file with line numbers. Returns func, method, var, const, type."),
+			mcplib.WithString("file", mcplib.Required(), mcplib.Description("Relative file path")),
+			mcplib.WithString("project", mcplib.Required(), mcplib.Description("Project")),
+		), s.proxyCall("get_file_symbols"))
+
+	s.srv.AddTool(
+		mcplib.NewTool("get_dependency_map",
+			mcplib.WithDescription("Package import graph with cycle detection."),
+			mcplib.WithString("package", mcplib.Required(), mcplib.Description("Package name")),
+			mcplib.WithString("project", mcplib.Required(), mcplib.Description("Project")),
+			mcplib.WithNumber("depth", mcplib.Description("Depth (default 2)")),
+		), s.proxyCall("get_dependency_map"))
+
+	s.srv.AddTool(
+		mcplib.NewTool("graph_traverse",
+			mcplib.WithDescription("Trace call paths and dependencies from a node."),
+			mcplib.WithString("from", mcplib.Required(), mcplib.Description("Starting node")),
+			mcplib.WithString("project", mcplib.Required(), mcplib.Description("Project")),
+			mcplib.WithString("direction", mcplib.Description("inbound|outbound|both")),
+			mcplib.WithString("edge_type", mcplib.Description("imports|defines|calls")),
+			mcplib.WithNumber("depth", mcplib.Description("Max depth")),
+		), s.proxyCall("graph_traverse"))
+
+	s.srv.AddTool(
+		mcplib.NewTool("get_file_index",
+			mcplib.WithDescription("List source files in a directory with learning/gotcha annotations."),
+			mcplib.WithString("project", mcplib.Required(), mcplib.Description("Project")),
+			mcplib.WithString("dir", mcplib.Description("Subdirectory to index (omit for project root)")),
+		), s.proxyCall("get_file_index"))
 }
 
 // formatDocsSearchResult converts docs_search JSON into readable text with heading paths and content snippets.

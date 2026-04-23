@@ -64,6 +64,51 @@ func TestHandleGetSessionFlavorsSince_InvalidTimestamp(t *testing.T) {
 	}
 }
 
+// --- handleGetSessionFlavorsForSession ---
+
+func TestHandleGetSessionFlavorsForSession(t *testing.T) {
+	h, s := mustHandler(t)
+
+	// Seed learnings with different flavors for same session
+	now := time.Now()
+	s.InsertLearning(&models.Learning{
+		SessionID: "test-flavor-session", Category: "gotcha", Content: "early",
+		CreatedAt: now.Add(-2 * time.Hour), ModelUsed: "haiku", SessionFlavor: "Phase A",
+	})
+	s.InsertLearning(&models.Learning{
+		SessionID: "test-flavor-session", Category: "decision", Content: "late",
+		CreatedAt: now, ModelUsed: "haiku", SessionFlavor: "Phase B",
+	})
+
+	resp := h.handleGetSessionFlavorsForSession(map[string]any{"session_id": "test-flavor-session"})
+	if resp.Error != "" {
+		t.Fatalf("error: %s", resp.Error)
+	}
+
+	var flavors []map[string]any
+	if err := json.Unmarshal(resp.Result, &flavors); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(flavors) != 2 {
+		t.Fatalf("expected 2 flavors, got %d", len(flavors))
+	}
+	// Verify chronological order (Phase A before Phase B)
+	if flavors[0]["session_flavor"] != "Phase A" {
+		t.Errorf("expected first flavor 'Phase A', got %v", flavors[0]["session_flavor"])
+	}
+	if flavors[1]["session_flavor"] != "Phase B" {
+		t.Errorf("expected second flavor 'Phase B', got %v", flavors[1]["session_flavor"])
+	}
+}
+
+func TestHandleGetSessionFlavorsForSession_MissingParam(t *testing.T) {
+	h, _ := mustHandler(t)
+	resp := h.handleGetSessionFlavorsForSession(map[string]any{})
+	if resp.Error == "" {
+		t.Fatal("expected error for missing session_id")
+	}
+}
+
 // --- LoadPlansFromDB ---
 
 func TestLoadPlansFromDB_EmptyStore(t *testing.T) {

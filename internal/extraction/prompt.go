@@ -79,6 +79,7 @@ Categories:
    - ONLY when the USER says it — not when Claude suggests it
 8. relationships: Working relationship context (tonality, trust level)
 9. pivot_moments: Turning points — the one sentence or moment that shifted perspective. ONLY real direction changes, NOT every insight. Max 1-2 per session.
+10. synthesis: Analytical explanations or architectural insights produced during the conversation that go beyond what was asked. Examples: "The proxy pipeline must run in this order because cache breakpoints depend on prior stubbing", "Learning trust hierarchy enables progressive decay because user_stated facts are more reliable than llm_extracted ones". ONLY extract when Claude gave a non-obvious explanation that the user confirmed or built upon — not routine answers.
 
 For EACH learning return a structured object:
 {
@@ -177,7 +178,7 @@ func ExtractionSchema() map[string]any {
 	learningObject := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"category":   map[string]any{"type": "string", "enum": []string{"explicit_teaching", "gotcha", "decision", "pattern", "user_preference", "unfinished", "relationship", "pivot_moment"}},
+			"category":   map[string]any{"type": "string", "enum": []string{"fact", "explicit_teaching", "gotcha", "decision", "pattern", "user_preference", "unfinished", "relationship", "pivot_moment", "synthesis"}},
 			"content":    map[string]any{"type": "string"},
 			"context":    map[string]any{"type": "string"},
 			"entities":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},

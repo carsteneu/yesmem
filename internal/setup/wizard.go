@@ -10,6 +10,27 @@ import (
 
 var reader = bufio.NewReader(os.Stdin)
 
+// promptUserType asks whether the install should use the Claude Code subscription
+// (via `claude` CLI) or a direct Anthropic API key. Returns "cli" or "api".
+// defaultType selects which option is pre-highlighted ("cli" or "api").
+func promptUserType(defaultType string) string {
+	defaultIdx := 0
+	if defaultType == "api" {
+		defaultIdx = 1
+	}
+	fmt.Println("  YesMem needs an LLM for knowledge extraction.")
+	fmt.Println("  How should it authenticate?")
+	fmt.Println()
+	idx := promptChoice([]string{
+		"Claude Code subscription — uses `claude` CLI, no separate key",
+		"Anthropic API key — direct API, separate billing",
+	}, defaultIdx)
+	if idx == 1 {
+		return "api"
+	}
+	return "cli"
+}
+
 // promptYesNo asks a yes/no question with a default.
 func promptYesNo(question string, defaultYes bool) bool {
 	hint := "[Y/n]"
@@ -69,9 +90,6 @@ func promptAPIKey(existing string) string {
 	fmt.Println("  Enter your API key from platform.claude.com")
 	fmt.Println("  → https://platform.claude.com/dashboard/api-keys")
 	fmt.Println()
-	fmt.Println("  Why a separate key? Only a key generated via platform.claude.com")
-	fmt.Println("  enables 1-hour prompt caching. The key that Claude Code creates")
-	fmt.Println("  during its own setup only supports 5-minute ephemeral caching.")
 	fmt.Println("  YesMem uninstall will restore your previous authentication.")
 	fmt.Println()
 

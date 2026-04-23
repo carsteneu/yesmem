@@ -383,7 +383,7 @@ func TestReplaceSystemText_PreservesCacheControl(t *testing.T) {
 // --- RewriteGoldPlating ---
 
 func TestRewriteGoldPlating_Replaces(t *testing.T) {
-	text := "Some intro.\nDon't add features, refactor code, or make \"improvements\" beyond what was asked. A bug fix doesn't need surrounding code cleaned up. A simple feature doesn't need extra configurability. Don't add docstrings.\nMore text."
+	text := "Some intro.\nDon't add features, refactor, or introduce abstractions beyond what the task requires. A bug fix doesn't need surrounding cleanup; a one-shot operation doesn't need a helper.\nMore text."
 	req := map[string]any{
 		"system": []any{
 			map[string]any{"type": "text", "text": text},
@@ -395,7 +395,7 @@ func TestRewriteGoldPlating_Replaces(t *testing.T) {
 	}
 
 	result := req["system"].([]any)[0].(map[string]any)["text"].(string)
-	if strings.Contains(result, "beyond what was asked") {
+	if strings.Contains(result, "beyond what the task requires") {
 		t.Error("original gold-plating text should be replaced")
 	}
 	if !strings.Contains(result, "adjacent code is broken") {
@@ -454,7 +454,7 @@ func TestRewriteErrorHandling_ReturnsFalseWhenAbsent(t *testing.T) {
 // --- RewriteThreeLinesRule ---
 
 func TestRewriteThreeLinesRule_Replaces(t *testing.T) {
-	text := "Some context. Three similar lines of code is better than a premature abstraction. More text."
+	text := "Some context. Three similar lines is better than a premature abstraction. More text."
 	req := map[string]any{
 		"system": []any{
 			map[string]any{"type": "text", "text": text},

@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/carsteneu/yesmem/internal/briefing"
 	"github.com/carsteneu/yesmem/internal/storage"
@@ -252,26 +251,17 @@ func (h *Handler) handleGenerateBriefing(params map[string]any) Response {
 	if project == "" {
 		return errorResponse("project required")
 	}
-	maxSessions := intOr(params, "max_sessions", 3)
-	gen := briefing.New(h.store, maxSessions)
-	gen.SetUserProfile(h.BriefingUserProfile)
 
-	// Auto-detect clear/compact: if a session ended within the last 30s, inject recovery.
-	if sid, reason, err := h.store.GetRecentEndedSession(project, 30*time.Second); err == nil && sid != "" {
-		gen.SetRecovery(sid, reason)
+	// Use full CWD path for Code Map scanner, fall back to short name
+	projectDir, _ := params["project_dir"].(string)
+	if projectDir != "" {
+		project = projectDir
 	}
 
-	text := gen.Generate(project)
+	sessionID, _ := params["session_id"].(string)
+	result := briefing.GenerateFullBriefing(h.store, h.dataDir, project, sessionID)
 
-	// Inject pinned learnings (refinement-resistant)
-	sessionPins, _ := h.store.GetPinnedLearnings("session", project)
-	permanentPins, _ := h.store.GetPinnedLearnings("permanent", project)
-	pinnedBlock := briefing.FormatPinnedBlock(sessionPins, permanentPins)
-	if pinnedBlock != "" {
-		text += "\n" + pinnedBlock
-	}
-
-	return jsonResponse(map[string]any{"text": text})
+	return jsonResponse(map[string]any{"text": result.Text, "code_map": result.CodeMap})
 }
 
 // handlePopRecentRemember returns and clears recently remembered learnings.

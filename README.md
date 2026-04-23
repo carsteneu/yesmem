@@ -143,6 +143,13 @@ The proxy is **optional**. YesMem works fully without it — all MCP tools, brie
 - **~53 CLI commands** — daemon, proxy, setup, extraction, benchmarking, export/import, cost tracking
 - **~130 daemon RPC methods** — full programmatic access
 
+### Scheduled Agents
+- **Cron-based task scheduler** — define recurring or one-shot jobs with cron expressions
+- **Two execution modes** — `agent` (visible tmux window) or `headless` (silent `claude -p` subprocess)
+- **Caps-powered automation** — scheduled agents activate and run caps for predictable, repeatable tasks
+- **Persistent results** — output stored in scratchpad and cap_store, not lost between runs
+- **Self-hosted alternative** to Anthropic Cloud Routines — runs locally with full memory, MCP, and file access
+
 ## How YesMem Differs
 
 | Capability | Typical memory tools | YesMem |

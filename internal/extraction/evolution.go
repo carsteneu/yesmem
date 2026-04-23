@@ -60,7 +60,7 @@ Antwort als JSON.`, newLearning.Category, existingList.String(), newID, newLearn
 	}
 
 	var evoResp evolutionResponse
-	if err := json.Unmarshal([]byte(response), &evoResp); err != nil {
+	if err := json.Unmarshal([]byte(extractJSON(response)), &evoResp); err != nil {
 		log.Printf("warn: parse evolution response: %v", err)
 		return
 	}

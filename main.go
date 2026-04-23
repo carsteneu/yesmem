@@ -57,8 +57,11 @@ func main() {
 		runBriefing()
 	case "briefing-hook":
 		runBriefingHook()
+	case "codemap-hook":
+		runCodemapHook()
 	case "install", "setup":
-		if err := setup.Run(); err != nil {
+		interactive := hasFlag(os.Args[2:], "-i", "--interactive")
+		if err := setup.Run(interactive); err != nil {
 			log.Fatalf("install: %v", err)
 		}
 	case "status":
@@ -326,4 +329,15 @@ func runConsolidate() {
 
 	fmt.Printf("Consolidation: %d rounds, %d checked, %d superseded\n",
 		result.Rounds, result.TotalChecked, result.TotalSuperseded)
+}
+
+func hasFlag(args []string, flags ...string) bool {
+	for _, arg := range args {
+		for _, flag := range flags {
+			if arg == flag {
+				return true
+			}
+		}
+	}
+	return false
 }

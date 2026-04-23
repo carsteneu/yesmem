@@ -156,7 +156,7 @@ func replaceSystemText(req map[string]any, old, repl string) bool {
 // fixing adjacent issues discovered during investigation.
 func RewriteGoldPlating(req map[string]any) bool {
 	return replaceSystemText(req,
-		"Don't add features, refactor code, or make \"improvements\" beyond what was asked. A bug fix doesn't need surrounding code cleaned up. A simple feature doesn't need extra configurability.",
+		"Don't add features, refactor, or introduce abstractions beyond what the task requires. A bug fix doesn't need surrounding cleanup; a one-shot operation doesn't need a helper.",
 		"Don't add unrelated features or speculative improvements. However, if adjacent code is broken, fragile, or directly contributes to the problem being solved, fix it as part of the task. A bug fix should address related issues discovered during investigation.",
 	)
 }
@@ -174,7 +174,7 @@ func RewriteErrorHandling(req map[string]any) bool {
 // judgment-based extraction guidance.
 func RewriteThreeLinesRule(req map[string]any) bool {
 	return replaceSystemText(req,
-		"Three similar lines of code is better than a premature abstraction.",
+		"Three similar lines is better than a premature abstraction.",
 		"Use judgment about when to extract shared logic. Avoid premature abstractions for hypothetical reuse, but do extract when duplication causes real maintenance risk.",
 	)
 }

@@ -82,6 +82,7 @@ const (
 	colorLightGreen = "\033[92m" // FINAL without compression
 	colorBlue       = "\033[34m" // injection
 	colorOrange     = "\033[33m" // skip / retry
+	colorYellow     = "\033[33m" // warnings
 	colorRed        = "\033[31m" // errors
 )
 
@@ -138,6 +139,7 @@ type Server struct {
 	// Briefing cache — loaded once per thread, injected as user/assistant message pair
 	briefingMu   sync.RWMutex
 	briefingText string
+	codeMapText  string
 
 	// Cognitive signal bus — routes _signal_* tool calls to handlers
 	signalBus *SignalBus
@@ -567,7 +569,13 @@ func (s *Server) queryDaemon(method string, params map[string]any) (json.RawMess
 		return nil, fmt.Errorf("dial daemon: %w", err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	// Briefing generation can take 10-20s (LLM refinement + scanner);
+	// other RPCs (search, learnings) are fast and fine with 5s.
+	deadline := 5 * time.Second
+	if method == "generate_briefing" {
+		deadline = 30 * time.Second
+	}
+	conn.SetDeadline(time.Now().Add(deadline))
 
 	// JSON-RPC style request/response (matches daemon.SocketServer protocol)
 	type request struct {
@@ -691,6 +699,18 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	s.logger.Printf("req %d: %d messages total", reqIdx, msgCount)
 	logCacheBreakpointLocations(req, s.logger)
 
+	// Pre-modification dump: capture the raw request before any proxy changes.
+	if os.Getenv("YESMEM_PROXY_DEBUG") == "1" {
+		if preBody, err := json.Marshal(req); err == nil {
+			dumpDir := filepath.Join(s.cfg.DataDir, "debug")
+			os.MkdirAll(dumpDir, 0755)
+			ts := time.Now().Format("20060102-150405")
+			dumpPath := fmt.Sprintf("%s/req_%s_%d_pre.json", dumpDir, ts, reqIdx)
+			os.WriteFile(dumpPath, preBody, 0644)
+			s.logger.Printf("[req %d] pre-dump %dk to %s", reqIdx, len(preBody)/1024, dumpPath)
+		}
+	}
+
 	// Cache bug mitigations (CC Bun fork issues):
 	// Bug 1: Normalize cch= sentinel patterns in message content to prevent
 	// Bun's string replacement from corrupting the wrong occurrence.
@@ -715,10 +735,11 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 
 	// prompt_rewrite: strip output-throttling directives, rewrite quality caps, inject Ant-quality directives
 	if s.cfg.PromptRewrite {
-		if StripOutputEfficiency(req) {
-			s.logger.Printf("[req %d] REWRITE: stripped Output efficiency section", reqIdx)
-			needsReserialization = true
-		}
+		// StripOutputEfficiency: disabled — Anthropic replaced # Output efficiency with # Text output (CC ~2.1.117)
+		// if StripOutputEfficiency(req) {
+		// 	s.logger.Printf("[req %d] REWRITE: stripped Output efficiency section", reqIdx)
+		// 	needsReserialization = true
+		// }
 		if StripToneBrevity(req) {
 			s.logger.Printf("[req %d] REWRITE: stripped 'short and concise' from Tone", reqIdx)
 			needsReserialization = true
@@ -770,6 +791,12 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		s.logger.Printf("[req %d] ENHANCE: injected authority + persona tone", reqIdx)
+		needsReserialization = true
+	}
+
+	// thinking normalization: convert thinking.type "enabled" → "adaptive" for models that require it
+	if NormalizeThinkingType(req) {
+		s.logger.Printf("[req %d] THINKING: normalized type=enabled → adaptive for %s", reqIdx, model)
 		needsReserialization = true
 	}
 
@@ -1290,6 +1317,17 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 				req["messages"] = injectAssociativeContext(currentMessages, thinkReminder, s.cfg.SawtoothEnabled)
 				needsReserialization = true
 			}
+		}
+
+		// Briefing injection: prepend user/assistant turn pair at beginning of messages.
+		// Static per session → stable prefix → cacheable. Must be before dialog injection.
+		if s.injectBriefingTurn(req, reqIdx, proj, threadID) {
+			needsReserialization = true
+		}
+
+		// Code Map injection: insert after briefing turn pair.
+		if s.injectCodeMapTurn(req, reqIdx, proj, threadID) {
+			needsReserialization = true
 		}
 
 		// Dialog injection: append at end of messages with pseudo-padding for alternation.

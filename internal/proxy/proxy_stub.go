@@ -129,7 +129,7 @@ func (s *Server) runStubCycle(messages []any, req map[string]any, reqIdx int, pr
 			}
 		}
 
-		// Fetch session flavors
+		// Fetch session flavors from other sessions (grouped by session_id)
 		flavorResult, err := s.queryDaemon("get_session_flavors_since", map[string]any{
 			"project": projShort,
 			"since":   sessionStart.Format(time.RFC3339),
@@ -139,17 +139,52 @@ func (s *Server) runStubCycle(messages []any, req map[string]any, reqIdx int, pr
 			s.logger.Printf("[req %d] flavors fetch failed: %v", reqIdx, err)
 		} else if flavorResult != nil {
 			var items []struct {
-				Flavor    string `json:"flavor"`
-				CreatedAt string `json:"created_at"`
-				SessionID string `json:"session_id"`
+				SessionFlavor string `json:"session_flavor"`
+				CreatedAt     string `json:"created_at"`
+				SessionID     string `json:"session_id"`
 			}
 			if json.Unmarshal(flavorResult, &items) == nil {
 				for _, item := range items {
 					archiveFlavors = append(archiveFlavors, ArchiveSessionFlavor{
-						Flavor:    item.Flavor,
+						Flavor:    item.SessionFlavor,
 						CreatedAt: item.CreatedAt,
 						SessionID: item.SessionID,
 					})
+				}
+			}
+		}
+
+		// Fetch ALL flavors for the CURRENT session (not grouped - shows phase evolution)
+		if threadID != "" {
+			currentFlavorResult, err := s.queryDaemon("get_session_flavors_for_session", map[string]any{
+				"session_id": threadID,
+			})
+			if err != nil {
+				s.logger.Printf("[req %d] current session flavors fetch failed: %v", reqIdx, err)
+			} else if currentFlavorResult != nil {
+				var items []struct {
+					SessionFlavor string `json:"session_flavor"`
+					CreatedAt     string `json:"created_at"`
+					SessionID     string `json:"session_id"`
+				}
+				if json.Unmarshal(currentFlavorResult, &items) == nil {
+					for _, item := range items {
+						// Only add if not already present (dedup against get_session_flavors_since)
+						exists := false
+						for _, existing := range archiveFlavors {
+							if existing.Flavor == item.SessionFlavor && existing.SessionID == item.SessionID {
+								exists = true
+								break
+							}
+						}
+						if !exists {
+							archiveFlavors = append(archiveFlavors, ArchiveSessionFlavor{
+								Flavor:    item.SessionFlavor,
+								CreatedAt: item.CreatedAt,
+								SessionID: item.SessionID,
+							})
+						}
+					}
 				}
 			}
 		}

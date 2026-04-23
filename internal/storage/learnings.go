@@ -388,7 +388,7 @@ func (s *Store) GetSessionFlavorsSince(project string, since time.Time, limit in
 			continue
 		}
 		results = append(results, map[string]any{
-			"flavor":     flavor,
+			"session_flavor": flavor,
 			"created_at": createdAt,
 			"session_id": sessionID,
 		})

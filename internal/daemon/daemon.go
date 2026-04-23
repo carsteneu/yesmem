@@ -232,7 +232,10 @@ func Run(cfg Config) error {
 
 	sessionRoots := cfg.SessionSources
 	if len(sessionRoots) == 0 {
-		sessionRoots = []string{cfg.ProjectsDir, cfg.CodexSessionsDir}
+		sessionRoots = []string{cfg.ProjectsDir}
+		if info, err := os.Stat(cfg.CodexSessionsDir); err == nil && info.IsDir() {
+			sessionRoots = append(sessionRoots, cfg.CodexSessionsDir)
+		}
 	}
 
 	startWatcher := func(root string) (*Watcher, error) {

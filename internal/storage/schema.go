@@ -52,6 +52,8 @@ func (s *Store) createSchema() error {
 		tableScratchpadEntries,
 		tableAgents,
 		tableTokenUsage,
+		tableCodeDescriptions,
+		tableProjectScan,
 	}
 	for _, ddl := range tables {
 		if _, err := s.db.Exec(ddl); err != nil {
@@ -404,6 +406,8 @@ var migrations = []string{
 	// v0.53: Learning lineage — source message attribution
 	`ALTER TABLE learnings ADD COLUMN source_msg_from INTEGER DEFAULT -1`,
 	`ALTER TABLE learnings ADD COLUMN source_msg_to INTEGER DEFAULT -1`,
+	// v0.54: CBM index mtime for scan cache invalidation
+	`ALTER TABLE project_scan ADD COLUMN cbm_mtime INTEGER NOT NULL DEFAULT 0`,
 }
 
 // messagesMigrations runs against messages.db (separate from yesmem.db migrations).
@@ -774,4 +778,23 @@ const tableTurnCounters = `CREATE TABLE IF NOT EXISTS turn_counters (
 	project    TEXT PRIMARY KEY,
 	turn_count INTEGER NOT NULL DEFAULT 0,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)`
+
+const tableCodeDescriptions = `CREATE TABLE IF NOT EXISTS code_descriptions (
+	project                    TEXT NOT NULL,
+	package_name               TEXT NOT NULL,
+	description                TEXT NOT NULL DEFAULT '',
+	anti_patterns              TEXT NOT NULL DEFAULT '',
+	git_head                   TEXT NOT NULL,
+	learning_count_at_creation INTEGER NOT NULL DEFAULT 0,
+	created_at                 DATETIME DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (project, package_name)
+)`
+
+const tableProjectScan = `CREATE TABLE IF NOT EXISTS project_scan (
+	project    TEXT PRIMARY KEY,
+	scan_json  TEXT NOT NULL,
+	git_head   TEXT NOT NULL,
+	cbm_mtime  INTEGER NOT NULL DEFAULT 0,
+	scanned_at DATETIME DEFAULT CURRENT_TIMESTAMP
 )`
