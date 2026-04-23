@@ -572,7 +572,7 @@ func chunkLearnings(learnings []models.Learning, maxSize int) [][]models.Learnin
 // applyEvolutionResponse parses and applies evolution actions from a bulk evolution response.
 func (e *Extractor) applyEvolutionResponse(response, label string, store *storage.Store, onSupersede func(int64)) int {
 	var evoResp evolutionResponse
-	if err := json.Unmarshal([]byte(response), &evoResp); err != nil {
+	if err := json.Unmarshal([]byte(extractJSON(response)), &evoResp); err != nil {
 		log.Printf("  warn: parse bulk evolution for %s: %v", label, err)
 		return 0
 	}

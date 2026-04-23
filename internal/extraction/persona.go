@@ -163,7 +163,8 @@ func PersonaExtractionSchema() map[string]any {
 // ParsePersonaExtractionResponse parses the JSON response from persona extraction.
 func ParsePersonaExtractionResponse(response string) (*PersonaExtractionResult, error) {
 	var result PersonaExtractionResult
-	if err := json.Unmarshal([]byte(response), &result); err != nil {
+	jsonStr := extractJSON(response)
+	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
 		return nil, fmt.Errorf("parse persona extraction: %w", err)
 	}
 	return &result, nil

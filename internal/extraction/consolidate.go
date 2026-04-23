@@ -146,7 +146,7 @@ func distillBatch(store *storage.Store, client LLMClient, cluster models.Learnin
 			Reason        string  `json:"reason"`
 		} `json:"actions"`
 	}
-	if err := json.Unmarshal([]byte(response), &resp); err != nil {
+	if err := json.Unmarshal([]byte(extractJSON(response)), &resp); err != nil {
 		log.Printf("  warn: distillation parse for cluster %q: %v", cluster.Label, err)
 		return DistillResult{Errors: 1}
 	}

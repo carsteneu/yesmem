@@ -81,7 +81,9 @@ func (s *Server) injectBriefingTurn(req map[string]any, reqIdx int, proj, thread
 	}
 
 	if text == "" {
-		s.logger.Printf("%s[briefing] WARN: empty briefing for project=%s, injection skipped%s", colorOrange, proj, colorReset)
+		if proj != "" {
+			s.logger.Printf("%s[briefing] WARN: empty briefing for project=%s, injection skipped%s", colorOrange, proj, colorReset)
+		}
 		return false
 	}
 

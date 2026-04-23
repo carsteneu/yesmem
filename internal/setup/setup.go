@@ -306,11 +306,6 @@ func executeSetup(home, dataDir, binaryPath, model, apiKey, provider, terminal s
 		return "", mergeMcpJSON(filepath.Join(home, ".mcp.json"), binaryPath)
 	})
 
-	// 9. Configure Codex
-	withSpinner("Configuring Codex", func() (string, error) {
-		return "", ensureCodexSetup(home, binaryPath)
-	})
-
 	// 9b. Install codebase-memory-mcp CLI for code intelligence
 	withSpinner("Installing codebase-memory-mcp", func() (string, error) {
 		return ensureCBMBinary(dataDir)
@@ -387,7 +382,7 @@ func executeSetup(home, dataDir, binaryPath, model, apiKey, provider, terminal s
 	fmt.Println("  ══════════════════════════════════════")
 	fmt.Println("  Setup complete! Daemon is running.")
 	fmt.Println()
-	fmt.Println("  Next: Open a new Claude Code or Codex session.")
+	fmt.Println("  Next: Open a new Claude Code session.")
 	fmt.Println("  YesMem tools are automatically available.")
 	fmt.Println()
 	fmt.Printf("  Config:  %s/config.yaml\n", dataDir)
@@ -1260,7 +1255,7 @@ func ensureCBMBinary(dataDir string) (string, error) {
 
 	// Download latest release asset via GitHub redirect
 	url := fmt.Sprintf("https://github.com/%s/releases/latest/download/%s", cbmRepo, asset)
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := &http.Client{Timeout: 300 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
 		return "", fmt.Errorf("download CBM: %w", err)
@@ -1270,16 +1265,54 @@ func ensureCBMBinary(dataDir string) (string, error) {
 		return "", fmt.Errorf("download CBM: HTTP %d for %s", resp.StatusCode, asset)
 	}
 
-	// Write to temp file, extract, install
+	// Write to temp file with progress display
 	tmpTar := filepath.Join(os.TempDir(), asset)
 	f, err := os.Create(tmpTar)
 	if err != nil {
 		return "", fmt.Errorf("create temp: %w", err)
 	}
-	if _, err := io.Copy(f, resp.Body); err != nil {
-		f.Close()
-		return "", fmt.Errorf("write temp: %w", err)
+	spinChars := []rune{'⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'}
+	downloaded := int64(0)
+	stopProgress := make(chan struct{})
+	go func() {
+		tick := time.NewTicker(200 * time.Millisecond)
+		defer tick.Stop()
+		i := 0
+		for {
+			select {
+			case <-stopProgress:
+				return
+			case <-tick.C:
+				mb := float64(downloaded) / (1024 * 1024)
+				fmt.Fprintf(os.Stderr, "\r\033[2K  %c Downloading codebase-memory-mcp (%.1f MB)...", spinChars[i%len(spinChars)], mb)
+				i++
+			}
+		}
+	}()
+	buf := make([]byte, 32*1024)
+	for {
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			if _, writeErr := f.Write(buf[:n]); writeErr != nil {
+				f.Close()
+				close(stopProgress)
+				fmt.Fprintf(os.Stderr, "\r\033[2K")
+				return "", fmt.Errorf("write temp: %w", writeErr)
+			}
+			downloaded += int64(n)
+		}
+		if readErr != nil {
+			if readErr == io.EOF {
+				break
+			}
+			f.Close()
+			close(stopProgress)
+			fmt.Fprintf(os.Stderr, "\r\033[2K")
+			return "", fmt.Errorf("write temp: %w", readErr)
+		}
 	}
+	close(stopProgress)
+	fmt.Fprintf(os.Stderr, "\r\033[2K")
 	f.Close()
 
 	// Extract with tar (single binary inside)

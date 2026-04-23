@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -284,7 +285,16 @@ func buildPingBody(original []byte) []byte {
 	if err := json.Unmarshal(original, &m); err != nil {
 		return original
 	}
-	m["max_tokens"] = json.RawMessage("8000")
+	maxTok := 8000
+	if raw, ok := m["thinking"]; ok {
+		var thinking struct {
+			BudgetTokens int `json:"budget_tokens"`
+		}
+		if json.Unmarshal(raw, &thinking) == nil && thinking.BudgetTokens >= maxTok {
+			maxTok = thinking.BudgetTokens + 1000
+		}
+	}
+	m["max_tokens"] = json.RawMessage(fmt.Sprintf("%d", maxTok))
 	m["stream"] = json.RawMessage("false")
 	delete(m, "metadata")
 	delete(m, "context_management")

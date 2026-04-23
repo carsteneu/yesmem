@@ -53,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- CLI client robustness for subscription installs
 - Replace LFS pointer with real sse_dyt_512d.bin binary (6KB)
 - Align prompt_rewrite test inputs with updated CC target strings
 - Add pre-modification dump, update rewrite targets for CC ~2.1.117
