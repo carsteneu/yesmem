@@ -491,3 +491,113 @@ func TestSaveCountMultipleIDs(t *testing.T) {
 		t.Errorf("id2: expected save_count=1, got %d", l2.SaveCount)
 	}
 }
+
+func TestDecayAffectsMatchingDecision(t *testing.T) {
+	keywords := []string{"proxy", "cache"}
+	content := "proxy cache invalidation bug"
+	score := matchScore(keywords, content)
+	if score < 2 {
+		t.Fatalf("precondition: matchScore should be >= 2, got %d", score)
+	}
+
+	tests := []struct {
+		name        string
+		injectCount int
+		useCount    int
+		saveCount   int
+		wantMatch   bool
+	}{
+		{"fresh gotcha passes", 5, 0, 0, true},
+		{"high-waste gotcha blocked", 1232, 0, 0, false},
+		{"moderate-waste gotcha blocked", 100, 0, 0, false},
+		{"good precision passes", 100, 15, 0, true},
+		{"saves recover precision", 100, 0, 5, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			eff := float64(score) * injectionDecay(tt.injectCount, tt.useCount, tt.saveCount)
+			matched := eff >= 2.0
+			if matched != tt.wantMatch {
+				t.Errorf("score=%d decay=%.2f effective=%.2f matched=%v, want %v",
+					score, injectionDecay(tt.injectCount, tt.useCount, tt.saveCount), eff, matched, tt.wantMatch)
+			}
+		})
+	}
+}
+
+func TestDecayDoesNotBlockStrongMatch(t *testing.T) {
+	keywords := []string{"proxy", "cache", "invalidation", "bug", "fix", "workaround", "timeout"}
+	content := "proxy cache invalidation bug fix workaround for timeout issue"
+	score := matchScore(keywords, content)
+	if score < 7 {
+		t.Fatalf("precondition: matchScore should be >= 7, got %d", score)
+	}
+	eff := float64(score) * injectionDecay(1232, 0, 0)
+	if eff < 2.0 {
+		t.Errorf("a very strong match (score=%d) should still pass even with max decay: effective=%.2f", score, eff)
+	}
+}
+
+func TestBuildGotchaOutput_SingleMatch(t *testing.T) {
+	matches := []matchedGotcha{
+		{learning: models.Learning{ID: 1, Content: "gotcha one"}, score: 3, effScore: 3.0},
+	}
+	text, injected, matched := buildGotchaOutput(matches)
+	if len(injected) != 1 || injected[0] != 1 {
+		t.Errorf("expected injected=[1], got %v", injected)
+	}
+	if len(matched) != 0 {
+		t.Errorf("expected no extra matched IDs, got %v", matched)
+	}
+	if !strings.Contains(text, "gotcha one") {
+		t.Errorf("expected full text of top match, got: %s", text)
+	}
+}
+
+func TestBuildGotchaOutput_TopOneFullRestSummary(t *testing.T) {
+	matches := []matchedGotcha{
+		{learning: models.Learning{ID: 1, Content: "top gotcha"}, score: 5, effScore: 5.0},
+		{learning: models.Learning{ID: 2, Content: "medium gotcha"}, score: 3, effScore: 3.0},
+		{learning: models.Learning{ID: 3, Content: "weak gotcha"}, score: 2, effScore: 2.0},
+	}
+	text, injected, matched := buildGotchaOutput(matches)
+	if len(injected) != 1 || injected[0] != 1 {
+		t.Errorf("only top match should be injected, got %v", injected)
+	}
+	if len(matched) != 2 {
+		t.Errorf("expected 2 matched (not injected), got %v", matched)
+	}
+	if !strings.Contains(text, "top gotcha") {
+		t.Error("expected full text of top match")
+	}
+	if strings.Contains(text, "medium gotcha") || strings.Contains(text, "weak gotcha") {
+		t.Error("non-top matches should NOT have full text")
+	}
+	if !strings.Contains(text, "+2") {
+		t.Errorf("expected summary with +2 more, got: %s", text)
+	}
+}
+
+func TestBuildGotchaOutput_SortsbyEffScore(t *testing.T) {
+	matches := []matchedGotcha{
+		{learning: models.Learning{ID: 1, Content: "low score"}, score: 2, effScore: 1.5},
+		{learning: models.Learning{ID: 2, Content: "high score"}, score: 4, effScore: 4.0},
+	}
+	text, injected, _ := buildGotchaOutput(matches)
+	if len(injected) != 1 || injected[0] != 2 {
+		t.Errorf("highest effScore should be injected, got %v", injected)
+	}
+	if !strings.Contains(text, "high score") {
+		t.Error("expected full text of highest-scored match")
+	}
+}
+
+func TestBuildGotchaOutput_Empty(t *testing.T) {
+	text, injected, matched := buildGotchaOutput(nil)
+	if text != "" {
+		t.Errorf("expected empty text, got: %s", text)
+	}
+	if len(injected) != 0 || len(matched) != 0 {
+		t.Errorf("expected empty slices, got injected=%v matched=%v", injected, matched)
+	}
+}
