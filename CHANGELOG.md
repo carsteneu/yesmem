@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Sync-public.sh requires --branch flag, auto-generated CHANGELOG
 - Whitelist mode for docs/ in sync-public.sh
 - Harden public sync pipeline
 - Move Knowledge Index sections (Doc Index, Health, Recent Context) into Code Map turn
