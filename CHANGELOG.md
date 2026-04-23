@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add skill_eval_inject config toggle
 - Install wizard picks CLI vs API key, default model sonnet
 - Follow parent process CWD for worktree routing
 - Fault-tolerant CBM indexing for worktrees
@@ -53,6 +54,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Use projectKey() for Code Map header in worktrees
+- Resolve git worktree HEAD and project key correctly
 - CLI client robustness for subscription installs
 - Replace LFS pointer with real sse_dyt_512d.bin binary (6KB)
 - Align prompt_rewrite test inputs with updated CC target strings

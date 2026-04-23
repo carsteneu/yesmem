@@ -102,3 +102,95 @@ func TestReadGitHead_DetachedHead(t *testing.T) {
 		t.Errorf("expected detached HEAD hash, got %q", head)
 	}
 }
+
+func TestReadGitHead_Worktree(t *testing.T) {
+	mainRepo := t.TempDir()
+	os.MkdirAll(filepath.Join(mainRepo, ".git", "worktrees", "mybranch"), 0755)
+	os.MkdirAll(filepath.Join(mainRepo, ".git", "refs", "heads"), 0755)
+	os.WriteFile(filepath.Join(mainRepo, ".git", "worktrees", "mybranch", "HEAD"), []byte("ref: refs/heads/mybranch\n"), 0644)
+	os.WriteFile(filepath.Join(mainRepo, ".git", "worktrees", "mybranch", "commondir"), []byte("../..\n"), 0644)
+	os.WriteFile(filepath.Join(mainRepo, ".git", "refs", "heads", "mybranch"), []byte("worktree999\n"), 0644)
+
+	worktreeDir := t.TempDir()
+	os.WriteFile(filepath.Join(worktreeDir, ".git"), []byte("gitdir: "+filepath.Join(mainRepo, ".git", "worktrees", "mybranch")+"\n"), 0644)
+
+	head := ReadGitHead(worktreeDir)
+	if !strings.Contains(head, "worktree999") {
+		t.Errorf("expected worktree HEAD worktree999, got %q", head)
+	}
+}
+
+func TestProjectKey_Worktree(t *testing.T) {
+	mainRepo := filepath.Join(t.TempDir(), "myproject")
+	os.MkdirAll(filepath.Join(mainRepo, ".git", "worktrees", "feat-x"), 0755)
+
+	worktreeDir := filepath.Join(t.TempDir(), "feat-x")
+	os.MkdirAll(worktreeDir, 0755)
+	os.WriteFile(filepath.Join(worktreeDir, ".git"), []byte("gitdir: "+filepath.Join(mainRepo, ".git", "worktrees", "feat-x")+"\n"), 0644)
+
+	key := projectKey(worktreeDir)
+	if key != "myproject" {
+		t.Errorf("expected project key 'myproject' (repo name), got %q", key)
+	}
+}
+
+func TestProjectKey_RegularRepo(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "myrepo")
+	os.MkdirAll(filepath.Join(dir, ".git"), 0755)
+
+	key := projectKey(dir)
+	if key != "myrepo" {
+		t.Errorf("expected 'myrepo', got %q", key)
+	}
+}
+
+func TestReadGitHead_WorktreeDetachedHead(t *testing.T) {
+	mainRepo := t.TempDir()
+	os.MkdirAll(filepath.Join(mainRepo, ".git", "worktrees", "detached"), 0755)
+	os.WriteFile(filepath.Join(mainRepo, ".git", "worktrees", "detached", "HEAD"), []byte("deadbeef123\n"), 0644)
+	os.WriteFile(filepath.Join(mainRepo, ".git", "worktrees", "detached", "commondir"), []byte("../..\n"), 0644)
+
+	worktreeDir := t.TempDir()
+	os.WriteFile(filepath.Join(worktreeDir, ".git"), []byte("gitdir: "+filepath.Join(mainRepo, ".git", "worktrees", "detached")+"\n"), 0644)
+
+	head := ReadGitHead(worktreeDir)
+	if head != "deadbeef123" {
+		t.Errorf("expected detached HEAD deadbeef123, got %q", head)
+	}
+}
+
+func TestReadGitHead_WorktreePackedRefs(t *testing.T) {
+	mainRepo := t.TempDir()
+	os.MkdirAll(filepath.Join(mainRepo, ".git", "worktrees", "packed"), 0755)
+	os.WriteFile(filepath.Join(mainRepo, ".git", "worktrees", "packed", "HEAD"), []byte("ref: refs/heads/packed-branch\n"), 0644)
+	os.WriteFile(filepath.Join(mainRepo, ".git", "worktrees", "packed", "commondir"), []byte("../..\n"), 0644)
+	os.WriteFile(filepath.Join(mainRepo, ".git", "packed-refs"), []byte("# pack-refs\nabc789packed refs/heads/packed-branch\n"), 0644)
+
+	worktreeDir := t.TempDir()
+	os.WriteFile(filepath.Join(worktreeDir, ".git"), []byte("gitdir: "+filepath.Join(mainRepo, ".git", "worktrees", "packed")+"\n"), 0644)
+
+	head := ReadGitHead(worktreeDir)
+	if head != "abc789packed" {
+		t.Errorf("expected packed ref abc789packed, got %q", head)
+	}
+}
+
+func TestReadGitHead_WorktreeRelativeGitdir(t *testing.T) {
+	base := t.TempDir()
+	mainRepo := filepath.Join(base, "repo")
+	os.MkdirAll(filepath.Join(mainRepo, ".git", "worktrees", "rel"), 0755)
+	os.MkdirAll(filepath.Join(mainRepo, ".git", "refs", "heads"), 0755)
+	os.WriteFile(filepath.Join(mainRepo, ".git", "worktrees", "rel", "HEAD"), []byte("ref: refs/heads/rel\n"), 0644)
+	os.WriteFile(filepath.Join(mainRepo, ".git", "worktrees", "rel", "commondir"), []byte("../..\n"), 0644)
+	os.WriteFile(filepath.Join(mainRepo, ".git", "refs", "heads", "rel"), []byte("relhash42\n"), 0644)
+
+	worktreeDir := filepath.Join(base, "wt")
+	os.MkdirAll(worktreeDir, 0755)
+	relGitdir := filepath.Join("..", "repo", ".git", "worktrees", "rel")
+	os.WriteFile(filepath.Join(worktreeDir, ".git"), []byte("gitdir: "+relGitdir+"\n"), 0644)
+
+	head := ReadGitHead(worktreeDir)
+	if head != "relhash42" {
+		t.Errorf("expected relhash42, got %q", head)
+	}
+}
