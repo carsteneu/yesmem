@@ -52,7 +52,8 @@ type Config struct {
 	PromptUngate  bool   // strip "may or may not be relevant" disclaimer from CLAUDE.md injection
 	PromptRewrite bool   // strip "Output efficiency" + "short and concise", inject Ant-quality directives
 	PromptEnhance bool   // CLAUDE.md authority reinforcement, comment discipline, persona-based tone
-	EffortFloor   string // minimum effort level: "low", "medium", "high", "max" (empty = off)
+	EffortFloor     string // minimum effort level: "low", "medium", "high", "max" (empty = off)
+	SkillEvalInject string // "true" = verbose eval, "silent" = internal eval only, "false" = disabled
 
 	// Cache keepalive
 	CacheKeepaliveEnabled bool
@@ -1251,12 +1252,16 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		s.syncSkillActivations(messages, proj, threadID)
 
 		// Inject mandatory skill evaluation block into last user message
-		skillEval := buildSkillEvalBlock()
+		skillEval := buildSkillEvalBlock(s.cfg.SkillEvalInject)
 		currentMessages, _ := req["messages"].([]any)
 		if currentMessages == nil {
 			currentMessages = messages
 		}
-		req["messages"] = injectAssociativeContext(currentMessages, skillEval, s.cfg.SawtoothEnabled)
+		if skillEval != "" {
+			req["messages"] = injectAssociativeContext(currentMessages, skillEval, s.cfg.SawtoothEnabled)
+			needsReserialization = true
+			s.logger.Printf("%s[req %d %s tid=%s] skill-eval injected (mode=%s)%s", colorBlue, reqIdx, proj, threadID, s.cfg.SkillEvalInject, colorReset)
+		}
 		needsReserialization = true
 		s.logger.Printf("%s[req %d %s tid=%s] skill-eval injected%s", colorBlue, reqIdx, proj, threadID, colorReset)
 	}

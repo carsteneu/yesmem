@@ -53,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Align prompt_rewrite test inputs with updated CC target strings
 - Add pre-modification dump, update rewrite targets for CC ~2.1.117
 - Keepalive ping strips thinking — adaptive conflicts with max_tokens=1
 - Add error logging to silent-fail load functions in briefing

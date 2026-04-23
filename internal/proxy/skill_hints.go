@@ -154,9 +154,24 @@ var skillEvalBlock = SkillEvalStartMarker + "\n" +
 	"Step 3 — PROCEED: Only after evaluation is complete.\n" +
 	SkillEvalEndMarker
 
-// buildSkillEvalBlock returns the cached skill evaluation instruction block.
-func buildSkillEvalBlock() string {
-	return skillEvalBlock
+var silentSkillEvalBlock = SkillEvalStartMarker + "\n" +
+	"EVALUATE INTERNALLY: Check available skills and /commands against the current task.\n" +
+	"IF a skill applies → activate via Skill tool, then proceed.\n" +
+	"IF none apply → proceed directly. No evaluation output needed.\n" +
+	SkillEvalEndMarker
+
+// buildSkillEvalBlock returns the skill evaluation instruction block for the given mode.
+// Modes: "true" = verbose eval output, "silent" = internal eval only, "false" = disabled.
+// Empty string defaults to "silent".
+func buildSkillEvalBlock(mode string) string {
+	switch mode {
+	case "true":
+		return skillEvalBlock
+	case "false":
+		return ""
+	default:
+		return silentSkillEvalBlock
+	}
 }
 
 // detectSkillActivations scans message history for Skill tool_use blocks
