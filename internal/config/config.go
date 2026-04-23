@@ -97,7 +97,8 @@ type ProxyConfig struct {
 	PromptUngate  bool   `yaml:"prompt_ungate"`  // strip CLAUDE.md subordination disclaimer (default: true)
 	PromptRewrite bool   `yaml:"prompt_rewrite"` // strip output-throttling + inject quality directives (default: false)
 	PromptEnhance bool   `yaml:"prompt_enhance"` // CLAUDE.md authority boost, comment discipline, persona tone (default: false)
-	EffortFloor   string `yaml:"effort_floor"`   // minimum effort level: "low", "medium", "high", "max" (default: "" = off)
+	EffortFloor     string `yaml:"effort_floor"`      // minimum effort level: "low", "medium", "high", "max" (default: "" = off)
+	SkillEvalInject string `yaml:"skill_eval_inject"` // "true" = verbose eval output, "silent" = internal eval only, "false" = disabled (default: "silent")
 
 	CacheKeepaliveEnabled bool   `yaml:"cache_keepalive_enabled"` // send keepalive pings to prevent cache expiry (default: true)
 	CacheKeepaliveMode    string `yaml:"cache_keepalive_mode"`    // "auto" (detect from response), "5m", "1h" (default: "5m")
@@ -231,6 +232,7 @@ func Default() *Config {
 			CacheTTL:              "ephemeral",
 			UsageDeflationFactor:  0.7, // experimental: report 70% of actual tokens to CC
 			PromptUngate:          true, // strip CLAUDE.md disclaimer by default (proven safe)
+			SkillEvalInject:       "silent",
 			CacheKeepaliveEnabled: true,
 			CacheKeepaliveMode:    "5m",
 			CacheKeepalivePings5m: 5,
