@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Inject code-tools-first directive via InjectAntDirectives
 - Add skill_eval_inject config toggle
 - Install wizard picks CLI vs API key, default model sonnet
 - Follow parent process CWD for worktree routing

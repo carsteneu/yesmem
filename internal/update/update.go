@@ -6,9 +6,12 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/carsteneu/yesmem/internal/config"
 )
 
 // BinaryPath returns the path to the currently running yesmem binary.
@@ -61,6 +64,14 @@ func RunUpdate(currentVersion string, logger *log.Logger) (string, error) {
 	logger.Println("[update] running post-update migration...")
 	if err := runMigrate(dest); err != nil {
 		logger.Printf("[update] migration warning: %v", err)
+	}
+
+	home, _ := os.UserHomeDir()
+	cfgPath := filepath.Join(home, ".claude", "yesmem", "config.yaml")
+	if n, err := config.MigrateConfig(cfgPath); err != nil {
+		logger.Printf("[update] config migration warning: %v", err)
+	} else if n > 0 {
+		logger.Printf("[update] config migration: added %d new field(s) to config.yaml", n)
 	}
 
 	return info.Version, nil
