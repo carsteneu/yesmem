@@ -56,7 +56,6 @@ func buildWebFetchKeywords(rawURL string) []string {
 type matchedGotcha struct {
 	learning models.Learning
 	score    int
-	effScore float64
 }
 
 // blockThreshold is the hit_count at which a gotcha escalates from warn to hard block.
@@ -173,13 +172,13 @@ func RunCheck(dataDir string) {
 	var projectMatches, globalMatches []matchedGotcha
 	for _, g := range gotchas {
 		score := matchScore(keywords, g.Content)
-		decay := injectionDecay(g.InjectCount, g.UseCount, g.SaveCount)
-		effScore := float64(score) * decay
 		matched := false
 		if isFileOp {
-			matched = effScore >= 2.0 || (effScore >= 1.0 && hasFileKeywordMatch(keywords, g.Content))
+			// For file ops: 1 match on a filename-like keyword (contains ".") or 2+ any matches
+			matched = score >= 2 || (score >= 1 && hasFileKeywordMatch(keywords, g.Content))
 		} else {
-			matched = effScore >= 2.0 || (effScore >= 1.0 && hasLongKeywordMatch(keywords, g.Content))
+			// For bash: 2+ matches or 1 long keyword match (≥6 chars)
+			matched = score >= 2 || (score >= 1 && hasLongKeywordMatch(keywords, g.Content))
 		}
 		// V2: entity/action matching (much more precise)
 		if !matched && g.IsV2() {

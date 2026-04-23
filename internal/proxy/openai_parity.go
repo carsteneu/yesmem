@@ -268,10 +268,7 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 
 	if ctx.ThreadID != "" && ctx.Project != "" && isUserInputTurn(messages) && s.skillTracker != nil {
 		s.syncSkillActivations(messages, ctx.Project, ctx.ThreadID)
-		skillEval := buildSkillEvalBlock(s.cfg.SkillEvalInject)
-		if skillEval != "" {
-			req["messages"] = injectAssociativeContext(messages, skillEval, s.cfg.SawtoothEnabled)
-		}
+		req["messages"] = injectAssociativeContext(messages, buildSkillEvalBlock(), s.cfg.SawtoothEnabled)
 		messages, _ = req["messages"].([]any)
 		s.logger.Printf("%s[req %d %s tid=%s] skill-eval injected%s", colorBlue, ctx.ReqIdx, ctx.Project, ctx.ThreadID, colorReset)
 	}

@@ -78,7 +78,7 @@ func TestStripSkillHints_NoHints_Passthrough(t *testing.T) {
 }
 
 func TestBuildSkillEvalBlock(t *testing.T) {
-	block := buildSkillEvalBlock("true")
+	block := buildSkillEvalBlock()
 
 	if !strings.Contains(block, "[skill-eval]") {
 		t.Error("block should have start marker")
@@ -97,45 +97,6 @@ func TestBuildSkillEvalBlock(t *testing.T) {
 	}
 	if !strings.Contains(block, "/command") {
 		t.Error("block should mention slash commands")
-	}
-}
-
-func TestBuildSkillEvalBlock_Silent(t *testing.T) {
-	block := buildSkillEvalBlock("silent")
-
-	if !strings.Contains(block, "[skill-eval]") {
-		t.Error("silent block should have start marker")
-	}
-	if !strings.Contains(block, "[/skill-eval]") {
-		t.Error("silent block should have end marker")
-	}
-	if strings.Contains(block, "MANDATORY SKILL ACTIVATION") {
-		t.Error("silent block should NOT contain verbose mandatory instruction")
-	}
-	if !strings.Contains(block, "EVALUATE INTERNALLY") {
-		t.Error("silent block should contain EVALUATE INTERNALLY instruction")
-	}
-	if !strings.Contains(block, "Skill") {
-		t.Error("silent block should reference Skill tool")
-	}
-	if strings.Contains(block, "Output format") {
-		t.Error("silent block should NOT contain output format instructions")
-	}
-}
-
-func TestBuildSkillEvalBlock_Disabled(t *testing.T) {
-	block := buildSkillEvalBlock("false")
-
-	if block != "" {
-		t.Errorf("disabled mode should return empty string, got %q", block)
-	}
-}
-
-func TestBuildSkillEvalBlock_EmptyDefaultsSilent(t *testing.T) {
-	block := buildSkillEvalBlock("")
-
-	if !strings.Contains(block, "EVALUATE INTERNALLY") {
-		t.Error("empty mode should default to silent behavior")
 	}
 }
 
