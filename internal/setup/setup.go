@@ -11,9 +11,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/carsteneu/yesmem/skills"
-	"time"
+	"gopkg.in/yaml.v3"
 
 	"github.com/carsteneu/yesmem/internal/orchestrator"
 
@@ -65,6 +66,14 @@ func runDefaults(home, dataDir, binaryPath string) error {
 					}
 				}
 			}
+		}
+		if envKey == "" {
+			if k, _ := findClaudeCodeKey(home); k != "" {
+				envKey = k
+			}
+		}
+		if envKey == "" {
+			envKey = readExistingConfigKey(dataDir)
 		}
 		apiKey = promptAPIKey(envKey)
 		if apiKey == "" {
@@ -149,6 +158,9 @@ func runInteractive(home, dataDir, binaryPath string) error {
 			if k, _ := findClaudeCodeKey(home); k != "" {
 				envKey = k
 			}
+		}
+		if envKey == "" {
+			envKey = readExistingConfigKey(dataDir)
 		}
 		apiKey = promptAPIKey(envKey)
 		if apiKey == "" {
@@ -907,6 +919,22 @@ func testAPIKeyForSonnet(apiKey string) bool {
 	client := extraction.NewClient(apiKey, "claude-sonnet-4-6")
 	_, err := client.Complete("Reply with OK.", "test")
 	return err == nil
+}
+
+func readExistingConfigKey(dataDir string) string {
+	data, err := os.ReadFile(filepath.Join(dataDir, "config.yaml"))
+	if err != nil {
+		return ""
+	}
+	var cfg struct {
+		API struct {
+			APIKey string `yaml:"api_key"`
+		} `yaml:"api"`
+	}
+	if yaml.Unmarshal(data, &cfg) != nil {
+		return ""
+	}
+	return cfg.API.APIKey
 }
 
 // findClaudeCodeKey reads the internal Claude Code key from ~/.claude.json.
