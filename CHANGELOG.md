@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Inject code-tools-first directive via InjectAntDirectives
+- Gotcha injection decay + tiered output (top-1 only)
+- Config migration for setup and update
 - Add skill_eval_inject config toggle
 - Install wizard picks CLI vs API key, default model sonnet
 - Follow parent process CWD for worktree routing
@@ -41,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Remove   .last-sync-hash, require --branch flag in sync-public.sh
 - Sync-public.sh requires --branch flag, auto-generated CHANGELOG
 - Whitelist mode for docs/ in sync-public.sh
 - Harden public sync pipeline
@@ -56,6 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- API key fallback chain for re-setup
 - Use projectKey() for Code Map header in worktrees
 - Resolve git worktree HEAD and project key correctly
 - CLI client robustness for subscription installs

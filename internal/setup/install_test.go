@@ -103,3 +103,34 @@ func TestPromptUserType_InvalidFallsBackToDefault(t *testing.T) {
 		t.Errorf("promptUserType(invalid) = %q, want %q (default)", got, "cli")
 	}
 }
+
+func TestReadExistingConfigKey_Found(t *testing.T) {
+	dir := t.TempDir()
+	content := "api:\n  api_key: sk-ant-test-existing-key\n  provider: api\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got := readExistingConfigKey(dir)
+	if got != "sk-ant-test-existing-key" {
+		t.Errorf("readExistingConfigKey() = %q, want %q", got, "sk-ant-test-existing-key")
+	}
+}
+
+func TestReadExistingConfigKey_Missing(t *testing.T) {
+	got := readExistingConfigKey(t.TempDir())
+	if got != "" {
+		t.Errorf("readExistingConfigKey(empty dir) = %q, want empty", got)
+	}
+}
+
+func TestReadExistingConfigKey_EmptyKey(t *testing.T) {
+	dir := t.TempDir()
+	content := "api:\n  api_key: \"\"\n  provider: api\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got := readExistingConfigKey(dir)
+	if got != "" {
+		t.Errorf("readExistingConfigKey(empty key) = %q, want empty", got)
+	}
+}

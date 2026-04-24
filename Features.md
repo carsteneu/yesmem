@@ -1378,7 +1378,80 @@ The proxy parses Anthropic rate-limit headers from every API response:
 
 ---
 
-## 18. LLM Backend Flexibility
+## 18. Code Intelligence
+
+YesMem includes a language-agnostic code intelligence system that scans, indexes, and exposes codebase structure through MCP tools and proxy-injected context.
+
+### 18.1 Architecture
+
+The system consists of three layers:
+
+1. **Scanner** — CBM CLI (`cbm-cli`), an external binary that parses source files using TreeSitter grammars. Extracts functions, types, methods, imports, call edges. Auto-downloaded during `yesmem setup` if not present.
+2. **CodeGraph Store** — SQLite tables (`code_files`, `code_symbols`, `code_edges`) storing the indexed codebase. Incremental: only re-scans files with changed mtimes. Worktree-aware: project key is derived from the git repo root, not the working directory.
+3. **MCP Tools** — Eight tools expose the graph to Claude Code sessions.
+
+### 18.2 Scanning
+
+Scanning runs on daemon startup and on-demand via `yesmem scan`. The scanner:
+
+- Walks the project directory, respecting `.gitignore`
+- Hashes file mtimes against the SQLite cache for incremental updates
+- Extracts symbols (functions, types, methods, constants, variables) with line ranges
+- Extracts edges (imports, calls, defines) between symbols
+- Stores everything in `code_files`, `code_symbols`, `code_edges` tables
+
+Supported languages depend on the CBM CLI's TreeSitter grammar set (Go, Python, JavaScript/TypeScript, Rust, Java, PHP, and others).
+
+### 18.3 MCP Tools
+
+| Tool | Purpose |
+|------|---------|
+| `get_file_index(project, dir)` | List files in a directory with learning/gotcha annotations |
+| `get_file_symbols(file, project)` | All top-level symbols in a file with line numbers |
+| `search_code_index(pattern, project)` | Find symbols by name substring (functions, types, methods) |
+| `get_code_snippet(qualified_name, project)` | Full function/type body from source. Also supports range mode (file + start_line + end_line) |
+| `get_code_context(qualified_name, project)` | Symbol signature, file, and connected nodes (callers, imports) |
+| `search_code(pattern, project)` | Grep enriched with graph context (containing function, callers) |
+| `get_dependency_map(package, project)` | Package import graph with cycle detection |
+| `graph_traverse(from, project)` | Trace call paths and dependencies from a node (inbound/outbound/both) |
+
+These tools are designed to replace raw shell navigation (`grep`, `find`, `cat`) for code understanding tasks. They use less context and leverage the pre-built graph.
+
+### 18.4 Code Map Injection
+
+The proxy generates a Code Map summary and injects it as a separate conversation turn at session start. The Code Map includes:
+
+- **Package table** — all packages with file count, description, and gotcha count
+- **Key files** — important files per package (heuristic: most symbols, most edges)
+- **Entry points** — files with `main()` or standalone execution capability
+- **Active Zones** — directories with the most file changes in the last 7 days (from git log)
+- **Change coupling** — file pairs that frequently change together (from git log co-occurrence)
+- **Code health** — test coverage ratio, TODO/FIXME counts
+
+The Code Map is injected as its own assistant turn, separate from the briefing, so it doesn't compete for the system prompt cache breakpoint.
+
+### 18.5 Code Navigation Hook
+
+A `PreToolUse` hook (`hook-check`) detects when REPL commands target indexed files (via `cat()`, `grep`, or similar). When triggered, it suggests using MCP code tools instead:
+
+```
+yesmem has indexed this file. Use MCP tools instead of shell navigation:
+  get_file_symbols(file) for symbol overview, then get_code_snippet for targeted ranges
+```
+
+The suggestion can be dismissed per-session via `dismiss_code_nav(session_id)`. After 5 dismissals in a session, suggestions stop until the next session.
+
+### 18.6 Worktree Awareness
+
+The project key for code indexing is derived from the git repository root (`git rev-parse --show-toplevel`), not the current working directory. This means:
+
+- Worktrees of the same repository share the same code index
+- Scanning in one worktree updates the index for all sessions in that repo
+- The project key remains stable regardless of subdirectory navigation
+
+---
+
+## 19. LLM Backend Flexibility
 
 ### Provider modes
 | Mode | How it works | Requires |
@@ -1459,7 +1532,7 @@ API requests use Anthropic's prompt caching (`cache_control: ephemeral` on syste
 
 ---
 
-## 19. LoCoMo Benchmark (E5a)
+## 20. LoCoMo Benchmark (E5a)
 
 Reproducible benchmark against the LoCoMo dataset (Long Conversation Memory) — the de-facto standard for memory system evaluation.
 
@@ -1951,11 +2024,11 @@ yesmem claudemd --all           # regenerate ops files
 
 ---
 
-## 19. Multi-Agent Communication & Memory Safety
+## 20. Multi-Agent Communication & Memory Safety
 
 YesMem enables multiple Claude Code sessions to communicate and share long-term memory safely.
 
-### 19.1 Agent-to-Agent Messaging
+### 20.1 Agent-to-Agent Messaging
 
 Direct messaging between Claude Code sessions via Channel system:
 
@@ -1964,7 +2037,7 @@ Direct messaging between Claude Code sessions via Channel system:
 | `send_to` | `target` (session ID), `content` | Send message to another session |
 | `broadcast` | `content`, `project` | Send message to all sessions on a project |
 
-### 19.2 Message Delivery (Proxy-Based)
+### 20.2 Message Delivery (Proxy-Based)
 
 Messages are delivered via the proxy's think-reminder injection system:
 
@@ -1985,7 +2058,7 @@ Claude Code → API Request → Proxy extracts session_id from metadata.user_id
 - **Idle state:** Active dialog with no new messages shows `[KEINE NEUEN NACHRICHTEN]`
 - **Session ID display:** `DEINE_SESSION_ID: uuid` injected in every proxy think-reminder so Claude always knows its own identity
 
-### 19.3 Polling (CronCreate)
+### 20.3 Polling (CronCreate)
 
 The proxy can only inject content when a request passes through. For idle sessions, CronCreate provides periodic polling:
 
@@ -1994,7 +2067,7 @@ The proxy can only inject content when a request passes through. For idle sessio
 - The CronCreate prompt checks for `📨 DIALOG` blocks in the context, NOT via MCP check_messages (avoids echo issues)
 - **Limitation:** Claude can forget or fail to start the CronCreate — behavioral, not technical
 
-### 19.4 Session Identity Resolution
+### 20.4 Session Identity Resolution
 
 Three-tier resolution for mapping tool calls to sessions:
 
@@ -2007,7 +2080,7 @@ Three-tier resolution for mapping tool calls to sessions:
 
 **PID persistence:** `hook-think` writes PID→session_id files to `$dataDir/sessions/$PID` on every `UserPromptSubmit`. Survives daemon restarts — MCP server can read PID files on startup.
 
-### 19.5 Broadcast (1:n)
+### 20.5 Broadcast (1:n)
 
 One agent sends a message to all sessions on the same project:
 
@@ -2016,7 +2089,7 @@ One agent sends a message to all sessions on the same project:
 - **24h TTL** — broadcasts auto-expire, no accumulation
 - **Auto-broadcast:** Gotchas and high-importance decisions (`importance ≥ 4`) are automatically broadcast to all project sessions when saved via `remember()`
 
-### 19.6 Memory Safety (Multi-Agent Mitigations)
+### 20.6 Memory Safety (Multi-Agent Mitigations)
 
 When multiple agents share the same long-term memory, specific protections prevent knowledge corruption:
 
@@ -2030,7 +2103,7 @@ When multiple agents share the same long-term memory, specific protections preve
 | **No accountability** | Learning lineage | `dialog_id` on learnings tracks which dialog context a learning originated from. `agent_role` tracks which type of agent created it |
 | **Echo in dialogs** | Sender filter | `check_messages` SQL: `sender != forSession`. Session ID must match exactly — `activeSessionID` fallback disabled for concurrent sessions |
 
-### 19.7 Agent Roles
+### 20.7 Agent Roles
 
 Sessions and learnings carry an `agent_role` field (e.g., `code`, `marketing`, `design`, `debug`, `review`). This enables:
 
@@ -2040,7 +2113,7 @@ Sessions and learnings carry an `agent_role` field (e.g., `code`, `marketing`, `
 
 Note: The Persona system describes the **user** (traits, preferences, expertise), not Claude's role. Subagents get their role via the Agent tool prompt. Role-persona overlays were removed as a design error — the `agent_role` field is purely for provenance tracking and conflict detection.
 
-### 19.8 Channel-Ready Architecture (Future)
+### 20.8 Channel-Ready Architecture (Future)
 
 The dialog system is designed for seamless migration to Claude Code Channels when available:
 
@@ -2050,7 +2123,7 @@ The dialog system is designed for seamless migration to Claude Code Channels whe
 - **Channel advantages:** Push as User-Turn (not content block), idle-only delivery (buffered), no polling needed
 - **Migration path:** Replace proxy injection with channel notification push — same daemon, same DB, same tools
 
-### 19.9 Design Principles
+### 20.9 Design Principles
 
 - **`remember()` is the broadcast** — explicit saves surface via associative context to all agents automatically
 - **Dialog is for questions, not knowledge transfer** — use `remember()` to persist, dialog to discuss
@@ -2058,7 +2131,7 @@ The dialog system is designed for seamless migration to Claude Code Channels whe
 - **Proxy over hooks** — proxy sees every request with correct session_id from metadata; hooks have timing issues and daemon restart fragility
 - **Shared Scratchpad** — structured whiteboard for n:n collaboration. Each agent writes its own section (`scratchpad_write`), all agents read the full document each turn (`scratchpad_read`). CRUD via MCP tools: `scratchpad_write`, `scratchpad_read`, `scratchpad_list`, `scratchpad_delete`.
 
-### 19.10 Agent Orchestrator (Daemon-Managed Agents)
+### 20.10 Agent Orchestrator (Daemon-Managed Agents)
 
 Full lifecycle management for sub-agents spawned as PTY subprocesses:
 
@@ -2088,7 +2161,7 @@ pending → spawning → running → [frozen] → stopped/error
                          └── resume ─┘
 ```
 
-### 19.11 Multi-Backend Support
+### 20.11 Multi-Backend Support
 
 Sub-agents can use different LLM backends:
 
@@ -2112,7 +2185,7 @@ spawn_agent(project="yesmem", section="recherche", backend="codex")
 - `ensureAgentPermissions()` only for Claude (pre-approve MCP tools in `.claude/settings.json`)
 - Prompt injection goroutine conditional (Claude: PTY inject after delay, Codex: CLI arg)
 
-### 19.12 Heartbeat & Message Delivery
+### 20.12 Heartbeat & Message Delivery
 
 Two-stage delivery system ensures reliable agent-to-agent messaging:
 
@@ -2127,7 +2200,7 @@ Agent B sends send_to(target=C) → message stored in agent_messages table
 - **Freeze detection:** agents frozen after N unread relay messages
 - **Delivery tracking:** per-message `delivered`, `delivered_at`, `delivery_retries`, `delivery_failed`
 
-### 19.12b Agent Supervision
+### 20.12b Agent Supervision
 
 Automatic lifecycle management via the heartbeat system (`internal/daemon/heartbeat.go`):
 
@@ -2137,7 +2210,7 @@ Automatic lifecycle management via the heartbeat system (`internal/daemon/heartb
 - **Limit enforcement:** `enforceAgentLimits()` freezes (not kills) agents exceeding `max_turns` (default 30), `token_budget`, or `max_runtime` (default 30 minutes) — frozen agents can be resumed later
 - **Auto-restart:** `attemptRestart()` with configurable strategies: `temporary` (capped at `max_restarts`, default 3) and `permanent` (unlimited restarts). 30s guard between restarts to prevent race conditions
 
-### 19.13 Crash Recovery
+### 20.13 Crash Recovery
 
 Strategy-based recovery for crashed agents:
 
@@ -2146,7 +2219,7 @@ Strategy-based recovery for crashed agents:
 - **Crash context:** error message and stack trace stored in agent record
 - **Graceful daemon restart:** OTP-style hot reload — running agents recovered on daemon restart
 
-### 19.13b Agent Telemetry
+### 20.13b Agent Telemetry
 
 Automatic tracking of agent resource usage via proxy SSE interception (`internal/proxy/telemetry.go`):
 
@@ -2165,7 +2238,7 @@ Automatic tracking of agent resource usage via proxy SSE interception (`internal
 - **Stale detection:** Orchestrators monitor `last_activity_at` — agents inactive for 5+ minutes flagged as potentially stuck
 - **Budget enforcement:** `enforceAgentLimits()` compares `input_tokens + output_tokens` against `token_budget`
 
-### 19.14 /swarm Orchestration Protocol
+### 20.14 /swarm Orchestration Protocol
 
 The `/swarm` skill provides a structured protocol for multi-agent orchestration:
 
@@ -2175,7 +2248,7 @@ The `/swarm` skill provides a structured protocol for multi-agent orchestration:
 - **Budget strategies:** quality (all Opus), balanced (Opus orchestrator + Sonnet workers), economy (all Sonnet)
 - **Status ping:** orchestrator checks agent status every 5 minutes
 
-### 19.15 Persistent-Orchestrator Skill
+### 20.15 Persistent-Orchestrator Skill
 
 Resume-based multi-agent pipeline for structured Implement → Review → Commit workflows (`skills/persistent-orchestrator.md`):
 
@@ -2188,7 +2261,7 @@ Resume-based multi-agent pipeline for structured Implement → Review → Commit
 
 ---
 
-## 20. Auto-Update
+## 21. Auto-Update
 
 Self-updating binary distribution via GitHub Releases — no Git required on target systems.
 
@@ -2264,7 +2337,7 @@ What makes YesMem fundamentally different — not "also does X", but "nobody els
 14. **Orthogonal Scoring** — Five independent counters (use, citation, retrieval, injection, feedback) prevent a learning from becoming "important" just because it was retrieved often. A learning that gets injected 50 times but never cited is noise, not signal.
 15. **Persona Continuity** — Not just fact storage — a persistent identity model that evolves across sessions. Traits, preferences, communication style, expertise areas. Session 1036 knows who you are because sessions 1–1035 built that understanding incrementally.
 
-## 20. Scheduled Agents
+## 21. Scheduled Agents
 
 Cron-based task scheduler built into the daemon. Define recurring or one-shot jobs that spawn agents automatically.
 
