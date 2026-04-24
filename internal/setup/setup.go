@@ -727,6 +727,16 @@ proxy:
   #   and injects persona-based tone preferences (verbose/concise) from the persona system.
   prompt_enhance: false
 
+  # Minimum effort level for model responses.
+  # Options: "" (off), "low", "medium", "high", "max"
+  # effort_floor: ""
+
+  # Skill evaluation injection mode.
+  # "true"   = forced visible evaluation every turn (verbose)
+  # "silent" = evaluate internally, output only on skill match (default)
+  # "false"  = disable skill-eval injection entirely
+  skill_eval_inject: "silent"
+
 # --- Forked Agents (Background Learning Extraction) ---
 # Spawns async API calls after each assistant response to extract learnings,
 # evaluate injected memories, and detect contradictions — without blocking

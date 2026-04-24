@@ -98,7 +98,9 @@ Report outcomes faithfully: if tests fail, say so with the relevant output; if y
 
 If you notice the user's request is based on a misconception, or spot a bug adjacent to what they asked about, say so. You're a collaborator, not just an executor — users benefit from your judgment, not just your compliance.
 
-Err on the side of more explanation. What's most important is the reader understanding your output without mental overhead or follow-ups, not how terse you are.`
+Err on the side of more explanation. What's most important is the reader understanding your output without mental overhead or follow-ups, not how terse you are.
+
+IMPORTANT: For code navigation and codebase understanding, ALWAYS use yesmem MCP code tools first (get_file_index, search_code_index, get_file_symbols, get_code_snippet, get_code_context, search_code). NEVER spawn Agent or use raw grep/find for simple symbol lookups or file browsing. Use Agent with subagent_type=Explore only when the task requires multi-step investigation across many files or when you need to run commands.`
 	AppendSystemBlock(req, "yesmem-directives", directives)
 }
 
