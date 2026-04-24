@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/carsteneu/yesmem/internal/hints"
@@ -56,6 +57,7 @@ func buildWebFetchKeywords(rawURL string) []string {
 type matchedGotcha struct {
 	learning models.Learning
 	score    int
+	effScore float64
 }
 
 // blockThreshold is the hit_count at which a gotcha escalates from warn to hard block.
@@ -172,13 +174,13 @@ func RunCheck(dataDir string) {
 	var projectMatches, globalMatches []matchedGotcha
 	for _, g := range gotchas {
 		score := matchScore(keywords, g.Content)
+		decay := injectionDecay(g.InjectCount, g.UseCount, g.SaveCount)
+		effScore := float64(score) * decay
 		matched := false
 		if isFileOp {
-			// For file ops: 1 match on a filename-like keyword (contains ".") or 2+ any matches
-			matched = score >= 2 || (score >= 1 && hasFileKeywordMatch(keywords, g.Content))
+			matched = effScore >= 2.0 || (effScore >= 1.0 && hasFileKeywordMatch(keywords, g.Content))
 		} else {
-			// For bash: 2+ matches or 1 long keyword match (≥6 chars)
-			matched = score >= 2 || (score >= 1 && hasLongKeywordMatch(keywords, g.Content))
+			matched = effScore >= 2.0 || (effScore >= 1.0 && hasLongKeywordMatch(keywords, g.Content))
 		}
 		// V2: entity/action matching (much more precise)
 		if !matched && g.IsV2() {
@@ -214,7 +216,10 @@ func RunCheck(dataDir string) {
 		if !matched {
 			continue
 		}
-		mg := matchedGotcha{learning: g, score: score}
+		if effScore < 2.0 {
+			effScore = 2.0
+		}
+		mg := matchedGotcha{learning: g, score: score, effScore: effScore}
 		if project != "" && models.ProjectMatches(g.Project, project) {
 			projectMatches = append(projectMatches, mg)
 		} else {
@@ -229,6 +234,8 @@ func RunCheck(dataDir string) {
 		maxGlobal = 3
 	}
 
+	sort.Slice(projectMatches, func(i, j int) bool { return projectMatches[i].effScore > projectMatches[j].effScore })
+	sort.Slice(globalMatches, func(i, j int) bool { return globalMatches[i].effScore > globalMatches[j].effScore })
 	if len(projectMatches) > maxProject {
 		projectMatches = projectMatches[:maxProject]
 	}
@@ -250,36 +257,19 @@ func RunCheck(dataDir string) {
 		return
 	}
 
-	// Collect hit IDs and build output
-	var hitIDs []int64
-	var lines []string
+	// Build tiered output: top-1 full text, rest as summary
+	text, injectedIDs, matchedIDs := buildGotchaOutput(allMatches)
 
-	if len(projectMatches) > 0 {
-		lines = append(lines, fmt.Sprintf("[%s]", project))
-		for _, mg := range projectMatches {
-			lines = append(lines, "- "+mg.learning.Content)
-			hitIDs = append(hitIDs, mg.learning.ID)
-		}
-	}
+	// Bump counts: match for all, inject only for fully injected top match
+	allIDs := make([]int64, 0, len(injectedIDs)+len(matchedIDs))
+	allIDs = append(allIDs, injectedIDs...)
+	allIDs = append(allIDs, matchedIDs...)
+	store.IncrementMatchCounts(allIDs)
+	store.IncrementInjectCounts(injectedIDs)
 
-	if len(globalMatches) > 0 {
-		if len(projectMatches) > 0 {
-			lines = append(lines, "---")
-			lines = append(lines, "[uebergreifend]")
-		}
-		for _, mg := range globalMatches {
-			lines = append(lines, "- "+mg.learning.Content)
-			hitIDs = append(hitIDs, mg.learning.ID)
-		}
-	}
-
-	// Bump match + inject counts (fire-and-forget)
-	store.IncrementMatchCounts(hitIDs)
-	store.IncrementInjectCounts(hitIDs)
-
-	// Persist state for save_count heuristic (one-shot, checked on next RunCheck)
-	if len(hitIDs) > 0 {
-		idsJSON, _ := json.Marshal(hitIDs)
+	// Persist state for save_count heuristic
+	if len(injectedIDs) > 0 {
+		idsJSON, _ := json.Marshal(injectedIDs)
 		store.SetProxyState("last_gotcha_ids", string(idsJSON))
 		store.SetProxyState("last_gotcha_tool", hook.ToolName)
 		store.SetProxyState("last_gotcha_input_hash", hashInput(inputStr))
@@ -287,7 +277,6 @@ func RunCheck(dataDir string) {
 		store.SetProxyState("last_gotcha_ids", "")
 	}
 
-	text := "YesMem Gotchas:\n" + strings.Join(lines, "\n")
 	emitReminder(text)
 }
 
@@ -321,8 +310,26 @@ func checkSaveCount(store *storage.Store, toolName, inputHash string) {
 	store.SetProxyState("last_gotcha_ids", "")
 }
 
-// emitReminder outputs the PreToolUse JSON with gotcha warnings.
-// Silent when gotchaText is empty — no generic reminder injection.
+func buildGotchaOutput(matches []matchedGotcha) (text string, injectedIDs []int64, matchedIDs []int64) {
+	if len(matches) == 0 {
+		return "", nil, nil
+	}
+	sort.Slice(matches, func(i, j int) bool { return matches[i].effScore > matches[j].effScore })
+	top := matches[0]
+	injectedIDs = append(injectedIDs, top.learning.ID)
+	var buf strings.Builder
+	buf.WriteString("YesMem Gotchas:\n- ")
+	buf.WriteString(top.learning.Content)
+	if len(matches) > 1 {
+		rest := matches[1:]
+		for _, mg := range rest {
+			matchedIDs = append(matchedIDs, mg.learning.ID)
+		}
+		buf.WriteString(fmt.Sprintf("\n+%d more — use query_facts(keyword=\"...\") for details", len(rest)))
+	}
+	return buf.String(), injectedIDs, matchedIDs
+}
+
 func emitReminder(gotchaText string) {
 	if gotchaText == "" {
 		return
