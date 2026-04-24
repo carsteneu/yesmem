@@ -171,11 +171,9 @@ func renderLarge(result *ScanResult, priority map[string]int, importedBy map[str
 		return pkgs[i].Name < pkgs[j].Name
 	})
 
-	// Project name from root dir
-	projectName := "project"
-	if result.RootDir != "" {
-		parts := strings.Split(strings.TrimRight(result.RootDir, "/"), "/")
-		projectName = parts[len(parts)-1]
+	projectName := projectKey(result.RootDir)
+	if projectName == "" || projectName == "." {
+		projectName = "project"
 	}
 
 	var b strings.Builder

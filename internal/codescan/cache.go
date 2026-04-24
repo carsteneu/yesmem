@@ -103,28 +103,34 @@ func (cs *CachedScanner) Scan(rootDir string) (*ScanResult, error) {
 // ReadGitHead reads the current git HEAD commit hash without shelling out.
 // Checks loose refs first, falls back to packed-refs after git gc.
 func ReadGitHead(rootDir string) string {
-	headPath := filepath.Join(rootDir, ".git", "HEAD")
+	gitDir := resolveGitDir(rootDir)
+	headPath := filepath.Join(gitDir, "HEAD")
 	data, err := os.ReadFile(headPath)
 	if err != nil {
 		return ""
 	}
 	content := strings.TrimSpace(string(data))
 
-	// Detached HEAD: raw commit hash
 	if !strings.HasPrefix(content, "ref: ") {
 		return content
 	}
 
 	ref := strings.TrimPrefix(content, "ref: ")
 
-	// Try loose ref first
-	refPath := filepath.Join(rootDir, ".git", ref)
+	refPath := filepath.Join(gitDir, ref)
 	if refData, err := os.ReadFile(refPath); err == nil {
 		return strings.TrimSpace(string(refData))
 	}
 
-	// Fallback: packed-refs (after git gc, loose refs get packed)
-	packedPath := filepath.Join(rootDir, ".git", "packed-refs")
+	commonDir := resolveCommonDir(gitDir)
+	if commonDir != gitDir {
+		refPath = filepath.Join(commonDir, ref)
+		if refData, err := os.ReadFile(refPath); err == nil {
+			return strings.TrimSpace(string(refData))
+		}
+	}
+
+	packedPath := filepath.Join(commonDir, "packed-refs")
 	if packed, err := os.ReadFile(packedPath); err == nil {
 		for _, line := range strings.Split(string(packed), "\n") {
 			line = strings.TrimSpace(line)
@@ -141,9 +147,55 @@ func ReadGitHead(rootDir string) string {
 	return content
 }
 
-// projectKey returns a short project name for cache lookups.
-// Uses filepath.Base for consistency with the rest of the system
-// (storage, MCP calls, learnings all use basename as project key).
+func resolveGitDir(rootDir string) string {
+	gitPath := filepath.Join(rootDir, ".git")
+	info, err := os.Lstat(gitPath)
+	if err != nil {
+		return gitPath
+	}
+	if info.IsDir() {
+		return gitPath
+	}
+	data, err := os.ReadFile(gitPath)
+	if err != nil {
+		return gitPath
+	}
+	content := strings.TrimSpace(string(data))
+	const prefix = "gitdir:"
+	if !strings.HasPrefix(content, prefix) {
+		return gitPath
+	}
+	target := strings.TrimSpace(strings.TrimPrefix(content, prefix))
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(rootDir, target)
+	}
+	return filepath.Clean(target)
+}
+
+func resolveCommonDir(gitDir string) string {
+	commonFile := filepath.Join(gitDir, "commondir")
+	data, err := os.ReadFile(commonFile)
+	if err != nil {
+		return gitDir
+	}
+	rel := strings.TrimSpace(string(data))
+	if filepath.IsAbs(rel) {
+		return rel
+	}
+	return filepath.Clean(filepath.Join(gitDir, rel))
+}
+
 func projectKey(rootDir string) string {
+	gitDir := resolveGitDir(rootDir)
+	gitPath := filepath.Join(rootDir, ".git")
+	if gitDir == gitPath {
+		return filepath.Base(rootDir)
+	}
+	parts := strings.Split(gitDir, string(filepath.Separator))
+	for i := len(parts) - 1; i >= 1; i-- {
+		if parts[i] == ".git" {
+			return parts[i-1]
+		}
+	}
 	return filepath.Base(rootDir)
 }
