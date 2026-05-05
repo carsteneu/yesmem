@@ -1,62 +1,62 @@
 # Capability Memory — Feature Documentation
 
-Zusammenfassung aller Capabilities-Features: Design, Architektur, Implementierungsstand, offene Punkte. Konsolidiert aus Spec, Plänen, Git-History, Code-Audit und Session-Learnings. Verifiziert gegen Code-Stand `feat+capability-memory` 2026-04-21.
+Summary of all Capabilities features: design, architecture, implementation status, open issues. Consolidated from spec, plans, git history, code audit, and session learnings. Verified against code state `feat+capability-memory` 2026-04-21.
 
 ---
 
-## 1. Problemstellung
+## 1. Problem Statement
 
-Claude Code verliert zwischen Sessions **erlerntes Werkzeugwissen**: REPL-Snippets, API-Wrapper, Analyse-Pipelines, Daten-Fetcher. Jede neue Session startet bei Null — selbst wenn identische Werkzeuge in vorherigen Sessions gebaut und getestet wurden.
+Claude Code loses **learned tool knowledge** between sessions: REPL snippets, API wrappers, analysis pipelines, data fetchers. Every new session starts from scratch — even when identical tools were built and tested in prior sessions.
 
-**Ziel:** Claude soll sich an selbstgebaute Werkzeuge erinnern, wissen was existiert, und sie on-demand aktivieren — ohne Token-Bloat durch dauerhaft geladene Schemata.
+**Goal:** Claude should remember self-built tools, know what exists, and activate them on demand — without token bloat from permanently loaded schemas.
 
 ---
 
-## 2. Drei-Ebenen-Architektur
+## 2. Three-Layer Architecture
 
 ```
 ┌───────────────────────────────────────────────────────────────────┐
-│ EBENE A — Katalog im Briefing (Session-Start, einmalig)           │
-│   Name + Einzeiler pro Capability. Keine Schemata.                │
-│   ~80 Tokens/Cap → 100 Caps ≈ 8k Tokens (gecached).              │
+│ LAYER A — Catalog in Briefing (session start, once)               │
+│   Name + one-liner per capability. No schemas.                    │
+│   ~80 tokens/cap → 100 caps ≈ 8k tokens (cached).                │
 │   renderCapabilitiesCatalog() in caps_inject.go.                  │
-│   Format: <capabilities-available> Block als system-reminder.      │
-│   Enthält Bootstrapper: registerTool("activate_cap",...)    │
+│   Format: <capabilities-available> block as system-reminder.      │
+│   Contains bootstrapper: registerTool("activate_cap",...)   │
 │                                                                     │
-│ EBENE B — Deliberative Aktivierung (pro Session, on-demand)        │
-│   Bootstrapper-REPL-Tool "activate_cap" ruft intern         │
-│   MCP-Tool "activate_cap" auf.                                     │
-│     1. Lädt Cap aus DB (Learnings mit category="cap")              │
-│     2. Gibt generierten registerTool()-Code zurück                 │
-│     3. Trägt Cap in session_active_caps ein                        │
-│   ⚠ Naming-Diskrepanz: Bootstrapper referenziert                  │
-│     mcp__yesmem__activate_cap, MCP registriert              │
-│     activate_cap. Funktioniert nur wenn Alias existiert.           │
+│ LAYER B — Deliberative Activation (per session, on-demand)        │
+│   Bootstrapper REPL tool "activate_cap" calls internally    │
+│   MCP tool "activate_cap".                                         │
+│     1. Loads cap from DB (learnings with category="cap")           │
+│     2. Returns generated registerTool() code                       │
+│     3. Records cap in session_active_caps                          │
+│   ⚠ Naming discrepancy: bootstrapper references                   │
+│     mcp__yesmem__activate_cap, MCP registers              │
+│     activate_cap. Works only if alias exists.                      │
 │                                                                     │
-│ EBENE C — Proxy Schema-Injection (ab Turn N+1)                     │
-│   Proxy liest active caps der Session via capsCache,               │
-│   ruft injectCapabilitiesTurn() auf,                               │
-│   hängt deren Schemata an req["tools"] an.                         │
-│   Tool wird nativer API-Call — kein REPL-Umweg mehr.               │
+│ LAYER C — Proxy Schema Injection (from turn N+1)                   │
+│   Proxy reads active caps for the session via capsCache,           │
+│   calls injectCapabilitiesTurn(),                                  │
+│   appends their schemas to req["tools"].                           │
+│   Tool becomes a native API call — no REPL detour.                 │
 └───────────────────────────────────────────────────────────────────┘
 ```
 
-**Warum deliberativ statt embedding-ranked:** Auto-Injection per Cosine-Match wurde evaluiert und verworfen. Das Modell selbst wählt zuverlässiger als ein heuristischer Ranker, sobald das Directory sichtbar ist. Kein False-Positive-Risiko, keine Vektor-Ingest-Pipeline nötig.
+**Why deliberative instead of embedding-ranked:** Auto-injection via cosine match was evaluated and rejected. The model itself selects more reliably than a heuristic ranker once the directory is visible. No false-positive risk, no vector ingest pipeline required.
 
 ---
 
-## 3. Datenmodell
+## 3. Data Model
 
-### Capabilities als Learnings
+### Capabilities as Learnings
 
-Capabilities sind **keine eigene Tabelle**, sondern Learnings mit `category = "cap"`. Nutzt bestehende Supersede/Search/Embed-Infrastruktur.
+Capabilities are **not a separate table**, but learnings with `category = "cap"`. Reuses the existing supersede/search/embed infrastructure.
 
 ```
 learnings (yesmem.db)
 ├── id, content, category="cap", source, project
 ├── context → JSON: CapMeta (name, description, schema, handler_repl, handler_bash, tags, version, tested, auto_active)
-├── keywords → Tags für Filterung
-└── superseded_by → Auto-Supersede bei gleichem Cap-Name
+├── keywords → tags for filtering
+└── superseded_by → auto-supersede on matching cap name
 ```
 
 ### CapMeta Struct (`internal/daemon/cap_meta.go`)
@@ -76,15 +76,15 @@ type CapMeta struct {
 }
 ```
 
-Funktionen:
+Functions:
 
-| Funktion | Signatur |
-|----------|----------|
+| Function | Signature |
+|----------|-----------|
 | `ParseCapMeta` | `func ParseCapMeta(s string) (CapMeta, error)` |
 | `ToJSON` | `func (m CapMeta) ToJSON() (string, error)` |
 | `HasTag` | `func (m CapMeta) HasTag(tag string) bool` |
 
-### Session-Aktivierungs-State
+### Session Activation State
 
 ```sql
 CREATE TABLE session_active_caps (
@@ -96,100 +96,100 @@ CREATE TABLE session_active_caps (
 );
 ```
 
-Gespeichert in `yesmem.db`. Proxy liest per Thread-ID welche Caps aktiv sind. `auto_active` ist **kein Spalten-Attribut** hier, sondern ein Feld in `CapMeta` (Learning-Context JSON). **Default: true** — neue Caps sind standardmässig sofort für alle Sessions verfügbar.
+Stored in `yesmem.db`. Proxy reads which caps are active per thread ID. `auto_active` is **not a column attribute** here, but a field in `CapMeta` (learning context JSON). **Default: true** — new caps are immediately available to all sessions by default.
 
-### Cap Store (generischer KV-Store)
+### Cap Store (generic KV store)
 
-Separate Datenbank `capabilities.db`. Jede Capability bekommt eigene namensgebundene Tabellen:
+Separate database `capabilities.db`. Each capability gets its own namespace-prefixed tables:
 
 ```
 capabilities.db
-├── cap_store_meta               — Registry: welche Cap besitzt welche Tabellen
-├── cap_{name}__{table}          — Daten-Tabellen (z.B. cap_reddit_search__listings)
-└── cap_{name}__blobs            — Blob-Chunks für >30KB Payloads (geplant)
+├── cap_store_meta               — registry: which cap owns which tables
+├── cap_{name}__{table}          — data tables (e.g. cap_reddit_search__listings)
+└── cap_{name}__blobs            — blob chunks for >30KB payloads (planned)
     └── PRIMARY KEY (key, chunk_idx)
 ```
 
 **Quotas:**
-- Max 10 Tabellen pro Capability
-- Max 10.000 Rows pro Tabelle
-- Max 64KB pro Zelle
-- Blob-Chunking: 60KB Chunks (geplant)
+- Max 10 tables per capability
+- Max 10,000 rows per table
+- Max 64KB per cell
+- Blob chunking: 60KB chunks (planned)
 
-**Sandboxing:** Nur `CREATE TABLE`, `INSERT`, `UPDATE`, `DELETE`, `SELECT`. Kein `DROP`, `ALTER`, `ATTACH`, `PRAGMA`. Alle Werte via `?`-Placeholders, Namen via Regex-Whitelist (`^[a-z][a-z0-9_]{0,63}$`).
+**Sandboxing:** Only `CREATE TABLE`, `INSERT`, `UPDATE`, `DELETE`, `SELECT`. No `DROP`, `ALTER`, `ATTACH`, `PRAGMA`. All values via `?` placeholders, names via regex allowlist (`^[a-z][a-z0-9_]{0,63}$`).
 
 ---
 
-## 4. Komponenten-Map
+## 4. Component Map
 
-### Proxy (Injection + Katalog)
+### Proxy (Injection + Catalog)
 
-**Datei: `internal/proxy/caps_inject.go`**
+**File: `internal/proxy/caps_inject.go`**
 
-| Symbol | Art | Beschreibung |
-|--------|-----|-------------|
-| `CapInjection` | struct | Felder: `Name`, `Description`, `Schema`, `HandlerBash`, `HandlerREPL` |
-| `renderCapabilitiesCatalog` | func | `func(caps []CapInjection) string` — erzeugt `<capabilities-available>` Block mit Bootstrapper-Code. Ersetzt den älteren `renderCapabilitiesBlock`. |
-| `renderCapabilitiesBlock` | func | `func(caps []CapInjection) string` — ältere Variante, listet Caps als `<capabilities-active>` Block. |
-| `injectCapabilitiesTurnImpl` | func | `func(req map[string]any, threadID string, queryFn ..., capsCache *CapsCache, logger *log.Logger) bool` — hängt aktive Cap-Schemata an `req["tools"]`. Dedup: native Tools gewinnen bei Name-Kollision. |
-| `injectCapabilitiesTurn` | method | `func (s *Server) injectCapabilitiesTurn(req map[string]any, threadID string) bool` — Server-Method-Wrapper um `injectCapabilitiesTurnImpl`. |
-| `decodeCapsResponse` | func | `func(raw json.RawMessage) ([]CapInjection, error)` — unmarshalt Daemon-Response in `[]CapInjection`. |
-| `renderRegisterTool` | func | `func(c CapInjection) string` — generiert einzelnes `registerTool()`-JS-Snippet für eine Cap. |
+| Symbol | Kind | Description |
+|--------|------|-------------|
+| `CapInjection` | struct | Fields: `Name`, `Description`, `Schema`, `HandlerBash`, `HandlerREPL` |
+| `renderCapabilitiesCatalog` | func | `func(caps []CapInjection) string` — generates `<capabilities-available>` block with bootstrapper code. Replaces the older `renderCapabilitiesBlock`. |
+| `renderCapabilitiesBlock` | func | `func(caps []CapInjection) string` — older variant, lists caps as `<capabilities-active>` block. |
+| `injectCapabilitiesTurnImpl` | func | `func(req map[string]any, threadID string, queryFn ..., capsCache *CapsCache, logger *log.Logger) bool` — appends active cap schemas to `req["tools"]`. Dedup: native tools win on name collision. |
+| `injectCapabilitiesTurn` | method | `func (s *Server) injectCapabilitiesTurn(req map[string]any, threadID string) bool` — server method wrapper around `injectCapabilitiesTurnImpl`. |
+| `decodeCapsResponse` | func | `func(raw json.RawMessage) ([]CapInjection, error)` — unmarshals daemon response into `[]CapInjection`. |
+| `renderRegisterTool` | func | `func(c CapInjection) string` — generates a single `registerTool()` JS snippet for a cap. |
 
-**Datei: `internal/proxy/caps_cache.go`**
+**File: `internal/proxy/caps_cache.go`**
 
-| Symbol | Art | Beschreibung |
-|--------|-----|-------------|
-| `CapsCache` | struct | Thread-keyed Cache. Felder: `mu sync.RWMutex`, `entries map[string][]byte`. |
-| `NewCapsCache` | func | `func NewCapsCache() *CapsCache` — Konstruktor. |
-| `Get` | method | `func (c *CapsCache) Get(threadID string) ([]byte, bool)` — liest Cache-Eintrag. |
-| `Set` | method | `func (c *CapsCache) Set(threadID string, data []byte)` — schreibt Cache-Eintrag (Kopie). |
-| `Invalidate` | method | `func (c *CapsCache) Invalidate(threadID string)` — löscht Cache-Eintrag. |
-| `invalidateThreadCaches` | method | `func (s *Server) invalidateThreadCaches(threadID, project, projectDir string)` — invalidiert frozenStubs, capsCache UND briefingCache für einen Thread. |
-| `cachedQueryFn` | func | `func cachedQueryFn(cache *CapsCache, threadID string, upstream func(...) ...) func(...)` — Wraps upstream-Daemon-Query, cached `get_active_caps` Responses. |
+| Symbol | Kind | Description |
+|--------|------|-------------|
+| `CapsCache` | struct | Thread-keyed cache. Fields: `mu sync.RWMutex`, `entries map[string][]byte`. |
+| `NewCapsCache` | func | `func NewCapsCache() *CapsCache` — constructor. |
+| `Get` | method | `func (c *CapsCache) Get(threadID string) ([]byte, bool)` — reads cache entry. |
+| `Set` | method | `func (c *CapsCache) Set(threadID string, data []byte)` — writes cache entry (copy). |
+| `Invalidate` | method | `func (c *CapsCache) Invalidate(threadID string)` — deletes cache entry. |
+| `invalidateThreadCaches` | method | `func (s *Server) invalidateThreadCaches(threadID, project, projectDir string)` — invalidates frozenStubs, capsCache AND briefingCache for a thread. |
+| `cachedQueryFn` | func | `func cachedQueryFn(cache *CapsCache, threadID string, upstream func(...) ...) func(...)` — wraps upstream daemon query, caches `get_active_caps` responses. |
 
-**Datei: `internal/proxy/proxy_briefing.go`**
+**File: `internal/proxy/proxy_briefing.go`**
 
-Keine Capability-Funktionen. `renderCapabilitiesCatalog()` ist in `caps_inject.go`, nicht hier.
+No capability functions. `renderCapabilitiesCatalog()` is in `caps_inject.go`, not here.
 
-**Datei: `internal/proxy/proxy.go`**
+**File: `internal/proxy/proxy.go`**
 
-Orchestrierung: ruft `capsCache` + `injectCapabilitiesTurn()` in der Request-Pipeline. Konfiguriert `cachedQueryFn()` als Query-Upstream.
+Orchestration: calls `capsCache` + `injectCapabilitiesTurn()` in the request pipeline. Configures `cachedQueryFn()` as query upstream.
 
-### Daemon (Handler + Meta)
+### Daemon (Handlers + Meta)
 
-**Datei: `internal/daemon/cap_meta.go`**
+**File: `internal/daemon/cap_meta.go`**
 
-| Funktion | Signatur |
-|----------|----------|
+| Function | Signature |
+|----------|-----------|
 | `ParseCapMeta` | `func ParseCapMeta(s string) (CapMeta, error)` |
 | `ToJSON` | `func (m CapMeta) ToJSON() (string, error)` |
 | `HasTag` | `func (m CapMeta) HasTag(tag string) bool` |
 
-**Datei: `internal/daemon/handler_caps.go`**
+**File: `internal/daemon/handler_caps.go`**
 
-| Funktion | Beschreibung |
+| Function | Description |
 |----------|-------------|
-| `handleGetCaps` | `func (h *Handler) handleGetCaps(params map[string]any) (any, error)` — listet alle Capabilities (Learnings mit category="cap"). Filter: `name`, `tag`, `project`. |
-| `handleSaveCap` | `func (h *Handler) handleSaveCap(params map[string]any) (any, error)` — speichert/updated Capability. Auto-Supersede bei gleichem Namen. `auto_active` default: **true**. |
-| `handleRegisterCaps` | `func (h *Handler) handleRegisterCaps(params map[string]any) (any, error)` — Batch-Hydration: generiert `registerTool()`-JS für mehrere Caps. |
-| `handleActivateCap` | `func (h *Handler) handleActivateCap(params map[string]any) (any, error)` — aktiviert einzelne Cap für Thread, gibt Code zurück. |
-| `handleDeactivateCap` | `func (h *Handler) handleDeactivateCap(params map[string]any) (any, error)` — deaktiviert Cap für Thread. |
-| `handleGetActiveCaps` | `func (h *Handler) handleGetActiveCaps(params map[string]any) (any, error)` — gibt aktive Caps eines Threads zurück (intern, für Proxy-Query). |
+| `handleGetCaps` | `func (h *Handler) handleGetCaps(params map[string]any) (any, error)` — lists all capabilities (learnings with category="cap"). Filters: `name`, `tag`, `project`. |
+| `handleSaveCap` | `func (h *Handler) handleSaveCap(params map[string]any) (any, error)` — saves/updates capability. Auto-supersede on matching name. `auto_active` default: **true**. |
+| `handleRegisterCaps` | `func (h *Handler) handleRegisterCaps(params map[string]any) (any, error)` — batch hydration: generates `registerTool()` JS for multiple caps. |
+| `handleActivateCap` | `func (h *Handler) handleActivateCap(params map[string]any) (any, error)` — activates a single cap for a thread, returns code. |
+| `handleDeactivateCap` | `func (h *Handler) handleDeactivateCap(params map[string]any) (any, error)` — deactivates cap for thread. |
+| `handleGetActiveCaps` | `func (h *Handler) handleGetActiveCaps(params map[string]any) (any, error)` — returns active caps for a thread (internal, for proxy query). |
 
-Hilfstyp: `capResult` struct (intern, für JSON-Serialisierung der Antworten).
+Helper type: `capResult` struct (internal, for JSON serialization of responses).
 
-**Datei: `internal/daemon/handler_cap_store.go`**
+**File: `internal/daemon/handler_cap_store.go`**
 
-| Funktion | Beschreibung |
+| Function | Description |
 |----------|-------------|
-| `handleCapStore` | `func (h *Handler) handleCapStore(params map[string]any) (any, error)` — Dispatch für Cap-Store-Actions. |
+| `handleCapStore` | `func (h *Handler) handleCapStore(params map[string]any) (any, error)` — dispatch for cap store actions. |
 
-Interne Hilfsfunktionen: `capStoreCreateTable`, `capStoreUpsert`, `capStoreQuery`, `capStoreDelete`, `capStoreListTables`, `parseColumnDefs`, `parseMapParam`.
+Internal helpers: `capStoreCreateTable`, `capStoreUpsert`, `capStoreQuery`, `capStoreDelete`, `capStoreListTables`, `parseColumnDefs`, `parseMapParam`.
 
-**Datei: `internal/daemon/handler.go`**
+**File: `internal/daemon/handler.go`**
 
-Dispatch (Zeilen ~250-260):
+Dispatch (lines ~250-260):
 
 ```go
 case "get_caps":        return h.handleGetCaps(...)
@@ -203,128 +203,128 @@ case "cap_store":       return h.handleCapStore(...)
 
 ### Storage
 
-**Datei: `internal/storage/session_caps.go`**
+**File: `internal/storage/session_caps.go`**
 
-| Funktion | Signatur |
-|----------|----------|
+| Function | Signature |
+|----------|-----------|
 | `ActivateCap` | `func (s *Store) ActivateCap(threadID, name string) error` |
 | `DeactivateCap` | `func (s *Store) DeactivateCap(threadID, name string) error` |
 | `GetSessionCaps` | `func (s *Store) GetSessionCaps(threadID string) ([]SessionCap, error)` |
-| `TouchCap` | `func (s *Store) TouchCap(threadID, name string) error` — updated `last_used_at`. |
+| `TouchCap` | `func (s *Store) TouchCap(threadID, name string) error` — updates `last_used_at`. |
 
-Rückgabetyp: `SessionCap` struct (Thread-ID + Name + Timestamps).
+Return type: `SessionCap` struct (thread ID + name + timestamps).
 
-**Datei: `internal/storage/cap_store.go`**
+**File: `internal/storage/cap_store.go`**
 
-| Funktion | Signatur |
-|----------|----------|
-| `OpenCapsDB` | `func (s *Store) OpenCapsDB() error` — öffnet separate `capabilities.db`. |
-| `CloseCapsDB` | `func (s *Store) CloseCapsDB()` — schliesst `capabilities.db`. |
-| `CapsReady` | `func (s *Store) CapsReady() bool` — prüft ob capabilities.db geöffnet. |
-| `ValidateCapName` | `func ValidateCapName(name string) error` — Regex-Validierung `^[a-z][a-z0-9_]{0,63}$`. |
-| `CapsCreateTable` | `func (s *Store) CapsCreateTable(cap, table string, columns []ColumnDef) error` — erstellt `cap_{name}__{table}`. |
+| Function | Signature |
+|----------|-----------|
+| `OpenCapsDB` | `func (s *Store) OpenCapsDB() error` — opens separate `capabilities.db`. |
+| `CloseCapsDB` | `func (s *Store) CloseCapsDB()` — closes `capabilities.db`. |
+| `CapsReady` | `func (s *Store) CapsReady() bool` — checks whether capabilities.db is open. |
+| `ValidateCapName` | `func ValidateCapName(name string) error` — regex validation `^[a-z][a-z0-9_]{0,63}$`. |
+| `CapsCreateTable` | `func (s *Store) CapsCreateTable(cap, table string, columns []ColumnDef) error` — creates `cap_{name}__{table}`. |
 | `CapsUpsert` | `func (s *Store) CapsUpsert(cap, table string, data map[string]any) error` |
 | `CapsQuery` | `func (s *Store) CapsQuery(cap, table, where string, args []any, limit int) ([]map[string]any, error)` |
-| `CapsQueryPaged` | `func (s *Store) CapsQueryPaged(cap, table, where string, args []any, limit, offset int) (QueryResult, error)` — mit Pagination-Metadata. |
-| `CapsDelete` | `func (s *Store) CapsDelete(cap, table, where string, args []any) (int64, error)` — gibt affected rows zurück. |
+| `CapsQueryPaged` | `func (s *Store) CapsQueryPaged(cap, table, where string, args []any, limit, offset int) (QueryResult, error)` — with pagination metadata. |
+| `CapsDelete` | `func (s *Store) CapsDelete(cap, table, where string, args []any) (int64, error)` — returns affected rows. |
 | `CapsListTables` | `func (s *Store) CapsListTables(cap string) ([]TableInfo, error)` |
 
-Hilfstypen: `ColumnDef`, `TableInfo`, `QueryResult`.
-Interne Hilfsfunktionen: `resolveTableName`, `sanitizeWhere`, `createCapStoreSchema`.
+Helper types: `ColumnDef`, `TableInfo`, `QueryResult`.
+Internal helpers: `resolveTableName`, `sanitizeWhere`, `createCapStoreSchema`.
 
-**Datei: `internal/storage/schema.go`**
+**File: `internal/storage/schema.go`**
 
-Schema-Migration für `session_active_caps` und `cap_store_meta`. v0.55-Migration benannte `session_active_capabilities` → `session_active_caps` und `capability_name` → `cap_name` um.
+Schema migration for `session_active_caps` and `cap_store_meta`. v0.55 migration renamed `session_active_capabilities` → `session_active_caps` and `capability_name` → `cap_name`.
 
-### MCP (Tool-Exposition)
+### MCP (Tool Exposure)
 
-**Datei: `internal/mcp/server.go`**
+**File: `internal/mcp/server.go`**
 
-Registriert MCP-Tools (Claude Code sieht sie als `mcp__yesmem__<name>`):
+Registers MCP tools (Claude Code sees them as `mcp__yesmem__<name>`):
 
-| Tool-Name | Beschreibung |
+| Tool name | Description |
 |-----------|-------------|
-| `activate_cap` | Aktiviert Cap für Thread. Gibt registerTool()-JS zurück. |
-| `deactivate_cap` | Entfernt Cap aus Thread-State. |
-| `get_caps` | Listet alle Capabilities (Filter: name, tag, project). |
-| `save_cap` | Speichert/updated Capability. Auto-Supersede bei gleichem Namen. |
-| `register_caps` | Batch-Hydration: generiert registerTool()-JS für mehrere Caps. |
-| `cap_store` | Generischer KV-Store. Actions: create_table, upsert, query, delete, list_tables, table_exists. |
-| `get_active_caps` | Interne Abfrage: aktive Caps eines Threads (für Proxy-Query, nicht User-facing). |
+| `activate_cap` | Activates cap for thread. Returns registerTool() JS. |
+| `deactivate_cap` | Removes cap from thread state. |
+| `get_caps` | Lists all capabilities (filters: name, tag, project). |
+| `save_cap` | Saves/updates capability. Auto-supersede on matching name. |
+| `register_caps` | Batch hydration: generates registerTool() JS for multiple caps at once. |
+| `cap_store` | Generic KV store. Actions: create_table, upsert, query, delete, list_tables, table_exists. |
+| `get_active_caps` | Internal query: active caps for a thread (for proxy query, not user-facing). |
 
-**Datei: `internal/mcp/proxy.go`**
+**File: `internal/mcp/proxy.go`**
 
-Weiterleitung an Daemon via Unix Socket. Kein Capability-spezifischer Code — generisches RPC-Relay.
+Forwarding to daemon via Unix socket. No capability-specific code — generic RPC relay.
 
 ### Briefing
 
-**Datei: `internal/briefing/briefing.go`**
+**File: `internal/briefing/briefing.go`**
 
-| Funktion | Signatur |
-|----------|----------|
-| `renderCaps` | `func renderCaps(caps []CapEntry) string` — rendert Caps im Briefing-Text (älterer Pfad via Learnings). |
-
----
-
-## 5. MCP-Tools (Parameter-Details)
-
-| Tool | Parameter | Beschreibung |
-|------|-----------|--------------|
-| `activate_cap` | `name` (required), `project?` | Aktiviert Cap für Session. Gibt `registerTool()`-JS zurück. `thread_id` wird automatisch injiziert. |
-| `deactivate_cap` | `name` (required) | Entfernt Cap aus Session-State. Thread-ID auto-injiziert. |
-| `get_caps` | `project?`, `name?`, `tag?`, `limit?` | Listet alle Capabilities (aus Learnings mit category=cap). |
-| `save_cap` | `name`, `description`, `handler_repl?`, `handler_bash?`, `schema?`, `tags?`, `tested?`, `auto_active?` (default: **true**), `project?` | Speichert/updated Capability. Auto-Supersede bei gleichem Namen. `auto_active` wird in CapMeta-JSON gespeichert. Default true — Caps sind standardmässig sofort für alle Sessions verfügbar. Explizit `false` setzen um eine Cap nur bei manueller Aktivierung verfügbar zu machen. |
-| `register_caps` | `names?`, `project?` | Batch-Hydration: generiert `registerTool()`-JS für mehrere Caps gleichzeitig. |
-| `cap_store` | `capability`, `action`, `table?`, `columns?`, `data?`, `where?`, `args?`, `limit?`, `offset?` | Generischer KV-Store. Actions: `create_table`, `upsert`, `query`, `delete`, `list_tables`, `table_exists`. |
-| `get_active_caps` | `thread_id` (auto-injected) | Interne Proxy-Query. Gibt aktive Caps eines Threads zurück. |
+| Function | Signature |
+|----------|-----------|
+| `renderCaps` | `func renderCaps(caps []CapEntry) string` — renders caps in briefing text (older path via learnings). |
 
 ---
 
-## 6. Proxy-Pipeline-Integration
+## 5. MCP Tools (Parameter Details)
 
-Die Capability-Injection fügt sich in die bestehende Proxy-Pipeline ein:
+| Tool | Parameters | Description |
+|------|------------|-------------|
+| `activate_cap` | `name` (required), `project?` | Activates cap for session. Returns `registerTool()` JS. `thread_id` is injected automatically. |
+| `deactivate_cap` | `name` (required) | Removes cap from session state. Thread ID auto-injected. |
+| `get_caps` | `project?`, `name?`, `tag?`, `limit?` | Lists all capabilities (from learnings with category=cap). |
+| `save_cap` | `name`, `description`, `handler_repl?`, `handler_bash?`, `schema?`, `tags?`, `tested?`, `auto_active?` (default: **true**), `project?` | Saves/updates capability. Auto-supersede on matching name. `auto_active` is stored in CapMeta JSON. Default true — caps are immediately available to all sessions by default. Set explicitly to `false` to make a cap available only on manual activation. |
+| `register_caps` | `names?`, `project?` | Batch hydration: generates `registerTool()` JS for multiple caps at once. |
+| `cap_store` | `capability`, `action`, `table?`, `columns?`, `data?`, `where?`, `args?`, `limit?`, `offset?` | Generic KV store. Actions: `create_table`, `upsert`, `query`, `delete`, `list_tables`, `table_exists`. |
+| `get_active_caps` | `thread_id` (auto-injected) | Internal proxy query. Returns active caps for a thread. |
+
+---
+
+## 6. Proxy Pipeline Integration
+
+Capability injection fits into the existing proxy pipeline:
 
 ```
-Request eingehend
+Incoming request
   → StripReminders
   → CompressContext
   → CalcCollapseCutoff
   → CollapseOldMessages / Stubify
   → ReplaceSystemBlock
-     └─ renderCapabilitiesCatalog()    ← Katalog im system-reminder (caps_inject.go)
+     └─ renderCapabilitiesCatalog()    ← catalog in system-reminder (caps_inject.go)
   → StripOldNarratives
   → reexpandStubsFor
-  → injectCapabilitiesTurn()           ← Aktive Caps an req["tools"] (caps_inject.go)
+  → injectCapabilitiesTurn()           ← active caps appended to req["tools"] (caps_inject.go)
   → UpgradeCacheTTL / EnforceCacheBreakpointLimit
-Request an Anthropic API
+Request to Anthropic API
 ```
 
-**Katalog-Injection** (`renderCapabilitiesCatalog` in `caps_inject.go`):
-- Erzeugt `<capabilities-available>` Block als system-reminder
-- Enthält Bootstrapper: `registerTool("activate_cap", ...)` als REPL-Tool
-- Bootstrapper ruft intern `mcp__yesmem__activate_cap` (⚠ siehe Naming-Diskrepanz)
-- Listet alle verfügbaren Caps mit Name + Beschreibung als Tabelle
-- Wird einmal pro Session gerendert
+**Catalog injection** (`renderCapabilitiesCatalog` in `caps_inject.go`):
+- Generates `<capabilities-available>` block as system-reminder
+- Contains bootstrapper: `registerTool("activate_cap", ...)` as REPL tool
+- Bootstrapper calls `mcp__yesmem__activate_cap` internally (⚠ see naming discrepancy)
+- Lists all available caps with name + description as a table
+- Rendered once per session
 
-**Schema-Injection** (`injectCapabilitiesTurn` in `caps_inject.go`):
-- Liest aktive Caps via `cachedQueryFn` (Cache + Daemon-Fallback)
-- Hängt JSON-Schemata an `req["tools"]` im API-Request an
-- Native Tools haben Vorrang bei Name-Kollision (Skip mit Warn-Log)
+**Schema injection** (`injectCapabilitiesTurn` in `caps_inject.go`):
+- Reads active caps via `cachedQueryFn` (cache + daemon fallback)
+- Appends JSON schemas to `req["tools"]` in the API request
+- Native tools take precedence on name collision (skipped with warn log)
 
 **Cache** (`CapsCache` in `caps_cache.go`):
-- In-Memory-Cache pro Thread-ID
-- Wird invalidiert via `invalidateThreadCaches()` (invalidiert auch frozenStubs + briefingCache)
-- `cachedQueryFn()` wraps Daemon-Query: cached nur `get_active_caps` Responses
+- In-memory cache keyed by thread ID
+- Invalidated via `invalidateThreadCaches()` (also invalidates frozenStubs + briefingCache)
+- `cachedQueryFn()` wraps daemon query: only caches `get_active_caps` responses
 
 ---
 
-## 7. Blob-Pipe (>30KB Payloads)
+## 7. Blob Pipe (>30KB Payloads)
 
-Für Capabilities die HTTP-Fetches > 30KB brauchen (z.B. Reddit-Posts mit vielen Kommentaren).
+For capabilities that need HTTP fetches larger than 30KB (e.g. Reddit posts with many comments).
 
-**Problem:** REPL-Output wird bei ~30KB abgeschnitten. Tempfiles brauchen Read-Tool-Permission.
+**Problem:** REPL output is truncated at ~30KB. Temp files require Read tool permission.
 
-**Lösung:** CLI-Subcommands `cap-blob-put` / `cap-blob-get`:
+**Solution:** CLI subcommands `cap-blob-put` / `cap-blob-get`:
 
 ```
 Producer → curl | yesmem cap-blob-put --cap NAME --key KEY
@@ -333,198 +333,198 @@ Producer → curl | yesmem cap-blob-put --cap NAME --key KEY
                     ↓
 Consumer → cap_store({action:"query", table:"blobs", ...})
                     ↓
-              rows.map(r => r.data).join('')  → vollständiger Payload
+              rows.map(r => r.data).join('')  → complete payload
 ```
 
-**Package:** `internal/capblob/` (blob.go, blob_test.go). CLI: `yesmem cap-blob-put --cap NAME --key KEY`. Verwendet von `reddit_fetch`.
+**Package:** `internal/capblob/` (blob.go, blob_test.go). CLI: `yesmem cap-blob-put --cap NAME --key KEY`. Used by `reddit_fetch`.
 
 ---
 
-## 8. REPL Pattern Detection (Wiederholungsmuster → Cap-Vorschlag)
+## 8. REPL Pattern Detection (Repeated Patterns → Cap Suggestion)
 
-Erkennt wiederholt ausgeführte Shell-Commands und schlägt vor, daraus Capabilities zu bauen. Das Feature bildet die Brücke zwischen ad-hoc REPL-Nutzung und persistentem Werkzeugwissen.
+Detects repeatedly executed shell commands and suggests building capabilities from them. This feature bridges ad-hoc REPL usage and persistent tool knowledge.
 
-### Konzept
+### Concept
 
 ```
 Session N: sh('curl ... | jq ...')
-Session N+1: sh('curl ... | jq ...')    ← selbes Muster
-Session N+2: sh('curl ... | jq ...')    ← Pattern count = 3
+Session N+1: sh('curl ... | jq ...')    ← same pattern
+Session N+2: sh('curl ... | jq ...')    ← pattern count = 3
 ...
 Session N+4: sh('curl ... | jq ...')    ← count ≥ 5 → Suggestion!
 
-Proxy injiziert Hint: "Du hast dieses Muster 5× verwendet.
-  Erwäge eine Capability daraus zu bauen mit save_cap(...)."
+Proxy injects hint: "You have used this pattern 5× times.
+  Consider building a capability from it with save_cap(...)."
 ```
 
-### Wie es funktioniert
+### How It Works
 
-1. **Normalisierung** (`repl_pattern.go`): Commands werden zu "Shape Hashes" normalisiert — variable Teile (URLs, IDs, Timestamps) werden durch Platzhalter ersetzt, sodass `curl https://api.example.com/v1/users/123` und `curl https://api.example.com/v1/users/456` denselben Hash ergeben.
+1. **Normalization** (`repl_pattern.go`): Commands are normalized to "shape hashes" — variable parts (URLs, IDs, timestamps) are replaced by placeholders, so `curl https://api.example.com/v1/users/123` and `curl https://api.example.com/v1/users/456` produce the same hash.
 
-2. **Recording** (Proxy → Daemon): Jeder REPL/Bash-Tool-Call wird vom Proxy an den Daemon gemeldet (`record_repl_pattern`). Der Daemon speichert Shape-Hash + Rohbefehl + Projekt + Timestamp in `repl_patterns` Tabelle.
+2. **Recording** (proxy → daemon): Every REPL/bash tool call is reported by the proxy to the daemon (`record_repl_pattern`). The daemon stores shape hash + raw command + project + timestamp in the `repl_patterns` table.
 
-3. **Detection** (`repl_pattern_detect.go`): Proxy prüft pro Request ob ein Pattern-Vorschlag fällig ist. Triggert wenn:
-   - Shape-Hash ≥ `minCount` (Default: 5) mal für das Projekt gesehen
-   - Pattern noch nicht als Cap gespeichert
-   - Pattern nicht dismissed
-   - Pattern nicht "trivial" (Filter via `isTrivialShape`)
+3. **Detection** (`repl_pattern_detect.go`): Proxy checks per request whether a pattern suggestion is due. Triggers when:
+   - Shape hash seen ≥ `minCount` times (default: 5) for the project
+   - Pattern not yet saved as a cap
+   - Pattern not dismissed
+   - Pattern not "trivial" (filtered via `isTrivialShape`)
 
-4. **Suggestion**: Proxy injiziert einen Hint-Text in die nächste Antwort, der vorschlägt das Pattern als Capability zu speichern.
+4. **Suggestion**: Proxy injects hint text into the next response, suggesting saving the pattern as a capability.
 
-5. **Dismiss**: User kann Vorschlag ablehnen. Nach 3 Dismissals wird das Pattern permanent ignoriert.
+5. **Dismiss**: User can reject the suggestion. After 3 dismissals the pattern is permanently ignored.
 
-### Trivial-Shape-Filter
+### Trivial Shape Filter
 
-Filtert Commands die zu generisch sind um als Capability sinnvoll zu sein:
+Filters commands too generic to be useful as a capability:
 
-- Reine `cd`, `ls`, `cat`, `echo` Commands
-- Einfache `git status`, `git log`, `git diff` ohne komplexe Flags
-- `grep` ohne Pipeline
+- Pure `cd`, `ls`, `cat`, `echo` commands
+- Simple `git status`, `git log`, `git diff` without complex flags
+- `grep` without pipeline
 
-### Komponenten
+### Components
 
-**Datei: `internal/proxy/repl_pattern.go`**
+**File: `internal/proxy/repl_pattern.go`**
 
-| Symbol | Art | Beschreibung |
-|--------|-----|-------------|
-| `PatternShape` | struct | Felder: `Hash`, `Normalized`, `Raw`, `Tokens` |
-| `NormalizeCommand` | func | `func NormalizeCommand(cmd string) PatternShape` — normalisiert Command zu Shape-Hash. |
-| `isTrivialShape` | func | `func isTrivialShape(shape PatternShape) bool` — filtert triviale Commands. |
+| Symbol | Kind | Description |
+|--------|------|-------------|
+| `PatternShape` | struct | Fields: `Hash`, `Normalized`, `Raw`, `Tokens` |
+| `NormalizeCommand` | func | `func NormalizeCommand(cmd string) PatternShape` — normalizes command to shape hash. |
+| `isTrivialShape` | func | `func isTrivialShape(shape PatternShape) bool` — filters trivial commands. |
 
-**Datei: `internal/proxy/repl_pattern_detect.go`**
+**File: `internal/proxy/repl_pattern_detect.go`**
 
-| Symbol | Art | Beschreibung |
-|--------|-----|-------------|
-| `PatternSuggestion` | struct | Felder: `Hash`, `Raw`, `Count`, `Project` |
-| `detectReplPattern` | func/method | Prüft ob ein Pattern-Vorschlag injiziert werden soll. Abfrage an Daemon `get_repl_patterns`. |
-| `formatPatternSuggestion` | func | Erzeugt den Hint-Text für den Vorschlag. |
+| Symbol | Kind | Description |
+|--------|------|-------------|
+| `PatternSuggestion` | struct | Fields: `Hash`, `Raw`, `Count`, `Project` |
+| `detectReplPattern` | func/method | Checks whether a pattern suggestion should be injected. Queries daemon `get_repl_patterns`. |
+| `formatPatternSuggestion` | func | Generates the hint text for the suggestion. |
 
-**Datei: `internal/daemon/handler_repl_patterns.go`**
+**File: `internal/daemon/handler_repl_patterns.go`**
 
-| Funktion | Beschreibung |
+| Function | Description |
 |----------|-------------|
-| `handleRecordReplPattern` | Speichert Shape-Hash + Raw-Command + Projekt in DB. |
-| `handleGetReplPatterns` | Gibt Patterns mit count ≥ threshold für ein Projekt zurück. |
-| `handleDismissReplPattern` | Markiert Pattern als dismissed. Permanent nach 3×. |
+| `handleRecordReplPattern` | Saves shape hash + raw command + project to DB. |
+| `handleGetReplPatterns` | Returns patterns with count ≥ threshold for a project. |
+| `handleDismissReplPattern` | Marks pattern as dismissed. Permanent after 3×. |
 
-**Datei: `internal/storage/repl_patterns.go`**
+**File: `internal/storage/repl_patterns.go`**
 
-| Funktion | Beschreibung |
+| Function | Description |
 |----------|-------------|
 | `RecordReplPattern` | `func (s *Store) RecordReplPattern(hash, normalized, raw, project string) error` |
 | `GetReplPatterns` | `func (s *Store) GetReplPatterns(project string, minCount int) ([]ReplPattern, error)` |
 | `DismissReplPattern` | `func (s *Store) DismissReplPattern(hash, project string) error` |
 | `IsPatternDismissed` | `func (s *Store) IsPatternDismissed(hash, project string) (bool, error)` |
 
-Schema: `repl_patterns` Tabelle (hash, normalized, raw, project, count, first_seen, last_seen, dismissed_count).
+Schema: `repl_patterns` table (hash, normalized, raw, project, count, first_seen, last_seen, dismissed_count).
 
-### MCP-Tools
+### MCP Tools
 
-| Tool | Beschreibung |
+| Tool | Description |
 |------|-------------|
-| `record_repl_pattern` | Intern, vom Proxy aufgerufen. Nicht User-facing. |
-| `get_repl_patterns` | Gibt frequentierte Patterns zurück. |
-| `dismiss_repl_pattern` | User lehnt Vorschlag ab. |
+| `record_repl_pattern` | Internal, called by proxy. Not user-facing. |
+| `get_repl_patterns` | Returns frequently occurring patterns. |
+| `dismiss_repl_pattern` | User rejects a suggestion. |
 
-### Noise Reduction (live seit 2026-04-20)
+### Noise Reduction (live since 2026-04-20)
 
-| Maßnahme | Datei | Effekt |
-|----------|-------|--------|
-| **Deny-List erweitert** (+15: git, mkdir, rm, cp, mv, touch, chmod, chown, ln, export, source, exit, clear, history, wc) | `repl_pattern.go` | Triviale Shell-Commands werden nicht gezählt |
-| **Session-Budget max 3** — `patternBudget map[string]int` auf Server struct | `proxy.go` | Nach 3 Suggestions pro Thread ist Schluss |
-| **Threshold 5→8** — Pattern muss sich 8× wiederholen | `handler_repl_patterns.go` | Filtert kurzfristige Wiederholungen |
+| Measure | File | Effect |
+|---------|------|--------|
+| **Deny-list extended** (+15: git, mkdir, rm, cp, mv, touch, chmod, chown, ln, export, source, exit, clear, history, wc) | `repl_pattern.go` | Trivial shell commands are not counted |
+| **Session budget max 3** — `patternBudget map[string]int` on Server struct | `proxy.go` | After 3 suggestions per thread, no more |
+| **Threshold 5→8** — pattern must repeat 8× | `handler_repl_patterns.go` | Filters short-lived repetitions |
 
-Verifiziert: 3 Suggestions statt 40+ pro REPL-intensiver Session.
+Verified: 3 suggestions instead of 40+ per REPL-intensive session.
 
-### Response-Format (geändert 2026-04-22)
+### Response Format (changed 2026-04-22)
 
-`get_repl_pattern_suggestion` gibt ein Envelope-Format zurück:
+`get_repl_pattern_suggestion` returns an envelope format:
 ```json
 {"pattern": {"shape_hash": "...", "count": 8, ...}, "workflow": {"sequence_hash": "...", "count": 3, ...}}
 ```
-Proxy parst via Envelope-Struct mit Guard gegen leere `shape_hash`.
+Proxy parses via envelope struct with guard against empty `shape_hash`.
 
 ---
 
 ## 8b. Multi-Turn Workflow Sequence Detection (2026-04-22)
 
-Erkennt wiederkehrende Tool-Call-Sequenzen über Turns hinweg und schlägt Cap-Bundling vor.
+Detects recurring tool-call sequences across turns and suggests cap bundling.
 
-### Architektur
+### Architecture
 
-- **Eine Tabelle** `thread_sequences` (thread_id PK, project, turn_hashes JSON max 20 FIFO, updated_at)
-- **Turn-Hash** = Tool-Typ-Namen aus Assistant-Turn → consecutive Duplikate entfernen → join mit `→` → SHA256[:16]
-- **Workflow-Matching** = on-demand, kein Ticker. 3er-Subsequenzen in-memory aus allen Thread-Sequences desselben Projekts extrahieren, zählen, bei count ≥ 3 über verschiedene Threads → Suggestion
-- **Budget** = teilt `patternBudget` (max 3/Thread) mit Single-Command-Pattern-Suggestions
+- **One table** `thread_sequences` (thread_id PK, project, turn_hashes JSON max 20 FIFO, updated_at)
+- **Turn hash** = tool type names from assistant turn → remove consecutive duplicates → join with `→` → SHA256[:16]
+- **Workflow matching** = on-demand, no ticker. Extract 3-subsequences in-memory from all thread sequences of the same project, count, suggest when count ≥ 3 across different threads
+- **Budget** = shares `patternBudget` (max 3/thread) with single-command pattern suggestions
 
-### Dateien
+### Files
 
-| Datei | Inhalt |
-|-------|--------|
+| File | Contents |
+|------|----------|
 | `internal/storage/turn_sequences.go` | Schema, RecordTurnHash (FIFO upsert), GetWorkflowSuggestions |
-| `internal/storage/turn_sequences_test.go` | 7 Tests (FIFO, Append, Scope, Subsequenz, False-Positive) |
+| `internal/storage/turn_sequences_test.go` | 7 tests (FIFO, Append, Scope, Subsequence, False-Positive) |
 | `internal/proxy/turn_sequence.go` | ExtractToolTypes, ComputeTurnHash, computeTurnHashFromMessages |
-| `internal/proxy/turn_sequence_test.go` | 7 Tests (Dedup, Empty, Length, Extraction) |
+| `internal/proxy/turn_sequence_test.go` | 7 tests (Dedup, Empty, Length, Extraction) |
 
-### Datenfluss
+### Data Flow
 
-1. Proxy empfängt Request mit User-Message
-2. Extrahiert Tool-Typen aus dem letzten Assistant-Turn vor der User-Message
-3. Berechnet Turn-Hash (dedupliziert, 16-char)
-4. Sendet async per RPC `record_turn_sequence` an Daemon
-5. Daemon upsert in `thread_sequences` (FIFO Ring-Buffer, max 20)
-6. Bei `get_repl_pattern_suggestion` lädt Daemon alle Sequences des Projekts, extrahiert 3er-Subsequenzen, gibt count ≥ 3 als `workflow` im Envelope zurück
-
----
-
-## 9. Fixation Detector (Endlos-Schleifen-Erkennung)
-
-Erkennt wenn Claude in einer unproduktiven Schleife feststeckt — z.B. denselben fehlschlagenden Build wiederholt, oder dieselbe Datei immer wieder editiert.
-
-### Drei Fixation-Signale
-
-| Signal | Schwellwert | Beschreibung |
-|--------|-------------|-------------|
-| Consecutive Error Runs | ≥ 8 | Aufeinanderfolgende Tool-Calls die mit Fehler enden. |
-| Edit-Build-Error Cycles | ≥ 6 | Wiederholtes Muster: Datei editieren → Build/Test → Fehler → selbe Datei editieren. |
-| Excessive File Retries | ≥ 10 | Dieselbe Datei wird ≥10× editiert innerhalb einer Sequenz. |
-
-### Komponenten
-
-**Datei: `internal/proxy/fixation_detector.go`**
-
-| Symbol | Art | Beschreibung |
-|--------|-----|-------------|
-| `FixationResult` | struct | Felder: `IsFixated bool`, `Ratio float64`, `Signal string`, `Details string` |
-| `DetectFixation` | func | `func DetectFixation(messages []Message) FixationResult` — analysiert Message-History auf Fixation-Signale. |
-| `countConsecutiveErrors` | func | Zählt aufeinanderfolgende Fehler-Tool-Calls. |
-| `detectEditBuildCycles` | func | Erkennt Edit → Build → Error Zyklen. |
-| `countFileRetries` | func | Zählt Edits pro Datei. |
-
-### Integration in Proxy
-
-Der Fixation Detector wird in der Proxy-Pipeline aufgerufen. Bei erkannter Fixation wird ein Hint injiziert der Claude auffordert, die Strategie zu wechseln.
+1. Proxy receives request with user message
+2. Extracts tool types from the last assistant turn before the user message
+3. Computes turn hash (deduplicated, 16-char)
+4. Sends async via RPC `record_turn_sequence` to daemon
+5. Daemon upserts into `thread_sequences` (FIFO ring buffer, max 20)
+6. On `get_repl_pattern_suggestion`, daemon loads all sequences for the project, extracts 3-subsequences, returns count ≥ 3 as `workflow` in the envelope
 
 ---
 
-## 10. Existierende Capabilities (Beispiele)
+## 9. Fixation Detector (Infinite Loop Detection)
 
-Im System registrierte Capabilities (Stand 2026-04-21):
+Detects when Claude is stuck in an unproductive loop — e.g. repeatedly retrying the same failing build, or editing the same file over and over.
 
-| Capability | Beschreibung | Typ |
-|------------|-------------|-----|
-| `reddit_fetch` | Reddit-Post + Kommentare + Links abrufen | handler_repl |
-| `reddit_search` | Reddit durchsuchen, Ergebnisse klassifizieren + persistieren | handler_repl |
-| `cap_search` | Generische Suche über store()-Primitive Tabellen | handler_repl |
-| `cap_collect` | Collect-and-prep über store()-Primitive für Analyse | handler_repl |
-| `cap_save_analysis` | Analyse-Ergebnisse append-only persistieren | handler_repl |
-| `reddit_research` | Topic-Research: parallel search, fetch top posts, haiku()-Klassifizierung + Synthese | handler_repl (composite) |
-| `cap_delete` | Capability komplett entfernen (learnings DB + cap_store tables) | handler_repl |
-| `proxy_health` | Proxy/Daemon Health aus journalctl, Errors zählen, in cap_store speichern | handler_repl |
+### Three Fixation Signals
+
+| Signal | Threshold | Description |
+|--------|-----------|-------------|
+| Consecutive Error Runs | ≥ 8 | Consecutive tool calls that end with an error. |
+| Edit-Build-Error Cycles | ≥ 6 | Repeated pattern: edit file → build/test → error → edit same file. |
+| Excessive File Retries | ≥ 10 | Same file edited ≥10× within a sequence. |
+
+### Components
+
+**File: `internal/proxy/fixation_detector.go`**
+
+| Symbol | Kind | Description |
+|--------|------|-------------|
+| `FixationResult` | struct | Fields: `IsFixated bool`, `Ratio float64`, `Signal string`, `Details string` |
+| `DetectFixation` | func | `func DetectFixation(messages []Message) FixationResult` — analyzes message history for fixation signals. |
+| `countConsecutiveErrors` | func | Counts consecutive error tool calls. |
+| `detectEditBuildCycles` | func | Detects Edit → Build → Error cycles. |
+| `countFileRetries` | func | Counts edits per file. |
+
+### Proxy Integration
+
+The fixation detector is called in the proxy pipeline. When fixation is detected, a hint is injected prompting Claude to change strategy.
 
 ---
 
-## 11. Commit-History (chronologisch)
+## 10. Existing Capabilities (Examples)
+
+Capabilities registered in the system (as of 2026-04-21):
+
+| Capability | Description | Type |
+|------------|-------------|------|
+| `reddit_fetch` | Fetch Reddit post + comments + links | handler_repl |
+| `reddit_search` | Search Reddit, classify + persist results | handler_repl |
+| `cap_search` | Generic search over store() primitive tables | handler_repl |
+| `cap_collect` | Collect-and-prep over store() primitives for analysis | handler_repl |
+| `cap_save_analysis` | Persist analysis results append-only | handler_repl |
+| `reddit_research` | Topic research: parallel search, fetch top posts, haiku() classification + synthesis | handler_repl (composite) |
+| `cap_delete` | Remove capability completely (learnings DB + cap_store tables) | handler_repl |
+| `proxy_health` | Proxy/daemon health from journalctl, count errors, store in cap_store | handler_repl |
+
+---
+
+## 11. Commit History (chronological)
 
 ```
 2026-04-15  feat(models): add 'capability' category (later migrated to 'cap')
@@ -555,84 +555,84 @@ Im System registrierte Capabilities (Stand 2026-04-21):
 
 ---
 
-## 12. Implementierungsstand
+## 12. Implementation Status
 
-### Erledigt
+### Done
 
-- [x] `cap` als gültige Learning-Kategorie (v0.55 Migration von `capability`)
-- [x] `CapMeta` Struct mit `ParseCapMeta`/`ToJSON`/`HasTag` (`cap_meta.go`)
-- [x] Daemon-Handler: `handleGetCaps`, `handleSaveCap`, `handleRegisterCaps`, `handleActivateCap`, `handleDeactivateCap`, `handleGetActiveCaps`
-- [x] Cap Store: separate `capabilities.db`, CRUD, Sandboxing, Quotas, Paging
-- [x] MCP-Tool-Registrierung: `get_caps`, `save_cap`, `register_caps`, `activate_cap`, `deactivate_cap`, `cap_store`, `get_active_caps`
-- [x] `session_active_caps` Tabelle + Storage-Methods (`ActivateCap`, `DeactivateCap`, `GetSessionCaps`, `TouchCap`)
-- [x] Cap Store Storage: `CapsCreateTable`, `CapsUpsert`, `CapsQuery`, `CapsQueryPaged`, `CapsDelete`, `CapsListTables`, `OpenCapsDB`, `CloseCapsDB`, `CapsReady`, `ValidateCapName`
-- [x] Proxy: `injectCapabilitiesTurn()` + `injectCapabilitiesTurnImpl()` — Schema-Injection für aktive Caps
-- [x] Proxy: `CapsCache` — In-Memory-Cache mit `Get`/`Set`/`Invalidate` + `cachedQueryFn`
-- [x] Proxy: `renderCapabilitiesCatalog()` — Katalog im system-reminder mit Bootstrapper
-- [x] Proxy: `invalidateThreadCaches()` — koordinierte Cache-Invalidierung
-- [x] Briefing: `renderCaps()` — Caps im Session-Briefing
-- [x] Bestehende Capabilities: reddit_fetch, reddit_search, cap_search, cap_collect, cap_save_analysis, reddit_research, cap_delete, proxy_health
+- [x] `cap` as valid learning category (v0.55 migration from `capability`)
+- [x] `CapMeta` struct with `ParseCapMeta`/`ToJSON`/`HasTag` (`cap_meta.go`)
+- [x] Daemon handlers: `handleGetCaps`, `handleSaveCap`, `handleRegisterCaps`, `handleActivateCap`, `handleDeactivateCap`, `handleGetActiveCaps`
+- [x] Cap Store: separate `capabilities.db`, CRUD, sandboxing, quotas, paging
+- [x] MCP tool registration: `get_caps`, `save_cap`, `register_caps`, `activate_cap`, `deactivate_cap`, `cap_store`, `get_active_caps`
+- [x] `session_active_caps` table + storage methods (`ActivateCap`, `DeactivateCap`, `GetSessionCaps`, `TouchCap`)
+- [x] Cap Store storage: `CapsCreateTable`, `CapsUpsert`, `CapsQuery`, `CapsQueryPaged`, `CapsDelete`, `CapsListTables`, `OpenCapsDB`, `CloseCapsDB`, `CapsReady`, `ValidateCapName`
+- [x] Proxy: `injectCapabilitiesTurn()` + `injectCapabilitiesTurnImpl()` — schema injection for active caps
+- [x] Proxy: `CapsCache` — in-memory cache with `Get`/`Set`/`Invalidate` + `cachedQueryFn`
+- [x] Proxy: `renderCapabilitiesCatalog()` — catalog in system-reminder with bootstrapper
+- [x] Proxy: `invalidateThreadCaches()` — coordinated cache invalidation
+- [x] Briefing: `renderCaps()` — caps in session briefing
+- [x] Existing capabilities: reddit_fetch, reddit_search, cap_search, cap_collect, cap_save_analysis, reddit_research, cap_delete, proxy_health
 - [x] REPL Pattern Detection: `NormalizeCommand`, `isTrivialShape`, `detectReplPattern`, `formatPatternSuggestion`
 - [x] Storage: `RecordReplPattern`, `GetReplPatterns`, `DismissReplPattern`, `IsPatternDismissed`
-- [x] Daemon-Handler: `handleRecordReplPattern`, `handleGetReplPatterns`, `handleDismissReplPattern`
-- [x] MCP-Tools: `record_repl_pattern`, `get_repl_patterns`, `dismiss_repl_pattern`
-- [x] Fixation Detector: `DetectFixation` mit 3 Signalen (consecutive errors, edit-build cycles, file retries)
-- [x] Trivial-Shape-Filter für REPL Pattern Detection (letzter Commit `4708c8d`)
-- [x] REPL Pattern Noise Reduction: Deny-List +15, Budget max 3/Thread, Threshold 5→8
-- [x] REPL Pattern Suggestion Envelope-Format: `{"pattern": {...}, "workflow": {...}}`
-- [x] Multi-Turn Workflow Sequence Detection: `thread_sequences` Tabelle, Turn-Hash-Berechnung, Subsequenz-Matching (Commit `81eb6b6`)
-- [x] `auto_active` Default auf `true` geändert (`handler_caps.go`)
-- [x] Blob-Pipe (`internal/capblob/`): CLI `cap-blob-put`, cap_store-basierter Chunk-Store, verwendet von `reddit_fetch`
-- [x] CAP.md: Notes-Section entfernt aus Parser, Writer, Struct
-- [x] CAP.md: `DetectRequires()` — scannt Script nach `store(`/`web(`/`file(` und populiert `Requires []string`
-- [x] Adapter-Registry: `DefaultAdapters()`, `ProviderToGeneric()`, `GenericToProvider()`, `GenerateAdapterJS()` (`adapter.go`)
-- [x] Writer wendet `ProviderToGeneric` vor Render an — CAP.md-Dateien speichern generische Namen
-- [x] Daemon: `save_cap` normalisiert handler_repl via `ProviderToGeneric`, `activate_cap`/`register_caps` expandieren via `GenericToProvider`
-- [x] Existierende CAP.md-Dateien auf generische Namen migriert
-- [x] WriteCapToDisk Bug gefixt: meta-Objekt direkt übergeben statt Content-String re-parsen (Commit `6ed3fe5`)
-- [x] ExportAllCaps + SyncCapsFromDisk bei Daemon-Start (`daemon.go:193-194`)
-- [x] yesmem-build-tool Skill: Dependency-Caps-Doku, haiku()-Note, Composite-Example, API-Rename, Bundled-Template synced
+- [x] Daemon handlers: `handleRecordReplPattern`, `handleGetReplPatterns`, `handleDismissReplPattern`
+- [x] MCP tools: `record_repl_pattern`, `get_repl_patterns`, `dismiss_repl_pattern`
+- [x] Fixation Detector: `DetectFixation` with 3 signals (consecutive errors, edit-build cycles, file retries)
+- [x] Trivial shape filter for REPL Pattern Detection (last commit `4708c8d`)
+- [x] REPL Pattern Noise Reduction: deny-list +15, budget max 3/thread, threshold 5→8
+- [x] REPL Pattern Suggestion envelope format: `{"pattern": {...}, "workflow": {...}}`
+- [x] Multi-Turn Workflow Sequence Detection: `thread_sequences` table, turn hash computation, subsequence matching (commit `81eb6b6`)
+- [x] `auto_active` default changed to `true` (`handler_caps.go`)
+- [x] Blob pipe (`internal/capblob/`): CLI `cap-blob-put`, cap_store-based chunk store, used by `reddit_fetch`
+- [x] CAP.md: Notes section removed from parser, writer, struct
+- [x] CAP.md: `DetectRequires()` — scans script for `store(`/`web(`/`file(` and populates `Requires []string`
+- [x] Adapter registry: `DefaultAdapters()`, `ProviderToGeneric()`, `GenericToProvider()`, `GenerateAdapterJS()` (`adapter.go`)
+- [x] Writer applies `ProviderToGeneric` before render — CAP.md files store generic names
+- [x] Daemon: `save_cap` normalizes handler_repl via `ProviderToGeneric`, `activate_cap`/`register_caps` expand via `GenericToProvider`
+- [x] Existing CAP.md files migrated to generic names
+- [x] WriteCapToDisk bug fixed: meta object passed directly instead of re-parsing content string (commit `6ed3fe5`)
+- [x] ExportAllCaps + SyncCapsFromDisk on daemon start (`daemon.go:193-194`)
+- [x] yesmem-build-tool skill: dependency-caps docs, haiku() note, composite example, API rename, bundled template synced
 
-### Offen
+### Open
 
-- [ ] **Split-Brain Session-ID** (#53443) — Proxy thread_id vs. Daemon session_id divergieren über pidMap. Blockt korrekten End-to-End Flow für Subagents. **Kritischster offener Punkt.**
-- [ ] **Subagent-Injection** (#53524) — Subagents empfangen keine `<capabilities-active>` Blöcke trotz `auto_active=true` in CapMeta. Hängt vermutlich am Session-ID-Mapping.
-- [ ] **Phase 2 Idempotency** — activate_cap Over-Matching: Erkennung "bereits injiziert" ist zu breit.
-- [ ] **Eviction/TTL** — Caps bleiben bis Session-Ende aktiv. V2 nachrüsten falls Friction sichtbar.
-- [ ] **SSE-Weights LFS** (#53273) — Embedding-Tests rot wegen ASCII statt Binary (pre-existing, nicht capabilities-spezifisch).
-- [x] **cap_store→store Rename Migration** — Alle Caps verwenden bereits generisches `store()`. `GenericToProvider` konvertiert bei Aktivierung korrekt zu `mcp__yesmem__cap_store()`. Verifiziert 2026-04-22.
-- [x] **Self-Improving Cap Cycle** — Via Proxy-Instruktion in `caps_inject.go:71`: "When a capability handler errors: diagnose the root cause, fix the handler, save the corrected version via save_cap (auto-supersedes), then retry." Kein Daemon-Prozess nötig.
-- [x] **cap export/import CLI** — Export läuft bei Daemon-Start via `ExportAllCaps`. Import implizit: Caps im `~/.claude/caps/` Verzeichnis werden bei Start via `SyncCapsFromDisk` eingelesen. Kein CLI-Subcommand nötig.
-- [ ] **Workflow Suggestion Injection** — Workflow-Suggestions werden im Envelope zurückgegeben, aber der Proxy formatiert und injiziert sie noch nicht als system-reminder. Aktuell nur Daten-Sammlung aktiv.
-- [ ] **Worktree → main Merge** — Der gesamte feat+capability-memory Branch ist nicht auf main gemergt. Alle Features laufen nur über das deployed Binary aus dem Worktree.
-
----
-
-## 13. Design-Entscheidungen
-
-| Entscheidung | Begründung |
-|-------------|-----------|
-| Capabilities als Learnings (category="cap"), keine eigene Tabelle | Nutzt bestehende Supersede/Search/Embed-Infrastruktur. Kein Schema-Migration-Aufwand. |
-| Deliberative Aktivierung statt Auto-Injection | Modell wählt zuverlässiger als Embedding-Ranker. Keine False Positives. Weniger Token-Kosten. |
-| Native Tools gewinnen bei Name-Kollision | Sicherheit: native MCP-Tools dürfen nie von Capabilities verdeckt werden. |
-| Separate capabilities.db für Cap Store | Isolation von yesmem.db. Keine Schema-Pollution. Unabhängiges Locking. |
-| Blob-Pipe statt Tempfiles | Kein Read-Tool-Permission-Prompt. Kein /tmp-Cleanup. Persistenter als Tempfiles. |
-| Cap Store Sandboxing (kein DROP/ALTER) | Capabilities sollen Daten schreiben, nicht Struktur zerstören. Defensive Architektur. |
-| Bootstrapper als registerTool() im Katalog | Ermöglicht `activate_cap` als REPL-Tool ohne vorherige MCP-Round-Trip. Selbst-bootstrappend. |
-| v0.55 Rename capability→cap | Konsistenz: kürzere, einheitliche Namenspräfixe. Alle APIs nutzen `cap_*`. |
-| auto_active Default true | Neue Caps sollen standardmässig sofort verfügbar sein. Opt-out statt Opt-in — reduziert Friction beim Cap-Building-Flow. |
+- [ ] **Split-Brain Session ID** (#53443) — proxy thread_id vs. daemon session_id diverge via pidMap. Blocks correct end-to-end flow for subagents. **Most critical open issue.**
+- [ ] **Subagent Injection** (#53524) — subagents receive no `<capabilities-active>` blocks despite `auto_active=true` in CapMeta. Likely tied to session ID mapping.
+- [ ] **Phase 2 Idempotency** — activate_cap over-matching: detection of "already injected" is too broad.
+- [ ] **Eviction/TTL** — caps remain active until session end. Add in v2 if friction becomes visible.
+- [ ] **SSE Weights LFS** (#53273) — embedding tests failing due to ASCII instead of binary (pre-existing, not capabilities-specific).
+- [x] **cap_store→store rename migration** — all caps already use generic `store()`. `GenericToProvider` correctly converts to `mcp__yesmem__cap_store()` on activation. Verified 2026-04-22.
+- [x] **Self-improving cap cycle** — via proxy instruction in `caps_inject.go:71`: "When a capability handler errors: diagnose the root cause, fix the handler, save the corrected version via save_cap (auto-supersedes), then retry." No daemon process required.
+- [x] **cap export/import CLI** — export runs at daemon start via `ExportAllCaps`. Import implicit: caps in `~/.claude/caps/` directory are loaded at start via `SyncCapsFromDisk`. No CLI subcommand needed.
+- [ ] **Workflow Suggestion Injection** — workflow suggestions are returned in the envelope, but the proxy does not yet format and inject them as system-reminder. Only data collection is active.
+- [ ] **Worktree → main merge** — the entire feat+capability-memory branch is not merged to main. All features run only via the deployed binary from the worktree.
 
 ---
 
-## 14. CAP.md — File-basierte Cap-Definitionen
+## 13. Design Decisions
 
-### Konzept
+| Decision | Rationale |
+|----------|-----------|
+| Capabilities as learnings (category="cap"), no separate table | Reuses existing supersede/search/embed infrastructure. No schema migration overhead. |
+| Deliberative activation instead of auto-injection | Model selects more reliably than an embedding ranker. No false positives. Lower token cost. |
+| Native tools win on name collision | Safety: native MCP tools must never be shadowed by capabilities. |
+| Separate capabilities.db for cap store | Isolation from yesmem.db. No schema pollution. Independent locking. |
+| Blob pipe instead of temp files | No Read tool permission prompt. No /tmp cleanup. More persistent than temp files. |
+| Cap store sandboxing (no DROP/ALTER) | Capabilities should write data, not destroy structure. Defensive architecture. |
+| Bootstrapper as registerTool() in catalog | Enables `activate_cap` as REPL tool without a prior MCP round-trip. Self-bootstrapping. |
+| v0.55 rename capability→cap | Consistency: shorter, uniform name prefixes. All APIs use `cap_*`. |
+| auto_active default true | New caps should be immediately available by default. Opt-out rather than opt-in — reduces friction in the cap-building flow. |
 
-Jede Capability hat eine `CAP.md`-Datei als menschenlesbares, editierbares Source-of-Truth. Die Datei beschreibt was der Cap tut, wie er es tut (Script), und welche Daten er speichert (Database).
+---
 
-SQLite bleibt Runtime-Store — Files werden bei Daemon-Start in die DB gesynct.
+## 14. CAP.md — File-Based Cap Definitions
 
-### Dateiformat
+### Concept
+
+Each capability has a `CAP.md` file as a human-readable, editable source of truth. The file describes what the cap does, how it does it (script), and what data it stores (database).
+
+SQLite remains the runtime store — files are synced into the DB at daemon start.
+
+### File Format
 
 ```markdown
 ---
@@ -647,7 +647,7 @@ auto_active: true
 ---
 
 ## Purpose
-Prose: was der Cap tut.
+Prose: what the cap does.
 
 ## Script
 ```javascript
@@ -662,13 +662,13 @@ CREATE TABLE IF NOT EXISTS listings (
 );
 ```
 
-**Frontmatter:** `name` und `description` sind Pflichtfelder. `runtime` wird aus der Script-Sprache abgeleitet (`javascript` → repl, `bash` → bash). `schema` wird aus der Funktionssignatur abgeleitet und nicht im Frontmatter gespeichert.
+**Frontmatter:** `name` and `description` are required fields. `runtime` is derived from the script language (`javascript` → repl, `bash` → bash). `schema` is derived from the function signature and not stored in the frontmatter.
 
-**Sections:** Reihenfolge ist fix: Purpose → Script → Database. Database ist optional (Section darf leer sein).
+**Sections:** Order is fixed: Purpose → Script → Database. Database is optional (section may be empty).
 
-**SQL-Validation:** Nur `CREATE TABLE/INDEX/VIEW/TRIGGER IF NOT EXISTS` erlaubt. `DROP`, `ALTER`, `INSERT`, `UPDATE`, `DELETE` werden rejected.
+**SQL validation:** Only `CREATE TABLE/INDEX/VIEW/TRIGGER IF NOT EXISTS` allowed. `DROP`, `ALTER`, `INSERT`, `UPDATE`, `DELETE` are rejected.
 
-### Verzeichnisstruktur
+### Directory Structure
 
 ```
 ~/.claude/caps/
@@ -682,52 +682,52 @@ CREATE TABLE IF NOT EXISTS listings (
     └── CAP.md
 ```
 
-User-Scope: `~/.claude/caps/<name>/CAP.md`
-Project-Scope: `<project>/.claude/caps/<name>/CAP.md` (geplant)
+User scope: `~/.claude/caps/<name>/CAP.md`
+Project scope: `<project>/.claude/caps/<name>/CAP.md` (planned)
 
-### Daemon-Integration
+### Daemon Integration
 
-Bei jedem Daemon-Start laufen zwei Phasen:
+Two phases run on every daemon start:
 
-1. **File → DB** (`SyncCapsFromDisk`): Alle CAP.md Files werden gelesen, geparst, und via `save_cap` in die DB upserted.
-2. **DB → File** (`ExportAllCaps`): Alle DB-Caps ohne CAP.md File werden als Files exportiert. DDL wird aus `caps.db` via `sqlite_master` gelesen.
+1. **File → DB** (`SyncCapsFromDisk`): All CAP.md files are read, parsed, and upserted into the DB via `save_cap`.
+2. **DB → File** (`ExportAllCaps`): All DB caps without a CAP.md file are exported as files. DDL is read from `caps.db` via `sqlite_master`.
 
-Bei jedem `save_cap` MCP-Call: nach DB-Upsert wird die CAP.md automatisch geschrieben/aktualisiert.
+On every `save_cap` MCP call: after DB upsert, the CAP.md is automatically written/updated.
 
-### Dev-Workflow
+### Dev Workflow
 
-1. `~/.claude/caps/my_cap/CAP.md` anlegen oder editieren
-2. Daemon neu starten (`make deploy` oder `systemctl restart yesmem-daemon`)
-3. Änderung ist sofort in der DB und über MCP-Tools verfügbar
+1. Create or edit `~/.claude/caps/my_cap/CAP.md`
+2. Restart daemon (`make deploy` or `systemctl restart yesmem-daemon`)
+3. Change is immediately in the DB and available via MCP tools
 
-### Package-Struktur
+### Package Structure
 
-| File | Funktion |
+| File | Function |
 |------|----------|
-| `internal/capfile/parse.go` | Parser: YAML-Frontmatter + 3 Sections (Purpose, Script, Database), Schema-Derivation aus JS-Signatur |
-| `internal/capfile/write.go` | Writer: Canonical CAP.md, SQL-Formatierung, JS-Formatter, Atomic Write. Wendet `ProviderToGeneric` auf Script an |
-| `internal/capfile/scanner.go` | Scanner: Directory-Discovery, `ScanAll()` über User + Project Dirs |
-| `internal/capfile/adapter.go` | Adapter-Registry: `DefaultAdapters()`, `ProviderToGeneric()`, `GenericToProvider()`, `GenerateAdapterJS()` |
+| `internal/capfile/parse.go` | Parser: YAML frontmatter + 3 sections (Purpose, Script, Database), schema derivation from JS signature |
+| `internal/capfile/write.go` | Writer: canonical CAP.md, SQL formatting, JS formatter, atomic write. Applies `ProviderToGeneric` to script |
+| `internal/capfile/scanner.go` | Scanner: directory discovery, `ScanAll()` over user + project dirs |
+| `internal/capfile/adapter.go` | Adapter registry: `DefaultAdapters()`, `ProviderToGeneric()`, `GenericToProvider()`, `GenerateAdapterJS()` |
 | `internal/daemon/cap_sync.go` | Integration: `CapFileToParams()`, `CapMetaToCapFile()`, `WriteCapToDisk()`, `SyncCapsFromDisk()`, `ExportAllCaps()` |
-| `internal/storage/cap_store.go` | `GetCapTableDDL()`: DDL aus `sqlite_master` für Database-Section |
-| `docs/CAPS-md-spec.md` | Format-Spezifikation |
+| `internal/storage/cap_store.go` | `GetCapTableDDL()`: DDL from `sqlite_master` for Database section |
+| `docs/CAPS-md-spec.md` | Format specification |
 
-### Adapter-Layer (Provider-Abstraktion)
+### Adapter Layer (Provider Abstraction)
 
-CAP.md-Dateien und die DB speichern **generische** Funktionsnamen für Portabilität. Bei der Aktivierung werden diese in **provider-spezifische** Implementierungen übersetzt.
+CAP.md files and the DB store **generic** function names for portability. On activation, these are translated into **provider-specific** implementations.
 
-Es gibt **3 Adapter-Primitives**, jeweils action-basiert:
+There are **3 adapter primitives**, each action-based:
 
 **Direct Mapping** (`AdapterConfig.Direct`):
 
-| Generisch | Provider (YesMem MCP) | Actions |
-|-----------|----------------------|---------|
+| Generic | Provider (YesMem MCP) | Actions |
+|---------|-----------------------|---------|
 | `store()` | `mcp__yesmem__cap_store()` | `create_table`, `upsert`, `query`, `delete`, `list_tables`, `blob_put`, `blob_get` |
 
 **Dispatcher Mapping** (`AdapterConfig.Dispatchers`):
 
-| Generisch | Action | Provider-Implementierung |
-|-----------|--------|------------------------|
+| Generic | Action | Provider implementation |
+|---------|--------|------------------------|
 | `web()` | `fetch` | `sh('curl ...')` |
 | `web()` | `search` | `WebSearch()` |
 | `file()` | `read` | `cat()` |
@@ -736,38 +736,38 @@ Es gibt **3 Adapter-Primitives**, jeweils action-basiert:
 
 **Roundtrip:**
 
-1. **save_cap** (User/Daemon → DB): `ProviderToGeneric()` normalisiert handler_repl (nur Direct-Mappings: `mcp__yesmem__cap_store(` → `store(`)
-2. **Writer** (DB → CAP.md): `ProviderToGeneric()` normalisiert Script vor Render
-3. **activate_cap / register_caps** (DB → Claude): `GenericToProvider()` expandiert Direct-Mappings zurück
-4. **GenerateAdapterJS()**: Erzeugt Direct-Shims (`globalThis.store = async(a) => mcp__yesmem__cap_store(a)`) + Dispatcher-Shims (`globalThis.web = async({action,...p}) => { const d = {fetch: ..., search: ...}; return d[action](p); }`)
+1. **save_cap** (user/daemon → DB): `ProviderToGeneric()` normalizes handler_repl (direct mappings only: `mcp__yesmem__cap_store(` → `store(`)
+2. **Writer** (DB → CAP.md): `ProviderToGeneric()` normalizes script before render
+3. **activate_cap / register_caps** (DB → Claude): `GenericToProvider()` expands direct mappings back
+4. **GenerateAdapterJS()**: generates direct shims (`globalThis.store = async(a) => mcp__yesmem__cap_store(a)`) + dispatcher shims (`globalThis.web = async({action,...p}) => { const d = {fetch: ..., search: ...}; return d[action](p); }`)
 
-**Design-Prinzipien:**
-- `store()` ist 1:1 (String-Replace, wie bisher)
-- `web()` und `file()` sind Dispatcher — das Cap schreibt `web({action:'fetch', url:'...'})`, der JS-Shim dispatcht zur Laufzeit
-- Runtime-Builtins (`sh()`, `haiku()`, `log`, `JSON`) sind KEINE Adapter — die sind immer verfügbar
-- Wer CC-spezifische Tools direkt will (`WebFetch`, `Read`), schreibt die hin — nur nicht portabel
+**Design principles:**
+- `store()` is 1:1 (string replace, as before)
+- `web()` and `file()` are dispatchers — the cap writes `web({action:'fetch', url:'...'})`, the JS shim dispatches at runtime
+- Runtime builtins (`sh()`, `haiku()`, `log`, `JSON`) are NOT adapters — they are always available
+- Whoever wants CC-specific tools directly (`WebFetch`, `Read`) can write them in — just not portable
 
-**Warum:** Ein Cap, der `store()` nutzt, funktioniert unverändert wenn der MCP-Server umbenannt wird. Nur `DefaultAdapters()` muss angepasst werden. `web()`/`file()`-Dispatcher können auf andere Backends zeigen (z.B. `playwright` statt `curl`) ohne das Cap-Script zu ändern.
+**Why:** A cap that uses `store()` works unchanged if the MCP server is renamed. Only `DefaultAdapters()` needs to be updated. `web()`/`file()` dispatchers can point to other backends (e.g. `playwright` instead of `curl`) without changing the cap script.
 
 ### Gotchas
 
-- **YAML-Description quoten**: Descriptions mit `:`, Backticks, oder Sonderzeichen müssen in `%q`-Quotes stehen, sonst YAML-Parse-Error.
-- **Schema nicht im Frontmatter**: Wird aus der JS-Funktionssignatur abgeleitet. Explizites Schema nur wenn Signatur-Derivation nicht reicht.
-- **SQL-Validation eigene Allowlist**: `storage.blockedSQLPattern` blockt ALLES inkl. CREATE — die Database-Section hat eine eigene Validation (`dangerousSQLPattern` + `safeSQLPattern` in `capfile/parse.go`).
-- **formatJS nur für Einzeiler**: Mehrzeilige Scripts werden nicht reformatiert — der naive Formatter zerstört Destructuring-Parameter.
-- **Reihenfolge beim Start**: Erst `SyncCapsFromDisk` (File→DB), DANN `ExportAllCaps` (DB→File). Umgekehrt würden hand-editierte Files überschrieben.
+- **Quote YAML descriptions**: Descriptions containing `:`, backticks, or special characters must be in `%q` quotes, otherwise YAML parse error.
+- **Schema not in frontmatter**: Derived from the JS function signature. Explicit schema only when signature derivation is insufficient.
+- **SQL validation has its own allowlist**: `storage.blockedSQLPattern` blocks EVERYTHING including CREATE — the Database section has its own validation (`dangerousSQLPattern` + `safeSQLPattern` in `capfile/parse.go`).
+- **formatJS for single-liners only**: Multi-line scripts are not reformatted — the naive formatter destroys destructuring parameters.
+- **Startup order**: `SyncCapsFromDisk` (file→DB) first, THEN `ExportAllCaps` (DB→file). Reversed order would overwrite hand-edited files.
 
 ---
 
-## 15. Quelldokumente
+## 15. Source Documents
 
-| Dokument | Pfad |
+| Document | Path |
 |----------|------|
-| Original-Spec | `docs/superpowers/specs/2026-04-15-capability-memory-design.md` |
-| Phase 1+2 Plan | `yesdocs/superpowers/plans/2026-04-15-capability-memory-phase-2.md` |
-| Lazy-Activation Plan | `yesdocs/plans/2026-04-17-capability-lazy-activation.md` |
-| Blob-Pipe Plan | `yesdocs/plans/2026-04-18-cap-blob-pipe.md` |
-| Phase 3 Cap Store Plan | `.claude/plans/phase3-cap-store.md` |
+| Original spec | `docs/superpowers/specs/2026-04-15-capability-memory-design.md` |
+| Phase 1+2 plan | `yesdocs/superpowers/plans/2026-04-15-capability-memory-phase-2.md` |
+| Lazy-activation plan | `yesdocs/plans/2026-04-17-capability-lazy-activation.md` |
+| Blob-pipe plan | `yesdocs/plans/2026-04-18-cap-blob-pipe.md` |
+| Phase 3 cap store plan | `.claude/plans/phase3-cap-store.md` |
 | Cap Store Analysis | `docs/cap-store-analysis.md` |
 | Cap Store Examples | `docs/cap-store-analysis-examples.md` |
 
