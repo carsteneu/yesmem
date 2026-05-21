@@ -82,7 +82,7 @@ Model ID: {{.ModelID}}`)
 	if !strings.Contains(sgot, "Model ID: deepseek-v4-pro") {
 		t.Errorf("missing ModelID: %s", sgot)
 	}
-	if !strings.Contains(sgot, "Platform: linux") {
+	if !strings.Contains(sgot, "Platform: "+runtime.GOOS) {
 		t.Errorf("missing Platform: %s", sgot)
 	}
 	if !strings.Contains(sgot, "Git:") {
