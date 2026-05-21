@@ -56,6 +56,14 @@ That's where you start. Not from zero. From where it matters.
 
 - **Parallel work:** one agent refactors the auth module, another writes tests, a third updates the docs. They share state, talk to each other, and you watch them work. Heartbeat, crash recovery, cascade shutdown built in.
 
+- **Your system prompt, your rules:** YesMem replaces the default system prompt with SYSTEM.md — a self-constitution template in first-person. The model knows it has memory, knows how to search it, knows its own capabilities. Applied across all pipelines (Claude Code, OpenCode, Codex). Claude Code's own `--system-prompt` flag is officially supported by Anthropic — the proxy does the same via middleware.
+
+- **Self-configuring provider routing:** Add any OpenAI-compatible provider to opencode. YesMem reads `models.json`, `opencode.json`, and `auth.json`, discovers active providers automatically, patches base URLs, and routes models. Works out of the box. Toggle off with `auto_configure_providers: false`.
+
+- **OpenCode integration:** First-class plugin with code-navigation hooks (blocks grep/find when the code graph has better answers), rule_guard (every tool call evaluated against RULES.md via DeepSeek), and automatic session identification. Install happens during `yesmem setup` — zero manual steps.
+
+- **Policy engine:** RULES.md with 30+ rules and a skill catalog with activation triggers. Memory search before answers. Code tools before shell. TDD before implementation. DeepSeek evaluates every tool call, BLOCK/SUGGEST decisions enforced before execution. Self-correcting — rules rewrite themselves based on what works.
+
 - **Self-cleaning:** Claude gets stuck in a loop, suggesting the same broken approach three times. YesMem detects it, quarantines the learnings from that session. The knowledge base maintains itself.
 
 ### Foundations
@@ -235,12 +243,13 @@ See **[docs/sawtooth-cost-analysis.md](docs/sawtooth-cost-analysis.md)** and **[
 
 | Provider | Status | How |
 |----------|--------|-----|
-| **Anthropic API** | Production | Direct HTTP (default) |
-| **Claude CLI** | Production | Via `claude` binary (Pro/Max/Team — no API key needed) |
-| **OpenAI** | Planned | Responses API (GPT-5.x) |
-| **OpenAI-compatible** | Planned | Any compatible endpoint |
+| **Anthropic** | Production | Direct HTTP (API key) + Claude CLI (subscription) |
+| **DeepSeek** | Production | Auto-discovered via opencode (4 models) |
+| **OpenAI** | Production | Auto-discovered via opencode (52 models) |
+| **Mistral** | Production | Auto-discovered via opencode (28 models) |
+| **OpenAI-compatible** | Production | Auto-discovered — any provider registered in opencode |
 
-The proxy supports Anthropic Messages API natively. OpenAI Responses API support (Codex CLI compatibility) is in development.
+The proxy routes OpenAI-format requests to their respective upstream APIs automatically. Add a provider to opencode, restart the proxy, done. 84 models across 3 providers auto-discovered and routed with zero manual config.
 
 ### API Key vs. Subscription
 
