@@ -170,6 +170,7 @@ func (e *Extractor) ExtractAndStore(sessionID, project string, msgs []models.Mes
 			continue
 		}
 		learnings[i].Project = project
+		learnings[i].CanonicalProject = models.CanonicalProject(project)
 		// Parse deadline trigger into ExpiresAt
 		if expires := ParseDeadlineExpiry(learnings[i].TriggerRule); expires != nil {
 			learnings[i].ExpiresAt = expires
@@ -267,7 +268,7 @@ func (e *Extractor) runEvolution(store *storage.Store, onSupersede func(int64), 
 
 	for _, cat := range categories {
 		if scope == nil {
-			learnings, err := store.GetActiveLearnings(cat, "", "", "")
+			learnings, err := store.GetActiveLearnings(cat, "", "", "", 0)
 			if err != nil {
 				continue
 			}
@@ -282,7 +283,7 @@ func (e *Extractor) runEvolution(store *storage.Store, onSupersede func(int64), 
 			if _, ok := categories[cat]; !ok {
 				continue
 			}
-			learnings, err := store.GetActiveLearnings(cat, project, "", "")
+			learnings, err := store.GetActiveLearnings(cat, project, "", "", 0)
 			if err != nil {
 				continue
 			}
@@ -486,7 +487,7 @@ evolutionDone:
 				continue
 			}
 		}
-		all, err := store.GetActiveLearnings(cat, "", "", "")
+		all, err := store.GetActiveLearnings(cat, "", "", "", 0)
 		if err != nil || len(all) < 2 {
 			continue
 		}
@@ -644,19 +645,66 @@ func (e *Extractor) applyEvolutionResponse(response, label string, store *storag
 func stripMarkdownFence(s string) string {
 	s = strings.TrimSpace(s)
 	if strings.HasPrefix(s, "```") {
-		if idx := strings.Index(s, "\n"); idx >= 0 {
+		if idx := strings.IndexByte(s, '\n'); idx >= 0 {
 			s = s[idx+1:]
-		}
-		if strings.HasSuffix(s, "```") {
-			s = s[:len(s)-3]
+		} else {
+			s = s[3:]
 		}
 		s = strings.TrimSpace(s)
+		if strings.HasSuffix(s, "```") {
+			s = strings.TrimSpace(s[:len(s)-3])
+		}
 	}
 	return s
 }
 
+// extractJSON extracts a JSON array or object from mixed text.
+// Handles code fences, natural language wrapping, and trailing text.
+func extractJSON(s string) string {
+	s = stripMarkdownFence(s)
+
+	// Try to find JSON object {...} first — most extraction responses are objects.
+	if start := strings.IndexByte(s, '{'); start >= 0 {
+		end := findMatchingBracket(s, start)
+		if end > start {
+			return strings.TrimSpace(s[start : end+1])
+		}
+	}
+
+	// Try to find JSON array [...]
+	if start := strings.IndexByte(s, '['); start >= 0 {
+		end := findMatchingBracket(s, start)
+		if end > start {
+			return strings.TrimSpace(s[start : end+1])
+		}
+	}
+
+	return s
+}
+
+func findMatchingBracket(s string, start int) int {
+	open := s[start]
+	closeB := byte('}')
+	if open == '[' {
+		closeB = ']'
+	}
+
+	depth := 0
+	for i := start; i < len(s); i++ {
+		if s[i] == open {
+			depth++
+		} else if s[i] == closeB {
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
 func parseExtractionResponse(response, sessionID, model string) ([]models.Learning, error) {
-	jsonStr := stripMarkdownFence(response)
+	jsonStr := extractJSON(response)
 
 	var result extractionResult
 	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
@@ -759,6 +807,7 @@ func addLearningsV2(items []learningItem, category, sessionID, model, domain str
 			Keywords:           item.Keywords,
 			AnticipatedQueries: item.AnticipatedQueries,
 			Project:            project,
+			CanonicalProject:   models.CanonicalProject(project),
 			Confidence:         1.0,
 			CreatedAt:          ts,
 			ModelUsed:          model,
@@ -773,39 +822,6 @@ func addLearningsV2(items []learningItem, category, sessionID, model, domain str
 		learnings = append(learnings, l)
 	}
 	return learnings
-}
-
-// extractJSON tries to find a JSON object in the response text.
-func extractJSON(s string) string {
-	// Find first { and last }
-	start := -1
-	for i, c := range s {
-		if c == '{' {
-			start = i
-			break
-		}
-	}
-	if start < 0 {
-		return s
-	}
-
-	depth := 0
-	end := -1
-	for i := start; i < len(s); i++ {
-		if s[i] == '{' {
-			depth++
-		} else if s[i] == '}' {
-			depth--
-			if depth == 0 {
-				end = i + 1
-				break
-			}
-		}
-	}
-	if end < 0 {
-		return s[start:]
-	}
-	return s[start:end]
 }
 
 // TwoPassExtractor uses two LLM passes: summarize (Haiku) then extract (Sonnet).
@@ -911,6 +927,7 @@ func (e *TwoPassExtractor) ExtractAndStore(sessionID, project string, msgs []mod
 			continue
 		}
 		learnings[i].Project = project
+		learnings[i].CanonicalProject = models.CanonicalProject(project)
 		// Parse deadline trigger into ExpiresAt
 		if expires := ParseDeadlineExpiry(learnings[i].TriggerRule); expires != nil {
 			learnings[i].ExpiresAt = expires

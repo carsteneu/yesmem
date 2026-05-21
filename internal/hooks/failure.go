@@ -115,7 +115,7 @@ func learnFromAnyFailure(dataDir string, hook *FailureInput, toolContext string)
 	}
 	defer store.Close()
 
-	existing, _ := store.GetActiveLearnings("gotcha", "", "", "")
+	existing, _ := store.GetActiveLearnings("gotcha", "", "", "", 0)
 	newTokens := textutil.Tokenize(content)
 
 	for _, g := range existing {

@@ -138,6 +138,14 @@ func (h *Handler) handleForkExtractLearnings(params map[string]any) Response {
 		h.store.InsertForkCoverage(sessionID, sourceMsgFrom, sourceMsgTo, forkIdx)
 	}
 
+	// Mark session as extracted so post-indexing extraction skips it.
+	// The fork handled real-time extraction with full context and higher-quality metadata.
+	if saved > 0 && sessionID != "" {
+		if err := h.store.MarkSessionExtracted(sessionID); err != nil {
+			log.Printf("fork extract: mark session extracted: %v", err)
+		}
+	}
+
 	return jsonResponse(map[string]any{"saved": saved, "skipped": skipped})
 }
 

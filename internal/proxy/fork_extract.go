@@ -3,6 +3,7 @@ package proxy
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/carsteneu/yesmem/internal/briefing"
@@ -33,18 +34,103 @@ type ExtractedLearning struct {
 
 // LearningEvaluation is a verdict on an injected learning.
 type LearningEvaluation struct {
-	LearningID  int64   `json:"learning_id"`
+	LearningID  int64   `json:"-"`
 	Verdict     string  `json:"verdict"`
 	Reason      string  `json:"reason"`
 	Action      string  `json:"action"`
 	ImpactScore float64 `json:"impact_score"`
 }
 
+// rawLearningEvaluation mirrors LearningEvaluation but with json.Number
+// for int fields — DeepSeek sometimes outputs strings for numeric fields.
+type rawLearningEvaluation struct {
+	LearningID  json.Number `json:"learning_id"`
+	Verdict     string      `json:"verdict"`
+	Reason      string      `json:"reason"`
+	Action      string      `json:"action"`
+	ImpactScore float64     `json:"impact_score"`
+}
+
+func (e *LearningEvaluation) UnmarshalJSON(data []byte) error {
+	var raw rawLearningEvaluation
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	id, err := parseFlexInt64(raw.LearningID)
+	if err != nil {
+		return fmt.Errorf("learning_id: %w", err)
+	}
+	e.LearningID = id
+	e.Verdict = raw.Verdict
+	e.Reason = raw.Reason
+	e.Action = raw.Action
+	e.ImpactScore = raw.ImpactScore
+	return nil
+}
+
+func (e LearningEvaluation) MarshalJSON() ([]byte, error) {
+	return json.Marshal(map[string]any{
+		"learning_id":  e.LearningID,
+		"verdict":      e.Verdict,
+		"reason":       e.Reason,
+		"action":       e.Action,
+		"impact_score": e.ImpactScore,
+	})
+}
+
 // ContradictionDetected represents a conflict between two injected learnings.
 type ContradictionDetected struct {
-	LearningA   int64  `json:"learning_a"`
-	LearningB   int64  `json:"learning_b"`
+	LearningA   int64  `json:"-"`
+	LearningB   int64  `json:"-"`
 	Description string `json:"description"`
+}
+
+type rawContradiction struct {
+	LearningA   json.Number `json:"learning_a"`
+	LearningB   json.Number `json:"learning_b"`
+	Description string      `json:"description"`
+}
+
+func (c *ContradictionDetected) UnmarshalJSON(data []byte) error {
+	var raw rawContradiction
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	a, err := parseFlexInt64(raw.LearningA)
+	if err != nil {
+		return fmt.Errorf("learning_a: %w", err)
+	}
+	b, err := parseFlexInt64(raw.LearningB)
+	if err != nil {
+		return fmt.Errorf("learning_b: %w", err)
+	}
+	c.LearningA = a
+	c.LearningB = b
+	c.Description = raw.Description
+	return nil
+}
+
+func (c ContradictionDetected) MarshalJSON() ([]byte, error) {
+	return json.Marshal(map[string]any{
+		"learning_a":  c.LearningA,
+		"learning_b":  c.LearningB,
+		"description": c.Description,
+	})
+}
+
+// parseFlexInt64 converts a json.Number (which can represent a JSON string
+// or JSON number) to int64. Handles DeepSeek outputting numeric fields as
+// strings.
+func parseFlexInt64(n json.Number) (int64, error) {
+	if n == "" {
+		return 0, fmt.Errorf("empty value")
+	}
+	i, err := n.Int64()
+	if err != nil {
+		// json.Number.Int64() fails on strings like "123" — try strconv
+		return strconv.ParseInt(n.String(), 10, 64)
+	}
+	return i, nil
 }
 
 // extractAndEvaluatePrompt generates the fork prompt for combined extraction + evaluation.
@@ -123,19 +209,59 @@ func extractAndEvaluatePrompt(ctx ForkContext) string {
 	sb.WriteString("emit cap_idea entries for one-off exploration; only for workflows you'd expect\n")
 	sb.WriteString("to recur.\n\n")
 
-	sb.WriteString("Antwortformat — NUR valides JSON, kein anderer Text:\n")
-	sb.WriteString(`{"learnings": [{"content": "...", "category": "...", "task_type": "task|idea|blocked|cap_idea", "entities": ["..."], "actions": ["..."], "keywords": ["..."], "anticipated_queries": ["Suchphrase 1", "Suchphrase 2"], "context": "Warum relevant", "status": "new|confirmed|revised|invalidated", "importance": 3, "emotional_intensity": 0.2}], "evaluations": [{"learning_id": N, "verdict": "...", "reason": "...", "action": "...", "impact_score": 0.0}], "contradictions": [{"learning_a": N, "learning_b": M, "description": "..."}], "session_flavor": "kurzer Satz"}`)
+	sb.WriteString("Response format — ONLY valid JSON, no other text:\n")
+	sb.WriteString(`{"learnings": [{"content": "...", "category": "...", "task_type": "task|idea|blocked|cap_idea", "entities": ["..."], "actions": ["..."], "keywords": ["..."], "anticipated_queries": ["search phrase 1", "search phrase 2"], "context": "why relevant", "status": "new|confirmed|revised|invalidated", "importance": 3, "emotional_intensity": 0.2}], "evaluations": [{"learning_id": N, "verdict": "...", "reason": "...", "action": "...", "impact_score": 0.0}], "contradictions": [{"learning_a": N, "learning_b": M, "description": "..."}], "session_flavor": "summarize what happened in one line"}`)
 
 	return sb.String()
 }
 
 // parseExtractionJSON parses the JSON response from the fork.
+// DeepSeek without response_format sometimes outputs text before/after
+// the JSON object or adds trailing braces. This parser finds the first
+// balanced JSON object in the content (handles nested {}).
 func parseExtractionJSON(content string) (*ExtractionResult, error) {
 	start := strings.Index(content, "{")
-	end := strings.LastIndex(content, "}")
-	if start < 0 || end < start {
+	if start < 0 {
 		return nil, fmt.Errorf("no JSON found in response")
 	}
+
+	// Find the balanced closing brace using depth counting
+	depth := 0
+	inString := false
+	escaped := false
+	end := -1
+	for i := start; i < len(content); i++ {
+		b := content[i]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if b == '\\' {
+				escaped = true
+			} else if b == '"' {
+				inString = false
+			}
+			continue
+		}
+		if b == '"' {
+			inString = true
+			continue
+		}
+		if b == '{' {
+			depth++
+		} else if b == '}' {
+			depth--
+			if depth == 0 {
+				end = i
+				break
+			}
+		}
+	}
+	if end < 0 {
+		return nil, fmt.Errorf("unbalanced JSON in response")
+	}
+
 	jsonStr := content[start : end+1]
 
 	var result ExtractionResult
@@ -151,15 +277,23 @@ func NewExtractAndEvaluateConfig(model string) ForkConfig {
 		Name:      "extract_and_evaluate",
 		Model:     model,
 		MaxTokens: 3072,
+		// APIFormat is auto-detected from the actual model at runtime in fireForkedAgents.
+		// If the fork model is empty, it inherits from the main request — and the format
+		// is inferred from the inherited model name (deepseek → openai, claude → anthropic).
 		Gate: func(ctx ForkContext) bool {
 			return ctx.CacheReadTokens > 0
 		},
 		Prompt: extractAndEvaluatePrompt,
-		ParseResult: func(resp ForkResponse, s *Server) error {
-			result, err := parseExtractionJSON(resp.Content)
-			if err != nil {
-				return err
+	ParseResult: func(resp ForkResponse, s *Server) error {
+		result, err := parseExtractionJSON(resp.Content)
+		if err != nil {
+			preview := resp.Content
+			if len(preview) > 300 {
+				preview = preview[:300]
 			}
+			s.logger.Printf("[fork] extract_and_evaluate: parse error (%v), response preview: %s", err, preview)
+			return err
+		}
 
 			debugFork := s.cfg.ForkedAgentsDebug
 

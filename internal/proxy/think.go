@@ -47,13 +47,13 @@ func (s *Server) buildThinkReminder(threadID string, sessionID string, nonClaude
 
 	reminder := "<system-reminder>\n"
 	if nonClaude {
-		reminder += "Before acting, decide whether prior memory is likely to matter; if yes, do one focused lookup with hybrid_search(), and if that returns nothing useful but the question still depends on past context, follow with deep_search(); otherwise proceed directly.\n"
+		reminder += "MANDATORY! YOU MUST hybrid_search() before relying on memory. " + hints.NextTimestampHint() + "\n"
 	} else {
 		reminder += "Before acting — do you already know something about this? Use hybrid_search() to check your memory first.\n"
+		reminder += "Do not repeat memory lookups for the same question unless a new concrete hypothesis appears.\n"
+		reminder += "For direct status, timing, or \"what just happened\" questions, prefer visible timestamps and current state before memory lookup.\n"
+		reminder += "Conversation context supplements but does not replace memory — search when acting on assumptions about external behavior (settings, APIs, config, conventions). Skip lookups only for pure status questions about the current conversation.\n"
 	}
-	reminder += "Do not repeat memory lookups for the same question unless a new concrete hypothesis appears.\n"
-	reminder += "For direct status, timing, or \"what just happened\" questions, prefer visible timestamps and current state before memory lookup.\n"
-	reminder += "Conversation context supplements but does not replace memory — search when acting on assumptions about external behavior (settings, APIs, config, conventions). Skip lookups only for pure status questions about the current conversation.\n"
 	reminder += hints.NextTimestampHint()
 
 	if count%10 == 0 {

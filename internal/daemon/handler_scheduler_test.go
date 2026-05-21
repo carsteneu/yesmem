@@ -369,3 +369,66 @@ func TestScheduleCreate_EmptyCronAndZeroInterval(t *testing.T) {
 		t.Fatal("expected error for missing cron and interval_seconds, got success")
 	}
 }
+
+func TestStoreBashRun_SkipsIdleRuns(t *testing.T) {
+	s, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	h := &Handler{store: s}
+	job := &ScheduledJob{ID: "test-idle", CapName: "test"}
+
+	h.storeBashRun(job, "echo hi", "", nil, 0)
+
+	runs, err := s.GetBashJobRuns(job.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("expected 0 runs for idle run, got %d", len(runs))
+	}
+}
+
+func TestStoreBashRun_StillStoresErrors(t *testing.T) {
+	s, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	h := &Handler{store: s}
+	job := &ScheduledJob{ID: "test-err", CapName: "test"}
+
+	h.storeBashRun(job, "failing cmd", "", errors.New("boom"), 1)
+
+	runs, err := s.GetBashJobRuns(job.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) == 0 {
+		t.Fatal("expected error run to be stored, got 0")
+	}
+	if runs[0].Status != "error" {
+		t.Fatalf("expected status=error, got %q", runs[0].Status)
+	}
+}
+
+func TestStoreBashRun_StillStoresRealOutput(t *testing.T) {
+	s, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	h := &Handler{store: s}
+	job := &ScheduledJob{ID: "test-real", CapName: "test"}
+
+	h.storeBashRun(job, "echo done", "Combined fire: polls=5 stored=2 replies=1 fails=0", nil, 0)
+
+	runs, err := s.GetBashJobRuns(job.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) == 0 {
+		t.Fatal("expected real-output run to be stored, got 0")
+	}
+}

@@ -224,9 +224,9 @@ func (g *GatedClient) recordResult(err error) {
 		g.gate.RecordSuccess()
 		return
 	}
-	// Only count actual API errors, not budget/gate errors
+	// Count API errors (HTTP) + CLI timeouts as health signals
 	errStr := err.Error()
-	if strings.Contains(errStr, "api error:") || strings.Contains(errStr, "api call:") {
+	if strings.Contains(errStr, "api error:") || strings.Contains(errStr, "api call:") || strings.Contains(errStr, "timeout") {
 		g.gate.RecordError(err)
 	}
 }

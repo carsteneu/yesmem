@@ -188,7 +188,7 @@ func TestFormatRecovery_Clear(t *testing.T) {
 		{FilePath: "/src/auth.go"},
 	}
 
-	got := formatRecovery(sess, msgs, false)
+	got := formatRecovery(sess, msgs, false, models.ProfileClaude)
 
 	if !strings.Contains(got, "vor Clear") {
 		t.Error("expected 'vor Clear' header for non-compact mode")
@@ -211,7 +211,7 @@ func TestFormatRecovery_Compact(t *testing.T) {
 		{Role: "assistant", MessageType: "text", Content: "Starting with proxy.go"},
 	}
 
-	got := formatRecovery(sess, msgs, true)
+	got := formatRecovery(sess, msgs, true, models.ProfileClaude)
 
 	if !strings.Contains(got, "vor Compact") {
 		t.Error("expected 'vor Compact' header for compact mode")
@@ -228,7 +228,7 @@ func TestFormatRecovery_CompactLimitsRequests(t *testing.T) {
 		})
 	}
 
-	got := formatRecovery(sess, msgs, true)
+	got := formatRecovery(sess, msgs, true, models.ProfileClaude)
 
 	// Compact limits to 3 user requests
 	lines := strings.Split(got, "\n")
@@ -250,7 +250,7 @@ func TestFormatRecovery_CompactLimitsFiles(t *testing.T) {
 		msgs = append(msgs, models.Message{FilePath: strings.Repeat("/file", 1) + string(rune('a'+i)) + ".go"})
 	}
 
-	got := formatRecovery(sess, msgs, true)
+	got := formatRecovery(sess, msgs, true, models.ProfileClaude)
 
 	if !strings.Contains(got, "+5 weitere") {
 		t.Error("compact mode should show overflow for >5 files")
@@ -265,7 +265,7 @@ func TestFormatRecovery_TruncatesLongContent(t *testing.T) {
 		{Role: "assistant", MessageType: "text", Content: long},
 	}
 
-	got := formatRecovery(sess, msgs, true)
+	got := formatRecovery(sess, msgs, true, models.ProfileClaude)
 
 	// Compact mode truncates at 100 chars
 	if strings.Contains(got, strings.Repeat("x", 150)) {
@@ -275,7 +275,7 @@ func TestFormatRecovery_TruncatesLongContent(t *testing.T) {
 
 func TestFormatRecovery_NoMessages(t *testing.T) {
 	sess := &models.Session{ID: "s1"}
-	got := formatRecovery(sess, nil, false)
+	got := formatRecovery(sess, nil, false, models.ProfileClaude)
 
 	// Should still have header and session reference
 	if !strings.Contains(got, "vor Clear") {

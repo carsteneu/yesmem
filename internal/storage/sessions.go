@@ -402,3 +402,36 @@ func (s *Store) MarkSessionNarrative(sessionID string) error {
 		time.Now().Format(time.RFC3339), sessionID)
 	return err
 }
+
+var ExtractionSessionSignatures = []string{
+	"You are a knowledge extractor",      // Main extraction (prompt.go:42)
+	"You are a knowledge organizer",      // Cluster labeling (cluster.go:213)
+	"You read an excerpt from a Claude",  // Summarization pass 1 (prompt.go:161)
+	"You compare new learnings with",     // Evolution (prompt.go:209)
+	"You analyze ALL learnings of a",     // Bulk evolution (prompt.go:218)
+	"Du analysierst Learnings aus",       // Cross-project evolution (prompt.go:239)
+	"Du destillierst einen Cluster",      // Cluster distillation (prompt.go:281)
+	"You review Knowledge Gaps from",     // Knowledge gap review (gap_review.go)
+	"Du bist der Briefing-Autor",         // Narrative/briefing generation (narrative.go)
+}
+
+// MarkExtractionSessionsExtracted marks daemon-internal LLM sessions (cluster labeling,
+// evolution, distillation etc.) as already extracted. These sessions have ≤5 messages
+// and are self-referential waste from the extraction pipeline's own LLM calls.
+func (s *Store) MarkExtractionSessionsExtracted() (int64, error) {
+	var total int64
+	now := time.Now().Format(time.RFC3339)
+	for _, sig := range ExtractionSessionSignatures {
+		res, err := s.db.Exec(`
+			UPDATE sessions SET extracted_at = ?
+			WHERE extracted_at IS NULL
+			AND message_count <= 5
+			AND first_message LIKE ?`, now, "%"+sig+"%")
+		if err != nil {
+			return 0, fmt.Errorf("mark extraction sessions: %w", err)
+		}
+		n, _ := res.RowsAffected()
+		total += n
+	}
+	return total, nil
+}

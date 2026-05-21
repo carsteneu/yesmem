@@ -303,6 +303,87 @@ func TestUpgradeCacheTTL_NormalizesAllBlocksRecursively(t *testing.T) {
 	}
 }
 
+func TestNormalizeCacheTTL_AutoUpgradesWhen1hPresent(t *testing.T) {
+	req := map[string]any{
+		"messages": []any{
+			map[string]any{
+				"role": "user",
+				"content": []any{
+					map[string]any{"type": "text", "text": "early", "cache_control": map[string]any{"type": "ephemeral"}},
+				},
+			},
+			map[string]any{
+				"role": "assistant",
+				"content": []any{
+					map[string]any{"type": "text", "text": "later", "cache_control": map[string]any{"type": "ephemeral", "ttl": "1h"}},
+				},
+			},
+		},
+	}
+
+	n := NormalizeCacheTTL(req, "ephemeral")
+	if n == 0 {
+		t.Fatal("expected NormalizeCacheTTL to upgrade blocks, got 0")
+	}
+	for _, holder := range collectCacheControlHolders(req) {
+		cc := holder.holder["cache_control"].(map[string]any)
+		if cc["ttl"] != "1h" {
+			t.Errorf("holder %s: expected ttl=1h after auto-upgrade, got %#v", holder.path, cc)
+		}
+	}
+}
+
+func TestNormalizeCacheTTL_NoUpgradeWhenAllEphemeral(t *testing.T) {
+	req := map[string]any{
+		"messages": []any{
+			map[string]any{
+				"role": "user",
+				"content": []any{
+					map[string]any{"type": "text", "text": "a", "cache_control": map[string]any{"type": "ephemeral"}},
+				},
+			},
+			map[string]any{
+				"role": "assistant",
+				"content": []any{
+					map[string]any{"type": "text", "text": "b", "cache_control": map[string]any{"type": "ephemeral"}},
+				},
+			},
+		},
+	}
+
+	NormalizeCacheTTL(req, "ephemeral")
+	for _, holder := range collectCacheControlHolders(req) {
+		cc := holder.holder["cache_control"].(map[string]any)
+		if _, has := cc["ttl"]; has {
+			t.Errorf("holder %s: ttl field should be absent when cfg=ephemeral and no 1h present, got %#v", holder.path, cc)
+		}
+	}
+}
+
+func TestNormalizeCacheTTL_ForceUpgradeWhenConfigIs1h(t *testing.T) {
+	req := map[string]any{
+		"messages": []any{
+			map[string]any{
+				"role": "user",
+				"content": []any{
+					map[string]any{"type": "text", "text": "a", "cache_control": map[string]any{"type": "ephemeral"}},
+				},
+			},
+		},
+	}
+
+	n := NormalizeCacheTTL(req, "1h")
+	if n == 0 {
+		t.Fatal("expected NormalizeCacheTTL to upgrade blocks when cfg=1h, got 0")
+	}
+	for _, holder := range collectCacheControlHolders(req) {
+		cc := holder.holder["cache_control"].(map[string]any)
+		if cc["ttl"] != "1h" {
+			t.Errorf("holder %s: expected ttl=1h, got %#v", holder.path, cc)
+		}
+	}
+}
+
 // helper: message with a single content block
 func msgWithContent(text string) map[string]any {
 	return map[string]any{

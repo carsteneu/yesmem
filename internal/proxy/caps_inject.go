@@ -398,3 +398,50 @@ func (s *Server) injectCapabilitiesTurn(req map[string]any, threadID string) boo
 func (s *Server) getParentThread(threadID string) string {
 	return ""
 }
+
+// renderOpencodeCapabilitiesCatalog builds a catalog listing available caps
+// for opencode sessions. Uses mcp__yesmem__execute_cap instead of REPL activation.
+func renderOpencodeCapabilitiesCatalog(caps []CapInjection) string {
+	if len(caps) == 0 {
+		return ""
+	}
+	sorted := make([]CapInjection, len(caps))
+	copy(sorted, caps)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
+
+	var b strings.Builder
+	b.WriteString("<system-reminder>\n<caps-available>\n")
+	b.WriteString("# Available Capabilities\n\n")
+	b.WriteString("To execute: `mcp__yesmem__execute_cap({name: \"<name>\", fn: \"<function>\", args: '{\"key\":\"value\"}'})` — the daemon runs the handler sandboxed and returns the result.\n\n")
+	b.WriteString("| Capability | Description |\n|---|---|\n")
+	for _, cap := range sorted {
+		desc := cap.Description
+		if len(desc) > 120 {
+			desc = desc[:117] + "..."
+		}
+		b.WriteString(fmt.Sprintf("| %s | %s |\n", cap.Name, desc))
+	}
+	b.WriteString("</caps-available>\n</system-reminder>")
+	return b.String()
+}
+
+// injectOpencodeCapabilitiesCatalog fetches active caps and injects the opencode catalog
+// into the system prompt. Called from the OpenAI parity pipeline.
+func (s *Server) injectOpencodeCapabilitiesCatalog(req map[string]any, threadID, project string) {
+	if threadID == "" {
+		return
+	}
+	raw, err := s.queryDaemon("get_active_caps", map[string]any{"thread_id": threadID})
+	if err != nil {
+		return
+	}
+	caps, err := decodeCapsResponse(raw)
+	if err != nil || len(caps) == 0 {
+		return
+	}
+	catalog := renderOpencodeCapabilitiesCatalog(caps)
+	if catalog == "" {
+		return
+	}
+	AppendSystemBlock(req, "capabilities-available", catalog)
+}

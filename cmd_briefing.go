@@ -9,6 +9,7 @@ import (
 
 	"github.com/carsteneu/yesmem/internal/briefing"
 	"github.com/carsteneu/yesmem/internal/config"
+	"github.com/carsteneu/yesmem/internal/hooks"
 	"github.com/carsteneu/yesmem/internal/storage"
 )
 
@@ -99,11 +100,25 @@ func runBriefing() {
 
 // runBriefingHook ensures the proxy is running and returns a slim hint.
 // The full briefing is injected by the proxy as a user/assistant turn.
+//
+// Side effect: registers Claude Code's main PID with the daemon so MCP tools
+// (activate_cap etc.) can resolve thread_id from the start of the session,
+// before any Bash or Think hook fires.
 func runBriefingHook() {
 	ensureProxyRunning()
 
-	// Drain stdin (Claude Code sends hook JSON)
-	json.NewDecoder(os.Stdin).Decode(&json.RawMessage{})
+	// Parse hook JSON from Claude Code (session_id, source, transcript_path, cwd, hook_event_name).
+	var hookInput struct {
+		SessionID string `json:"session_id"`
+	}
+	json.NewDecoder(os.Stdin).Decode(&hookInput)
+
+	if hookInput.SessionID != "" {
+		dataDir := yesmemDataDir()
+		ppid := os.Getppid()
+		hooks.RegisterPID(dataDir, hookInput.SessionID, ppid)
+		hooks.WritePIDFile(dataDir, hookInput.SessionID, ppid)
+	}
 
 	out := map[string]any{
 		"hookSpecificOutput": map[string]any{

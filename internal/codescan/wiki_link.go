@@ -18,10 +18,11 @@ func renderWikiLink(project string) string {
 	}
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("\n**Full code map:** `%s` (%s)\n\n", wikiPath, timestamp))
-	b.WriteString("> Browse `packages.md` for a package-level overview with file counts,\n")
-	b.WriteString("> LOC, gotchas, and TODOs. `index.md` for the full file tree.\n")
-	b.WriteString("> Per-file deep-dives: `files/<path>.md` (symbols, imports, co-edits,\n")
-	b.WriteString("> learnings, sessions). Path encoding: `/` → `_`.\n")
+	b.WriteString("> BEFORE editing any file, check its wiki page for per-file\n")
+	b.WriteString("> learnings, gotchas, and co-edit context: `files/<path>.md`\n")
+	b.WriteString("> (symbols, imports, related sessions). Path encoding: `/` → `_`.\n")
+	b.WriteString("> Package overview: `packages.md` (file counts, gotchas, TODOs).\n")
+	b.WriteString("> Full file tree: `index.md`.\n")
 	b.WriteString("> Falls back to `search_code_index` / `get_code_snippet` / raw grep.\n\n")
 	return b.String()
 }

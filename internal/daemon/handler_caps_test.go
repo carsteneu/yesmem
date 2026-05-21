@@ -143,7 +143,7 @@ func TestHandleSaveCapability_EmbeddingTextIsCleanNotJSON(t *testing.T) {
 		t.Fatalf("save: %s", resp.Error)
 	}
 
-	learnings, err := store.GetActiveLearnings("cap", "global", "", "")
+	learnings, err := store.GetActiveLearnings("cap", "global", "", "", 0)
 	if err != nil {
 		t.Fatalf("get learnings: %v", err)
 	}
@@ -795,7 +795,7 @@ func TestHandleGetActive_SkipsDeletedCapability(t *testing.T) {
 	seedCap(t, h, "c1", "", "echo", nil)
 	_ = h.handleActivateCap(map[string]any{"name": "c1", "thread_id": "t"})
 
-	learnings, _ := h.store.GetActiveLearnings("cap", "", "", "")
+	learnings, _ := h.store.GetActiveLearnings("cap", "", "", "", 0)
 	for _, l := range learnings {
 		if meta, err := ParseCapMeta(l.Context); err == nil && meta.Name == "c1" {
 			_ = h.store.SupersedeLearning(l.ID, -1, "test: cap deleted")
@@ -946,7 +946,7 @@ func TestHandleSaveCapability_StoresAutoActiveFlag(t *testing.T) {
 		t.Fatalf("save failed: %s", resp.Error)
 	}
 
-	learnings, err := h.store.GetActiveLearnings("cap", "", "", "")
+	learnings, err := h.store.GetActiveLearnings("cap", "", "", "", 0)
 	if err != nil {
 		t.Fatalf("GetActiveLearnings: %v", err)
 	}

@@ -266,7 +266,7 @@ func runResolveStale() {
 	}
 	defer store.Close()
 
-	unfinished, err := store.GetActiveLearnings("unfinished", "", "", "")
+	unfinished, err := store.GetActiveLearnings("unfinished", "", "", "", 0)
 	if err != nil {
 		log.Fatalf("get unfinished: %v", err)
 	}

@@ -19,15 +19,17 @@ type ScanStore interface {
 // Cache layers: in-memory first, then optional SQLite persistence.
 // Invalidated when git HEAD changes (new commits/branch switch).
 type CachedScanner struct {
-	inner Scanner
-	store ScanStore
-	mu    sync.Mutex
-	cache map[string]*cacheEntry
+	inner         Scanner
+	store         ScanStore
+	mu            sync.Mutex
+	cache         map[string]*cacheEntry
+	lastWasCached bool
 }
 
 type cacheEntry struct {
 	head   string
 	result *ScanResult
+	graph  *CodeGraph
 }
 
 // NewCachedScanner creates a cached wrapper around any Scanner.
@@ -44,6 +46,22 @@ func (cs *CachedScanner) WithStore(store ScanStore) *CachedScanner {
 	return cs
 }
 
+// LastWasCached reports whether the most recent Scan call returned a cached result.
+func (cs *CachedScanner) LastWasCached() bool {
+	return cs.lastWasCached
+}
+
+// GetCachedGraph returns the cached CodeGraph for rootDir, or nil if not cached.
+// The graph is automatically built and cached during Scan() on cache miss.
+func (cs *CachedScanner) GetCachedGraph(rootDir string) *CodeGraph {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	if entry, ok := cs.cache[rootDir]; ok {
+		return entry.graph
+	}
+	return nil
+}
+
 func (cs *CachedScanner) Scan(rootDir string) (*ScanResult, error) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
@@ -52,6 +70,7 @@ func (cs *CachedScanner) Scan(rootDir string) (*ScanResult, error) {
 
 	// No git = no stable cache key, always re-scan
 	if head == "" {
+		cs.lastWasCached = false
 		return cs.inner.Scan(rootDir)
 	}
 
@@ -59,24 +78,29 @@ func (cs *CachedScanner) Scan(rootDir string) (*ScanResult, error) {
 
 	// Layer 1: in-memory cache (git HEAD only — CBM mtime checked in Layer 2)
 	if entry, ok := cs.cache[rootDir]; ok && entry.head == head {
+		cs.lastWasCached = true
 		return entry.result, nil
 	}
 
 	// Layer 2: SQLite persistent cache (checks both git HEAD and CBM mtime)
+	// Accepts entries with empty git_head from older code (< v2.0.2).
 	if cs.store != nil {
 		project := projectKey(rootDir)
 		scanJSON, storedHead, storedMtime, err := cs.store.LoadScan(project)
-		if err == nil && scanJSON != "" && storedHead == head && (cbmMtime <= 0 || storedMtime == cbmMtime) {
+		headOK := storedHead == head || storedHead == ""
+		if err == nil && scanJSON != "" && headOK && (cbmMtime <= 0 || storedMtime == cbmMtime) {
 			var result ScanResult
 			if err := json.Unmarshal([]byte(scanJSON), &result); err == nil {
-				cs.cache[rootDir] = &cacheEntry{head: head, result: &result}
+				cs.cache[rootDir] = &cacheEntry{head: head, result: &result, graph: BuildCodeGraph(&result)}
 				log.Printf("[codescan] loaded from SQLite for %s (git %s)", project, head[:min(7, len(head))])
+				cs.lastWasCached = true
 				return &result, nil
 			}
 		}
 	}
 
 	// Cache miss — full scan
+	cs.lastWasCached = false
 	result, err := cs.inner.Scan(rootDir)
 	if err != nil {
 		return nil, err
@@ -85,7 +109,7 @@ func (cs *CachedScanner) Scan(rootDir string) (*ScanResult, error) {
 	// Re-read CBM mtime after scan (CBM may have auto-indexed during scan)
 	cbmMtime = CBMIndexMtime(rootDir).Unix()
 
-	cs.cache[rootDir] = &cacheEntry{head: head, result: result}
+	cs.cache[rootDir] = &cacheEntry{head: head, result: result, graph: BuildCodeGraph(result)}
 
 	// Persist to SQLite
 	if cs.store != nil {

@@ -3,6 +3,8 @@ package proxy
 import (
 	"encoding/json"
 	"fmt"
+	"log"
+	"strings"
 )
 
 // translateAnthropicToOpenAI converts an Anthropic-format request (map[string]any)
@@ -23,7 +25,7 @@ func translateAnthropicToOpenAI(anthReq map[string]any) (map[string]any, error) 
 
 	var result []any
 
-	// Convert system blocks → role:system messages
+	// Convert system blocks → role:system messages.
 	if sys, ok := anthReq["system"].([]any); ok {
 		for _, block := range sys {
 			if bm, ok := block.(map[string]any); ok {
@@ -32,10 +34,14 @@ func translateAnthropicToOpenAI(anthReq map[string]any) (map[string]any, error) 
 				if role == "" {
 					role = "system"
 				}
-				result = append(result, map[string]any{
-					"role":    role,
-					"content": text,
-				})
+			msg := map[string]any{
+				"role":    role,
+				"content": text,
+			}
+			if cc, ok := bm["cache_control"]; ok {
+				msg["cache_control"] = cc
+			}
+			result = append(result, msg)
 			}
 		}
 	}
@@ -65,6 +71,19 @@ func translateAnthropicToOpenAI(anthReq map[string]any) (map[string]any, error) 
 
 	oai["messages"] = result
 
+	// Drop trailing empty user messages (artifacts from tool_result container split).
+	for len(result) > 0 {
+		last, ok := result[len(result)-1].(map[string]any)
+		if !ok || last["role"] != "user" {
+			break
+		}
+		if content, _ := last["content"].(string); content != "" {
+			break
+		}
+		result = result[:len(result)-1]
+	}
+	oai["messages"] = result
+
 	// Convert tools: input_schema → parameters, wrap in function
 	if tools, ok := anthReq["tools"].([]any); ok {
 		var oaiTools []any
@@ -73,12 +92,13 @@ func translateAnthropicToOpenAI(anthReq map[string]any) (map[string]any, error) 
 			if !ok {
 				continue
 			}
+			schema := normalizeSchema(tm["input_schema"])
 			oaiTools = append(oaiTools, map[string]any{
 				"type": "function",
 				"function": map[string]any{
 					"name":        tm["name"],
 					"description": tm["description"],
-					"parameters":  tm["input_schema"],
+					"parameters":  schema,
 				},
 			})
 		}
@@ -106,6 +126,7 @@ func translateAnthropicUserMsg(m map[string]any) []any {
 
 	var textParts []string
 	var toolResults []any
+	var cacheControl any
 
 	for _, block := range blocks {
 		bm, ok := block.(map[string]any)
@@ -118,6 +139,7 @@ func translateAnthropicUserMsg(m map[string]any) []any {
 		case "tool_result":
 			toolUseID, _ := bm["tool_use_id"].(string)
 			resultContent := extractToolResultContent(bm["content"])
+			log.Printf("OPENAI-REV: tool_result id=%s content_len=%d", toolUseID, len(resultContent))
 			toolResults = append(toolResults, map[string]any{
 				"role":         "tool",
 				"tool_call_id": toolUseID,
@@ -129,18 +151,41 @@ func translateAnthropicUserMsg(m map[string]any) []any {
 				textParts = append(textParts, text)
 			}
 		}
+		// Preserve cache_control from the last content block that has it.
+		if cc, ok := bm["cache_control"]; ok {
+			cacheControl = cc
+		}
 	}
 
-	var result []any
-	// If there's text alongside tool results, emit as user message first
-	if len(textParts) > 0 {
+	// Option B: merge user text into first tool message to maintain tool_use→tool adjacency.
+	// DeepSeek requires tool messages immediately after assistant tool_calls.
+	if len(textParts) > 0 && len(toolResults) > 0 {
 		joined := textParts[0]
 		for _, p := range textParts[1:] {
 			joined += "\n" + p
 		}
-		result = append(result, map[string]any{"role": "user", "content": joined})
+		if tm, ok := toolResults[0].(map[string]any); ok {
+			tm["content"] = joined + "\n" + fmt.Sprintf("%v", tm["content"])
+		}
 	}
-	// Emit each tool result as separate role:tool message
+
+	var result []any
+	// Text-only array (no tool_results): emit a single user message with joined
+	// text. The sawtooth path (appendToLastUserMessage) converts string content
+	// to []text-block when injecting associative/docs/rules context — without
+	// this branch the user's latest turn is silently dropped. Direct
+	// concatenation: appendToLastUserMessage already prepends "\n" to injected
+	// blocks, so adding another separator would double newlines.
+	if len(toolResults) == 0 && len(textParts) > 0 {
+		joined := strings.Join(textParts, "")
+		umsg := map[string]any{"role": "user", "content": joined}
+		if cacheControl != nil {
+			umsg["cache_control"] = cacheControl
+		}
+		result = append(result, umsg)
+		return result
+	}
+
 	result = append(result, toolResults...)
 
 	if len(result) == 0 {
@@ -166,6 +211,8 @@ func translateAnthropicAssistantMsg(m map[string]any) map[string]any {
 
 	var textParts []string
 	var toolCalls []any
+	var reasoningText string
+	var cacheControl any
 
 	for _, block := range blocks {
 		bm, ok := block.(map[string]any)
@@ -175,6 +222,13 @@ func translateAnthropicAssistantMsg(m map[string]any) map[string]any {
 		btype, _ := bm["type"].(string)
 
 		switch btype {
+		case "thinking":
+			if t, ok := bm["thinking"].(string); ok && t != "" {
+				if reasoningText != "" {
+					reasoningText += "\n"
+				}
+				reasoningText += t
+			}
 		case "text":
 			text, _ := bm["text"].(string)
 			textParts = append(textParts, text)
@@ -191,6 +245,9 @@ func translateAnthropicAssistantMsg(m map[string]any) map[string]any {
 				},
 			})
 		}
+		if cc, ok := bm["cache_control"]; ok {
+			cacheControl = cc
+		}
 	}
 
 	oaiMsg := map[string]any{"role": "assistant"}
@@ -204,14 +261,54 @@ func translateAnthropicAssistantMsg(m map[string]any) map[string]any {
 	}
 	oaiMsg["content"] = joined
 
+	if reasoningText != "" {
+		oaiMsg["reasoning_content"] = reasoningText
+	}
+
 	if len(toolCalls) > 0 {
 		oaiMsg["tool_calls"] = toolCalls
+	}
+
+	if cacheControl != nil {
+		oaiMsg["cache_control"] = cacheControl
 	}
 
 	return oaiMsg
 }
 
-// extractToolResultContent normalizes tool_result content to a string.
+// normalizeSchema ensures array-type properties have "items" defined.
+// DeepSeek enforces strict JSON Schema validation that rejects arrays without items.
+func normalizeSchema(schema any) any {
+	m, ok := schema.(map[string]any)
+	if !ok {
+		return schema
+	}
+	result := make(map[string]any, len(m))
+	for k, v := range m {
+		switch k {
+		case "properties":
+			if props, ok := v.(map[string]any); ok {
+				normalized := make(map[string]any, len(props))
+				for pk, pv := range props {
+					normalized[pk] = normalizeSchema(pv)
+				}
+				result[k] = normalized
+			} else {
+				result[k] = v
+			}
+		case "items":
+			result[k] = normalizeSchema(v)
+		default:
+			result[k] = v
+		}
+	}
+	if t, _ := result["type"].(string); t == "array" {
+		if _, hasItems := result["items"]; !hasItems {
+			result["items"] = map[string]any{"type": "string"}
+		}
+	}
+	return result
+}
 func extractToolResultContent(content any) string {
 	if s, ok := content.(string); ok {
 		return s
@@ -226,8 +323,7 @@ func extractToolResultContent(content any) string {
 			}
 		}
 		if len(parts) > 0 {
-			return parts[0]
-			// join if multiple
+			return strings.Join(parts, "\n")
 		}
 	}
 	data, err := json.Marshal(content)

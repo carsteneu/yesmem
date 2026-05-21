@@ -28,6 +28,7 @@ type Generator struct {
 	codeScanner    *codescan.CachedScanner
 	codeGraph      *codescan.CodeGraph // built during briefing, available for MCP tools
 	codeMapText    string              // built during briefing, appended post-refine
+	sourceAgent    string              // claude (default), codex, opencode — drives profile-aware wording
 }
 
 // New creates a briefing generator with auto-loaded strings.
@@ -73,6 +74,20 @@ func (g *Generator) SetUserProfile(enabled bool) {
 // Use for agent sessions where todo nudges are not appropriate.
 func (g *Generator) SetSkipUnfinished(skip bool) {
 	g.skipUnfinished = skip
+}
+
+// SetSourceAgent sets the agent origin for profile-aware wording.
+// Default is "claude" (backward compatible). Use "opencode" or "codex" for neutral wording.
+func (g *Generator) SetSourceAgent(agent string) {
+	g.sourceAgent = models.NormalizeSourceAgent(agent)
+	if !g.profile().IsClaude() {
+		g.strings.AgentName = "Agent"
+	}
+}
+
+// profile returns the PromptProfile for the generator's source agent.
+func (g *Generator) profile() models.PromptProfile {
+	return models.SourceAgentToProfile(g.sourceAgent)
 }
 
 // SetStrings sets translated UI strings for the briefing.
@@ -234,7 +249,7 @@ func (g *Generator) resolveProject(projectDir string) string {
 
 // loadLearnings fetches project-specific and global learnings.
 func (g *Generator) loadLearnings(projectShort string) []models.Learning {
-	learnings, _ := g.store.GetActiveLearnings("", projectShort, "", "")
+	learnings, _ := g.store.GetActiveLearnings("", projectShort, "", "", 0)
 	return learnings
 }
 
@@ -273,7 +288,7 @@ func (g *Generator) loadUnfinished(projectShort string) []models.Learning {
 	if projectShort == "" {
 		return nil
 	}
-	unfinished, _ := g.store.GetActiveLearnings("unfinished", projectShort, "", "")
+	unfinished, _ := g.store.GetActiveLearnings("unfinished", projectShort, "", "", 0)
 	if g.unfinishedTTL <= 0 || len(unfinished) == 0 {
 		return unfinished
 	}
@@ -570,7 +585,7 @@ func (g *Generator) loadMetamemory(projectShort string) string {
 		return ""
 	}
 
-	projFilter := "AND (project = ? OR project IS NULL OR project = '')"
+	projFilter := "AND (canonical_project = ? OR canonical_project = '')"
 	base := "FROM learnings WHERE superseded_by IS NULL " + projFilter
 
 	var total, solid, noisy, expired int
@@ -891,7 +906,7 @@ func (g *Generator) renderOpenWork(s Strings, unfinished []models.Learning, abse
 		for _, c := range capIdeas {
 			fmt.Fprintf(&b, "- [#%d] %s - seen %dx\n", c.ID, c.Content, c.MatchCount)
 		}
-		b.WriteString("\nConfirm: `remember(text=\"<intent>\", category=\"unfinished\", task_type=\"task\", supersedes=<ID>)`\n")
+		b.WriteString("\nConfirm: `remember(text=\"<intent>\", category=\"unfinished:task\", supersedes=<ID>)`\n")
 		b.WriteString("Dismiss: `resolve_by_text(text=\"<content-substring>\", project=\"<project>\")`\n")
 		capIdeasBlock = b.String()
 	}

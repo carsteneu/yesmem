@@ -68,6 +68,10 @@ func FindCBMBinary() string {
 }
 
 func (s *CBMScanner) Scan(rootDir string) (*ScanResult, error) {
+	if isBlacklistedPath(rootDir) {
+		return nil, fmt.Errorf("cbm: directory %s is blacklisted (too large or system path)", rootDir)
+	}
+
 	bin := FindCBMBinary()
 	if bin == "" {
 		return nil, fmt.Errorf("codebase-memory-mcp binary not found")
@@ -365,6 +369,55 @@ func withWorktreeGitSymlink(repoPath string, fn func() error) error {
 	}
 
 	return fn()
+}
+
+// isBlacklistedPath returns true if rootDir should not be indexed by CBM.
+// Blocks: empty paths, root filesystem (/), user home directories,
+// directories without a .git, and stale git worktrees (no git activity >24h).
+func isBlacklistedPath(rootDir string) bool {
+	if rootDir == "" {
+		return true
+	}
+	clean := filepath.Clean(rootDir)
+	if clean == "/" {
+		return true
+	}
+	home, err := os.UserHomeDir()
+	if err == nil && clean == home {
+		return true
+	}
+	if !hasGitDir(clean) {
+		return true
+	}
+	if isWorktree(clean) && !hasRecentGitActivity(clean) {
+		return true
+	}
+	return false
+}
+
+// isWorktree returns true if root/.git is a regular file (git worktree),
+// as opposed to a directory (main repo).
+func isWorktree(root string) bool {
+	info, err := os.Stat(filepath.Join(root, ".git"))
+	return err == nil && info.Mode().IsRegular()
+}
+
+func hasRecentGitActivity(root string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "log", "--since=24 hours ago", "--oneline", "-1")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	return err == nil && len(out) > 0
+}
+
+func hasGitDir(root string) bool {
+	info, err := os.Stat(filepath.Join(root, ".git"))
+	return err == nil && (info.IsDir() || info.Mode()&os.ModeSymlink != 0 || isGitFile(info))
+}
+
+func isGitFile(info os.FileInfo) bool {
+	return info.Mode().IsRegular() && info.Name() == ".git"
 }
 
 func formatSignature(label, name, qn string) string {

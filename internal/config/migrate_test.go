@@ -42,14 +42,33 @@ func TestMigrateConfig_AddsEffortFloor(t *testing.T) {
 func TestMigrateConfig_SkipsExistingFields(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	os.WriteFile(path, []byte("proxy:\n  enabled: true\n  skill_eval_inject: \"true\"\n  effort_floor: \"high\"\n"), 0644)
+	os.WriteFile(path, []byte("proxy:\n  enabled: true\n  skill_eval_inject: \"true\"\n  effort_floor: \"high\"\n  auto_configure_providers: true\n  model_features:\n    claude:\n      skill_eval: true\n\npaths:\n  opencode_db: /custom/opencode.db\n\nexclude_projects:\n  - /home/testuser\n  - /tmp\n"), 0644)
 
 	n, err := MigrateConfig(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n != 0 {
-		t.Errorf("expected 0 fields added for existing config, got %d", n)
+		t.Errorf("expected 0 fields added for fully migrated config, got %d", n)
+	}
+}
+
+func TestMigrateConfig_AddsAutoConfigureProviders(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	os.WriteFile(path, []byte("proxy:\n  enabled: true\n"), 0644)
+
+	n, err := MigrateConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n == 0 {
+		t.Error("expected at least one field added")
+	}
+
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), "auto_configure_providers: true") {
+		t.Error("config should contain auto_configure_providers after migration")
 	}
 }
 
@@ -79,8 +98,9 @@ func TestMigrateConfig_NoProxySection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 0 {
-		t.Errorf("expected 0 fields when proxy section missing, got %d", n)
+	// model_features + opencode_db are added, proxy migrations are skipped
+	if n == 0 {
+		t.Errorf("expected at least 1 field added (model_features/opencode_db), got %d", n)
 	}
 }
 
@@ -109,5 +129,61 @@ func TestMigrateConfig_InsertsInsideProxySection(t *testing.T) {
 	}
 	if skillEvalIdx > extractionIdx {
 		t.Error("skill_eval_inject should appear before extraction: (inside proxy section)")
+	}
+}
+
+func TestMigrateConfig_AddsOpencodeDB(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	os.WriteFile(path, []byte("extraction:\n  model: sonnet\n"), 0644)
+
+	n, err := MigrateConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n == 0 {
+		t.Error("expected at least one field added")
+	}
+
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), "opencode_db") {
+		t.Error("config should contain opencode_db after migration")
+	}
+}
+
+func TestMigrateConfig_AddsModelFeatures(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	os.WriteFile(path, []byte("proxy:\n  enabled: true\n\nextraction:\n  model: sonnet\n"), 0644)
+
+	MigrateConfig(path)
+
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), "model_features:") {
+		t.Error("config should contain model_features after migration")
+	}
+	if !strings.Contains(string(data), "feature_defaults:") {
+		t.Error("config should contain feature_defaults after migration")
+	}
+	// model_features should be inside proxy:
+	proxyIdx := strings.Index(string(data), "proxy:")
+	mfIdx := strings.Index(string(data), "model_features:")
+	extractionIdx := strings.Index(string(data), "extraction:")
+	if mfIdx < proxyIdx || mfIdx > extractionIdx {
+		t.Error("model_features should be inside proxy: section")
+	}
+}
+
+func TestMigrateConfig_IdempotentModelFeatures(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	os.WriteFile(path, []byte("proxy:\n  enabled: true\n  skill_eval_inject: \"silent\"\n  effort_floor: \"\"\n  auto_configure_providers: true\n  model_features:\n    claude:\n      skill_eval: true\n\npaths:\n  opencode_db: /custom/opencode.db\n\nexclude_projects:\n  - /home/testuser\n  - /tmp\n"), 0644)
+
+	n, err := MigrateConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0 fields added for fully migrated config, got %d", n)
 	}
 }

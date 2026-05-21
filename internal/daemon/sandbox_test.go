@@ -4,11 +4,93 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func withLookupSpy(t *testing.T, alwaysMiss bool) (*int, func()) {
+	t.Helper()
+	var count int
+	orig := sandboxLookPath
+	sandboxLookPath = func(name string) (string, error) {
+		count++
+		if alwaysMiss {
+			return "", exec.ErrNotFound
+		}
+		return orig(name)
+	}
+	origDl := sandboxDownloader
+	sandboxDownloader = func() (string, error) { return "", errors.New("test: download disabled") }
+	cleanup := func() {
+		sandboxLookPath = orig
+		sandboxDownloader = origDl
+	}
+	return &count, cleanup
+}
+
+func TestNewSandbox_DoesNotLookupBinary(t *testing.T) {
+	count, cleanup := withLookupSpy(t, true)
+	defer cleanup()
+
+	_ = NewSandbox(SandboxConfig{Enabled: true})
+
+	if *count != 0 {
+		t.Errorf("NewSandbox triggered %d lookup(s), want 0 (lazy init)", *count)
+	}
+}
+
+func TestRunWithProfile_NoneSkipsLookup(t *testing.T) {
+	count, cleanup := withLookupSpy(t, true)
+	defer cleanup()
+
+	sb := NewSandbox(SandboxConfig{Enabled: true, FallbackUnsandboxed: true})
+	output, exitCode, err := sb.RunWithProfile("echo none-path", 5, ProfileNone)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if exitCode != 0 {
+		t.Errorf("exit = %d", exitCode)
+	}
+	if !strings.Contains(output, "none-path") {
+		t.Errorf("output = %q", output)
+	}
+	if *count != 0 {
+		t.Errorf("ProfileNone path triggered %d lookup(s), want 0", *count)
+	}
+}
+
+func TestBuildSandboxedCommand_NoneSkipsLookup(t *testing.T) {
+	count, cleanup := withLookupSpy(t, true)
+	defer cleanup()
+
+	sb := NewSandbox(SandboxConfig{Enabled: true})
+	got := sb.BuildSandboxedCommand("echo hi", ProfileNone)
+
+	if got != "echo hi" {
+		t.Errorf("BuildSandboxedCommand(None) = %q, want pass-through", got)
+	}
+	if *count != 0 {
+		t.Errorf("ProfileNone triggered %d lookup(s), want 0", *count)
+	}
+}
+
+func TestEnsureBinary_CachesResult(t *testing.T) {
+	count, cleanup := withLookupSpy(t, true)
+	defer cleanup()
+
+	sb := NewSandbox(SandboxConfig{Enabled: true})
+	_ = sb.Available()
+	_ = sb.Available()
+	_ = sb.Available()
+
+	if *count != 1 {
+		t.Errorf("Available() triggered %d lookups across 3 calls, want exactly 1 (sync.Once)", *count)
+	}
+}
 
 func TestSandbox_DisabledRunsDirectly(t *testing.T) {
 	sb := NewSandbox(SandboxConfig{Enabled: false})

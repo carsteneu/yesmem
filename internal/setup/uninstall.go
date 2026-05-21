@@ -35,6 +35,8 @@ func Uninstall() error {
 	fmt.Println("  ✓ .mcp.json entries")
 	fmt.Println("  ✓ Codex provider + MCP entries in ~/.codex/config.toml")
 	fmt.Println("  ✓ Codex instructions (~/.codex/instructions/yesmem.md)")
+	fmt.Println("  ✓ Opencode plugin (~/.config/opencode/plugins/yesmem.ts)")
+	fmt.Println("  ✓ Opencode settings (provider, MCP, compaction in opencode.json)")
 	if runtime.GOOS == "linux" {
 		fmt.Println("  ✓ systemd user services (daemon + proxy)")
 	} else if runtime.GOOS == "darwin" {
@@ -105,6 +107,13 @@ func Uninstall() error {
 		fmt.Println("✓")
 	}
 
+	fmt.Print("  Cleaning Opencode config... ")
+	if err := removeOpencodePlugin(home); err != nil {
+		fmt.Printf("⚠ %v\n", err)
+	} else {
+		fmt.Println("✓")
+	}
+
 	// Remove yesmem permissions from project-local settings.local.json files
 	fmt.Print("  Cleaning project settings... ")
 	cleanProjectLocalSettings(home)
@@ -143,10 +152,11 @@ func Uninstall() error {
 		fmt.Println("✓")
 	}
 
-	// Remove PID + socket
+	// Remove PID + socket + session tracking files
 	fmt.Print("  Cleaning runtime files... ")
 	os.Remove(filepath.Join(dataDir, "daemon.sock"))
 	os.Remove(filepath.Join(dataDir, "daemon.pid"))
+	os.RemoveAll(filepath.Join(dataDir, "sessions"))
 	fmt.Println("✓")
 
 	// Optionally delete data

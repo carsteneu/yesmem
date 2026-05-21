@@ -11,6 +11,7 @@ type UsageTracker struct {
 	InputTokens              int
 	CacheCreationInputTokens int
 	CacheReadInputTokens     int
+	CacheMissTokens          int // prompt_cache_miss_tokens (DeepSeek)
 	Ephemeral1hInputTokens   int // from cache_creation.ephemeral_1h_input_tokens
 	OutputTokens             int
 	Complete                 bool // true after message_stop
@@ -84,7 +85,16 @@ func (u *UsageTracker) LogLine(reqIdx, stubCount, estimatedTokens int, threadID 
 	line := fmt.Sprintf("[req %d%s] in=%d out=%d", reqIdx, tidPart, total, u.OutputTokens)
 
 	// Cache breakdown
-	if u.CacheReadInputTokens > 0 || u.CacheCreationInputTokens > 0 {
+	// DeepSeek reports prompt_cache_hit_tokens / prompt_cache_miss_tokens.
+	// Triggered when we have cache reads but no Anthropic-style cache writes.
+	if u.CacheReadInputTokens > 0 && u.CacheCreationInputTokens == 0 {
+		// Raw numbers: miss is often <1000 so %dk truncates to 0k.
+		line += fmt.Sprintf(" | cache: %d hit, %d miss, %d total (%.1f%% hit)",
+			u.CacheReadInputTokens,
+			u.CacheMissTokens,
+			total,
+			u.CacheHitRate())
+	} else if u.CacheReadInputTokens > 0 || u.CacheCreationInputTokens > 0 {
 		line += fmt.Sprintf(" | cache: %dk read, %dk write, %dk uncached (%.0f%% hit)",
 			u.CacheReadInputTokens/1000,
 			u.CacheCreationInputTokens/1000,

@@ -166,7 +166,7 @@ func TestImportLearnings(t *testing.T) {
 	}
 
 	// Verify they exist in DB
-	learnings, _ := store.GetActiveLearnings("preference", "imported-project", "", "")
+	learnings, _ := store.GetActiveLearnings("preference", "imported-project", "", "", 0)
 	if len(learnings) == 0 {
 		t.Fatal("imported preference not found")
 	}

@@ -183,3 +183,110 @@ func TestDeflateUsage_NoUsageField(t *testing.T) {
 		t.Error("expected nil when no usage field")
 	}
 }
+
+func TestParseOpenAIUsage_DeepSeekCacheHit(t *testing.T) {
+	// Simulate DeepSeek SSE final chunk with prompt_cache_hit/miss_tokens
+	data := []byte(`{"usage":{"prompt_tokens":60000,"completion_tokens":800,"total_tokens":60800,"prompt_cache_hit_tokens":50000,"prompt_cache_miss_tokens":10000}}`)
+	u := &UsageTracker{}
+	var p chatCompletionsParser
+	p.ParseUsage(u, data)
+
+	if u.OutputTokens != 800 {
+		t.Errorf("output_tokens = %d, want 800", u.OutputTokens)
+	}
+	if u.CacheReadInputTokens != 50000 {
+		t.Errorf("cache_read (from prompt_cache_hit) = %d, want 50000", u.CacheReadInputTokens)
+	}
+	if u.CacheMissTokens != 10000 {
+		t.Errorf("cache_miss (from prompt_cache_miss) = %d, want 10000", u.CacheMissTokens)
+	}
+	// InputTokens should be cache_miss (uncached), not prompt_tokens (total)
+	if u.InputTokens != 10000 {
+		t.Errorf("input_tokens (should be miss/uncached) = %d, want 10000", u.InputTokens)
+	}
+	// TotalInputTokens = miss + hit = prompt_tokens
+	if u.TotalInputTokens() != 60000 {
+		t.Errorf("total input = %d, want 60000 (miss+hit)", u.TotalInputTokens())
+	}
+	if rate := u.CacheHitRate(); rate < 83.3 || rate > 83.4 {
+		t.Errorf("cache hit rate = %.1f%%, want ~83.3%%", rate)
+	}
+	if !u.Complete {
+		t.Error("expected Complete=true after final chunk")
+	}
+}
+
+func TestParseOpenAIUsage_DeepSeekNoCache(t *testing.T) {
+	// Standard OpenAI/DeepSeek without cache fields
+	data := []byte(`{"usage":{"prompt_tokens":25000,"completion_tokens":500,"total_tokens":25500}}`)
+	u := &UsageTracker{}
+	var p chatCompletionsParser
+	p.ParseUsage(u, data)
+
+	if u.InputTokens != 25000 {
+		t.Errorf("input_tokens = %d, want 25000", u.InputTokens)
+	}
+	if u.OutputTokens != 500 {
+		t.Errorf("output_tokens = %d, want 500", u.OutputTokens)
+	}
+	if u.CacheReadInputTokens != 0 {
+		t.Errorf("cache_read = %d, want 0", u.CacheReadInputTokens)
+	}
+	if u.CacheMissTokens != 0 {
+		t.Errorf("cache_miss = %d, want 0", u.CacheMissTokens)
+	}
+	if u.TotalInputTokens() != 25000 {
+		t.Errorf("total input = %d, want 25000", u.TotalInputTokens())
+	}
+}
+
+func TestParseOpenAIUsage_DeepSeekOnlyHitTokens(t *testing.T) {
+	// Edge case: only prompt_cache_hit_tokens, no miss tokens in response.
+	// All tokens are cached → InputTokens=0 (no uncached tokens), total=hit.
+	data := []byte(`{"usage":{"prompt_tokens":60000,"prompt_cache_hit_tokens":60000,"completion_tokens":200}}`)
+	u := &UsageTracker{}
+	var p chatCompletionsParser
+	p.ParseUsage(u, data)
+
+	if u.InputTokens != 0 {
+		t.Errorf("input_tokens (all cached) = %d, want 0", u.InputTokens)
+	}
+	if u.CacheReadInputTokens != 60000 {
+		t.Errorf("cache_read = %d, want 60000", u.CacheReadInputTokens)
+	}
+	if u.CacheMissTokens != 0 {
+		t.Errorf("cache_miss = %d, want 0 (not in response)", u.CacheMissTokens)
+	}
+	if u.TotalInputTokens() != 60000 {
+		t.Errorf("total input (all cached) = %d, want 60000", u.TotalInputTokens())
+	}
+	if u.CacheHitRate() != 100.0 {
+		t.Errorf("hit rate = %.1f%%, want 100%%", u.CacheHitRate())
+	}
+}
+
+func TestUsageLogLine_DeepSeekCache(t *testing.T) {
+	u := &UsageTracker{
+		InputTokens:         10000,
+		CacheReadInputTokens: 50000,
+		CacheMissTokens:     10000,
+		OutputTokens:        800,
+		Complete:            true,
+	}
+	line := u.LogLine(5, 0, 0, "test-thread")
+	if !strings.Contains(line, "in=60000") {
+		t.Errorf("log line missing total input 60k: %q", line)
+	}
+	if !strings.Contains(line, "50000 hit") {
+		t.Errorf("log line missing hit tokens: %q", line)
+	}
+	if !strings.Contains(line, "10000 miss") {
+		t.Errorf("log line missing miss tokens: %q", line)
+	}
+	if !strings.Contains(line, "60000 total") {
+		t.Errorf("log line missing total: %q", line)
+	}
+	if !strings.Contains(line, "83.3% hit") {
+		t.Errorf("log line missing hit rate: %q", line)
+	}
+}

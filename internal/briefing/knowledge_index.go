@@ -258,7 +258,7 @@ func renderHealth(h HealthData, s Strings) string {
 		b.WriteString(fmt.Sprintf("- %d contradicting learnings — resolve with `get_learnings()`\n", h.Contradictions))
 	}
 	if h.Unfinished > 0 {
-		b.WriteString(fmt.Sprintf("- %d open tasks — check with `get_learnings(task_type='task')`\n", h.Unfinished))
+		b.WriteString(fmt.Sprintf("- %d open tasks — check with `get_learnings(category='unfinished')`\n", h.Unfinished))
 	}
 	if h.Stale > 0 {
 		b.WriteString(fmt.Sprintf("- %d stale learnings (>90 days, never cited)\n", h.Stale))

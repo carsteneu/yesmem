@@ -89,9 +89,13 @@ func (s *Server) proxyCall(method string) mcpserver.ToolHandlerFunc {
 
 		// Inject caller PID so daemon can resolve session_id from pidMap
 		params["_caller_pid"] = float64(os.Getppid())
-		// Inject CLAUDE_SESSION_ID directly — PID lookup is unreliable with multiple sessions
-		if sid := os.Getenv("CLAUDE_SESSION_ID"); sid != "" {
+		// Multi-agent session identity: opencode/codex via env vars, Claude unchanged.
+		sid, sa := resolveClientSessionID()
+		if sid != "" {
 			params["_session_id"] = sid
+		}
+		if sa != "" && sa != "claude" {
+			params["_source_agent"] = sa
 		}
 		if model := currentClientModel(); model != "" {
 			params["_client_model"] = model
@@ -130,6 +134,56 @@ func currentClientModel() string {
 		}
 	}
 	return ""
+}
+
+// resolveClientSessionID detects the calling agent from environment and returns
+// a normalized session ID with the agent prefix. Also returns the source agent label.
+//
+// Detection order (first match wins):
+//  1. YESMEM_SOURCE_AGENT=opencode + YESMEM_SESSION_ID  → opencode:<id>, "opencode"
+//  2. YESMEM_SOURCE_AGENT=codex + CODEX_THREAD_ID       → codex:<id>,    "codex"
+//  3. CODEX_THREAD_ID (legacy, no source_agent marker)  → codex:<id>,    "codex"
+//  4. CLAUDE_SESSION_ID                                 → raw id,        "claude"  (unchanged)
+//
+// If YESMEM_SOURCE_AGENT is set but the corresponding session ID is missing,
+// the function returns empty sessionID with the detected source agent.
+//
+// MCP tool descriptions are NOT modified — they remain Claude-specific for all clients.
+func resolveClientSessionID() (sessionID, sourceAgent string) {
+	sa := strings.TrimSpace(os.Getenv("YESMEM_SOURCE_AGENT"))
+	switch sa {
+	case "opencode":
+		if sid := strings.TrimSpace(os.Getenv("YESMEM_SESSION_ID")); sid != "" {
+			return "opencode:" + sid, "opencode"
+		}
+		return "", "opencode"
+	case "codex":
+		if tid := strings.TrimSpace(os.Getenv("CODEX_THREAD_ID")); tid != "" {
+			return "codex:" + tid, "codex"
+		}
+		return "", "codex"
+	}
+
+	// Fallback: codex might use CODEX_THREAD_ID even without YESMEM_SOURCE_AGENT
+	if tid := strings.TrimSpace(os.Getenv("CODEX_THREAD_ID")); tid != "" {
+		return "codex:" + tid, "codex"
+	}
+	// Default: Claude path (unchanged — no prefix, no namespace)
+	if sid := strings.TrimSpace(os.Getenv("CLAUDE_SESSION_ID")); sid != "" {
+		return sid, "claude"
+	}
+	// Claude Code 2.1.132+ exports CLAUDE_CODE_SESSION_ID instead of CLAUDE_SESSION_ID.
+	if sid := strings.TrimSpace(os.Getenv("CLAUDE_CODE_SESSION_ID")); sid != "" {
+		return sid, "claude"
+	}
+
+	// Auto-detect: OPENCODE=1 is set by OpenCode on all worker processes.
+	// Check AFTER explicit Claude vars so they take precedence on shared hosts.
+	if strings.TrimSpace(os.Getenv("OPENCODE")) == "1" {
+		return "", "opencode"
+	}
+
+	return "", "claude"
 }
 
 // formatSearchResult converts verbose JSON search results into a compact,
@@ -305,19 +359,21 @@ func formatResolve(raw json.RawMessage) string {
 // formatLearnings converts a JSON array of learnings into compact one-liners with relative time.
 func formatLearnings(raw json.RawMessage) string {
 	var items []struct {
-		ID          int64    `json:"id"`
-		Content     string   `json:"content"`
-		Category    string   `json:"category"`
-		Project     string   `json:"project"`
-		Confidence  float64  `json:"confidence"`
-		HitCount    int      `json:"hit_count"`
-		UseCount    int      `json:"use_count"`
-		InjectCount int      `json:"inject_count"`
-		Source      string   `json:"source"`
-		CreatedAt   string   `json:"created_at"`
-		Entities    []string `json:"entities,omitempty"`
-		TriggerRule string   `json:"trigger_rule,omitempty"`
-		TaskType    string   `json:"task_type,omitempty"`
+		ID             int64    `json:"id"`
+		Content        string   `json:"content"`
+		Category       string   `json:"category"`
+		Project        string   `json:"project"`
+		Confidence     float64  `json:"confidence"`
+		HitCount       int      `json:"hit_count"`
+		UseCount       int      `json:"use_count"`
+		InjectCount    int      `json:"inject_count"`
+		Source         string   `json:"source"`
+		CreatedAt      string   `json:"created_at"`
+		Entities       []string `json:"entities,omitempty"`
+		TriggerRule    string   `json:"trigger_rule,omitempty"`
+		TaskType       string   `json:"task_type,omitempty"`
+		SessionID      string   `json:"session_id,omitempty"`
+		SupersedeReason string  `json:"supersede_reason,omitempty"`
 	}
 	if err := json.Unmarshal(raw, &items); err != nil {
 		// Maybe it's wrapped in an object
@@ -349,6 +405,12 @@ func formatLearnings(raw json.RawMessage) string {
 			cat = l.Category + ":" + l.TaskType
 		}
 		sb.WriteString(fmt.Sprintf("[#%d %s %s %s u:%d/i:%d] %s\n", l.ID, proj, cat, age, l.UseCount, l.InjectCount, l.Content))
+		if l.SessionID != "" {
+			sb.WriteString(fmt.Sprintf("  session: %s\n", l.SessionID))
+		}
+		if l.SupersedeReason != "" {
+			sb.WriteString(fmt.Sprintf("  superseded: %s\n", l.SupersedeReason))
+		}
 		// V2 metadata lines (only shown if present)
 		if len(l.Entities) > 0 {
 			sb.WriteString(fmt.Sprintf("  entities: %s\n", strings.Join(l.Entities, ", ")))
@@ -515,9 +577,13 @@ func (s *Server) proxyCallWithThreadID(method string, formatter func(json.RawMes
 			params[k] = v
 		}
 		params["_caller_pid"] = float64(os.Getppid())
-		if sid := os.Getenv("CLAUDE_SESSION_ID"); sid != "" {
+		sid, sa := resolveClientSessionID()
+		if sid != "" {
 			params["_session_id"] = sid
 			params["thread_id"] = sid
+		}
+		if sa != "" && sa != "claude" {
+			params["_source_agent"] = sa
 		}
 
 		result, err := proxy.Call(method, params)
@@ -528,7 +594,6 @@ func (s *Server) proxyCallWithThreadID(method string, formatter func(json.RawMes
 			s.mu.Unlock()
 			return mcplib.NewToolResultText(fmt.Sprintf("Error: %v", err)), nil
 		}
-
 		if formatter != nil {
 			return mcplib.NewToolResultText(formatter(result)), nil
 		}
@@ -637,11 +702,14 @@ func (s *Server) proxyCallFormat(method string, formatter func(json.RawMessage) 
 			params[k] = v
 		}
 
-		// Inject caller PID so daemon can resolve session_id from pidMap
 		params["_caller_pid"] = float64(os.Getppid())
-		// Inject CLAUDE_SESSION_ID directly — PID lookup is unreliable with multiple sessions
-		if sid := os.Getenv("CLAUDE_SESSION_ID"); sid != "" {
+		// Multi-agent session identity: opencode/codex via env vars, Claude unchanged.
+		sid, sa := resolveClientSessionID()
+		if sid != "" {
 			params["_session_id"] = sid
+		}
+		if sa != "" && sa != "claude" {
+			params["_source_agent"] = sa
 		}
 		if cwd := callerCWD(); cwd != "" {
 			params["_cwd"] = cwd
@@ -834,7 +902,7 @@ func (s *Server) registerTools() {
 		mcplib.NewTool("whoami",
 			mcplib.WithDescription("Get own session ID and agent metadata"),
 			mcplib.WithString("project", mcplib.Description("Project filter")),
-		), s.proxyCall("whoami"))
+		), s.proxyCallWithThreadID("whoami", nil))
 
 	s.srv.AddTool(
 		mcplib.NewTool("broadcast",
@@ -880,6 +948,7 @@ func (s *Server) registerTools() {
 		mcplib.NewTool("get_learnings",
 			mcplib.WithDescription("Retrieve learnings by category or ID"),
 			mcplib.WithNumber("id", mcplib.Description("Get by ID (ignores other filters)")),
+			mcplib.WithBoolean("history", mcplib.Description("When true with id, returns full version chain (oldest-first)")),
 			mcplib.WithString("category", mcplib.Description("gotcha|decision|pattern|preference|explicit_teaching|strategic|narrative")),
 			mcplib.WithString("project", mcplib.Description("Project filter")),
 			mcplib.WithString("since", mcplib.Description("ISO date lower bound")),
@@ -946,6 +1015,14 @@ func (s *Server) registerTools() {
 			mcplib.WithDescription("Deactivate a cap for the current thread (thread_id is auto-injected). The proxy stops re-injecting its registerTool snippet on subsequent turns."),
 			mcplib.WithString("name", mcplib.Required(), mcplib.Description("Capability name")),
 		), s.proxyCallWithThreadID("deactivate_cap", formatSimpleMessage))
+
+	s.srv.AddTool(
+		mcplib.NewTool("execute_cap",
+			mcplib.WithDescription("Execute a saved CAP handler. The daemon runs the handler sandboxed (ai-jail bun -e for JS, ai-jail bash -c for bash) and returns the result as JSON."),
+			mcplib.WithString("name", mcplib.Required(), mcplib.Description("Capability name")),
+			mcplib.WithString("fn", mcplib.Description("Function name (default: first tool-kind script)")),
+			mcplib.WithString("args", mcplib.Description("JSON string of arguments (default: '{}')")),
+		), s.proxyCallWithThreadID("execute_cap", formatSimpleMessage))
 
 	s.srv.AddTool(
 		mcplib.NewTool("cap_store",

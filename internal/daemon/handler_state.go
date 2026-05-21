@@ -2,10 +2,15 @@ package daemon
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
 
 	"github.com/carsteneu/yesmem/internal/briefing"
+	"github.com/carsteneu/yesmem/internal/models"
 	"github.com/carsteneu/yesmem/internal/storage"
 )
 
@@ -29,21 +34,47 @@ func (h *Handler) handleGetCompactedStubs(params map[string]any) Response {
 		toIdx = int(t)
 	}
 
-	var blocks []*storage.CompactedBlock
-	var err error
-
-	if fromIdx > 0 || toIdx > 0 {
-		if toIdx == 0 {
-			toIdx = 999999
-		}
-		blocks, err = h.store.GetCompactedBlocksInRange(threadID, fromIdx, toIdx)
-	} else {
-		blocks, err = h.store.GetCompactedBlocks(threadID)
-	}
-
+	// Read frozen stubs from proxy_state (runtime.db), not the dead compacted_blocks table.
+	// Frozen stubs are persisted by sawtooth via SetProxyState with key "frozen:<threadID>".
+	frozenJSON, err := h.store.GetProxyState("frozen:" + threadID)
 	if err != nil {
-		return errorResponse(fmt.Sprintf("get compacted stubs: %v", err))
+		return errorResponse(fmt.Sprintf("get frozen stubs: %v", err))
 	}
+	if frozenJSON == "" {
+		// No frozen stubs for this thread — try compacted_blocks as fallback (legacy path)
+		var blocks []*storage.CompactedBlock
+		if fromIdx > 0 || toIdx > 0 {
+			if toIdx == 0 {
+				toIdx = 999999
+			}
+			blocks, err = h.store.GetCompactedBlocksInRange(threadID, fromIdx, toIdx)
+		} else {
+			blocks, err = h.store.GetCompactedBlocks(threadID)
+		}
+		if err != nil {
+			return errorResponse(fmt.Sprintf("get compacted stubs: %v", err))
+		}
+		return jsonResponse(blocks)
+	}
+
+	// Parse frozen stubs to extract archived message ranges
+	blocks, err := parseFrozenStubs(frozenJSON, threadID, fromIdx, toIdx)
+	if err != nil {
+		return errorResponse(fmt.Sprintf("parse frozen stubs: %v", err))
+	}
+
+	// Enrich blocks with actual message content from messages.db (real-time indexed)
+	for i, b := range blocks {
+		if b.EndIdx-b.StartIdx > 200 {
+			continue // too many messages, keep marker as summary
+		}
+		msgs, err := h.store.GetMessagesBySessionRange(threadID, b.StartIdx, b.EndIdx)
+		if err != nil || len(msgs) == 0 {
+			continue
+		}
+		blocks[i].Content = formatMessageRange(msgs, threadID, b.StartIdx, b.EndIdx)
+	}
+
 	return jsonResponse(blocks)
 }
 
@@ -67,6 +98,40 @@ func (h *Handler) handleExpandContext(params map[string]any) Response {
 		if _, err := fmt.Sscanf(msgRange, "%d-%d", &from, &to); err != nil {
 			return errorResponse(fmt.Sprintf("invalid message_range format (expected 'from-to'): %v", err))
 		}
+
+		// Try to fetch actual message content from messages.db (real-time indexed by OpencodeScanner)
+		msgs, err := h.store.GetMessagesBySessionRange(threadID, from, to)
+		if err != nil {
+			return errorResponse(fmt.Sprintf("expand range: %v", err))
+		}
+		if len(msgs) > 0 {
+			content := formatMessageRange(msgs, threadID, from, to)
+			blocks := []*storage.CompactedBlock{{
+				ThreadID: threadID,
+				StartIdx: from,
+				EndIdx:   to,
+				Content:  content,
+			}}
+			return jsonResponse(map[string]any{"message": fmt.Sprintf("%d messages in range %d-%d", len(msgs), from, to), "blocks": blocks})
+		}
+
+		// Fallback: read frozen stubs from proxy_state (sawtooth-persisted markers)
+		frozenJSON, err := h.store.GetProxyState("frozen:" + threadID)
+		if err != nil {
+			return errorResponse(fmt.Sprintf("expand range: %v", err))
+		}
+		if frozenJSON != "" {
+			blocks, err := parseFrozenStubs(frozenJSON, threadID, from, to)
+			if err != nil {
+				return errorResponse(fmt.Sprintf("parse frozen stubs: %v", err))
+			}
+			if len(blocks) == 0 {
+				return jsonResponse(map[string]any{"message": fmt.Sprintf("No archived content in range %d-%d", from, to), "blocks": []any{}})
+			}
+			return jsonResponse(map[string]any{"message": fmt.Sprintf("%d blocks in range %d-%d", len(blocks), from, to), "blocks": blocks})
+		}
+
+		// Fallback: legacy compacted_blocks table
 		blocks, err := h.store.GetCompactedBlocksInRange(threadID, from, to)
 		if err != nil {
 			return errorResponse(fmt.Sprintf("expand range: %v", err))
@@ -147,7 +212,9 @@ func (h *Handler) handleDeleteProxyStatePrefix(params map[string]any) Response {
 }
 
 // handleSetConfig allows runtime config overrides via MCP.
-// Supported keys: token_threshold (int, e.g. 300000)
+// Supported keys:
+//   token_threshold        — global override (int, e.g. 300000)
+//   token_threshold:<model> — per-model override (e.g. token_threshold:deepseek=500000)
 // Optional session_id: if set, override applies only to that session.
 func (h *Handler) handleSetConfig(params map[string]any) Response {
 	key, _ := params["key"].(string)
@@ -155,21 +222,37 @@ func (h *Handler) handleSetConfig(params map[string]any) Response {
 	if key == "" || value == "" {
 		return errorResponse("key and value required")
 	}
+	// Split model suffix: "token_threshold:deepseek" → base="token_threshold", model="deepseek"
+	base := key
+	modelSuffix := ""
+	if idx := strings.Index(key, ":"); idx >= 0 {
+		base = key[:idx]
+		modelSuffix = key[idx+1:]
+	}
 	allowed := map[string]bool{"token_threshold": true}
-	if !allowed[key] {
-		return errorResponse(fmt.Sprintf("unknown config key %q (allowed: token_threshold)", key))
+	if !allowed[base] {
+		return errorResponse(fmt.Sprintf("unknown config key %q (allowed: token_threshold, token_threshold:<model>)", key))
 	}
 	sessionID, _ := params["session_id"].(string)
-	stateKey := "config_override:" + key
+	stateKey := "config_override:" + base
+	if modelSuffix != "" {
+		stateKey += ":" + modelSuffix
+	}
 	if sessionID != "" {
-		stateKey = "config_override:" + key + ":" + sessionID
+		stateKey += ":" + sessionID
 	}
 	if err := h.store.SetProxyState(stateKey, value); err != nil {
 		return errorResponse(fmt.Sprintf("set config: %v", err))
 	}
 	scope := "global"
+	if modelSuffix != "" {
+		scope = "model:" + modelSuffix
+	}
 	if sessionID != "" {
-		scope = "session:" + sessionID
+		if scope != "global" {
+			scope += "+"
+		}
+		scope += "session:" + sessionID
 	}
 	return jsonResponse(map[string]string{"status": "ok", "key": key, "value": value, "scope": scope})
 }
@@ -259,6 +342,13 @@ func (h *Handler) handleGenerateBriefing(params map[string]any) Response {
 	}
 
 	sessionID, _ := params["session_id"].(string)
+
+	// Persist source_agent if passed — belt-and-suspenders with register_pid
+	// so briefings can identify non-Claude agents even on first request.
+	if sa, _ := params["source_agent"].(string); sa != "" && sessionID != "" {
+		_ = h.store.SetProxyState("source_agent:"+sessionID, sa)
+	}
+
 	result := briefing.GenerateFullBriefing(h.store, h.dataDir, project, sessionID)
 
 	return jsonResponse(map[string]any{"text": result.Text, "code_map": result.CodeMap})
@@ -433,4 +523,113 @@ func (h *Handler) handleTrackSessionEnd(params map[string]any) Response {
 	}
 
 	return jsonResponse(map[string]any{"status": "tracked", "session_id": sessionID})
+}
+
+// archivePattern matches the archive marker written by collapse.go:buildArchiveBlock.
+// Format: [Archiv: Messages 1-725 (725 msgs) — get_compacted_stubs('...', 1, 725) zum Reinzoomen]
+// Keep in sync with the writer in internal/proxy/collapse.go line 145.
+var archivePattern = regexp.MustCompile(`\[Archiv: Messages (\d+)-(\d+) \((\d+) msgs\)`)
+
+// parseFrozenStubs extracts CompactedBlock entries from a frozen stubs JSON blob.
+// Frozen stubs are stored in proxy_state with key "frozen:<threadID>".
+// The JSON schema matches sawtooth.frozenPersisted:
+//
+//	{"messages": [...], "cutoff": 725, "boundary_hash": "...", "prefix_hash": "...", "tokens": 45678, "raw_tokens": 67890}
+//
+// The frozen messages contain archive blocks like:
+//
+//	"[Archiv: Messages 1-725 (725 msgs) — get_compacted_stubs(...)]"
+//
+// from which we extract the message range.
+func parseFrozenStubs(frozenJSON, threadID string, fromIdx, toIdx int) ([]*storage.CompactedBlock, error) {
+	var fp struct {
+		Messages     []any  `json:"messages"`
+		Cutoff       int    `json:"cutoff"`
+		BoundaryHash string `json:"boundary_hash"`
+		PrefixHash   string `json:"prefix_hash"`
+		Tokens       int    `json:"tokens"`
+		RawTokens    int    `json:"raw_tokens"`
+	}
+	if err := json.Unmarshal([]byte(frozenJSON), &fp); err != nil {
+		return nil, fmt.Errorf("unmarshal frozen stubs: %w", err)
+	}
+
+	var blocks []*storage.CompactedBlock
+	for _, msg := range fp.Messages {
+		m, ok := msg.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		// Collect text content from string or block-based message content
+		var texts []string
+		if text, ok := m["content"].(string); ok {
+			texts = append(texts, text)
+		} else if contentBlocks, ok := m["content"].([]any); ok {
+			for _, cb := range contentBlocks {
+				if bm, ok := cb.(map[string]any); ok {
+					if text, ok := bm["text"].(string); ok {
+						texts = append(texts, text)
+					}
+				}
+			}
+		}
+
+		for _, text := range texts {
+			matches := archivePattern.FindStringSubmatch(text)
+			if len(matches) < 4 {
+				continue
+			}
+			start, _ := strconv.Atoi(matches[1])
+			end, _ := strconv.Atoi(matches[2])
+			msgCount, _ := strconv.Atoi(matches[3])
+
+			if toIdx > 0 && (start > toIdx || end < fromIdx) {
+				continue
+			}
+			if fromIdx > 0 && end < fromIdx {
+				continue
+			}
+
+			blocks = append(blocks, &storage.CompactedBlock{
+				ThreadID: threadID,
+				StartIdx: start,
+				EndIdx:   end,
+				Content: fmt.Sprintf("[Archiv: Messages %d-%d (%d msgs) — cutoff=%d, frozen_tokens=%d — use expand_context() or deep_search() for full content]",
+					start, end, msgCount, fp.Cutoff, fp.Tokens),
+			})
+		}
+	}
+
+	return blocks, nil
+}
+
+// formatMessageRange converts messages into a readable text block.
+// Includes role, type, tool name, and timestamp for each message.
+// Content is truncated at 5000 chars per message.
+func formatMessageRange(msgs []models.Message, threadID string, from, to int) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "[Messages %d-%d (%d msgs) for %s]\n", from, to, len(msgs), threadID)
+
+	for _, m := range msgs {
+		ts := m.Sequence
+		content := m.Content
+		if len(content) > 5000 {
+			content = content[:5000] + "..."
+		}
+		if content == "" && len(m.ContentBlob) > 0 {
+			content = string(m.ContentBlob)
+			if len(content) > 5000 {
+				content = content[:5000] + "..."
+			}
+		}
+
+		typeStr := m.MessageType
+		if m.ToolName != "" {
+			typeStr += ":" + m.ToolName
+		}
+		fmt.Fprintf(&sb, "\n--- %s (%s, seq=%d, ts=%s) ---\n%s\n",
+			m.Role, typeStr, ts, m.Timestamp.Format("15:04:05"), content)
+	}
+	return sb.String()
 }

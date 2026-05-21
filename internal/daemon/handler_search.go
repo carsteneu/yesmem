@@ -1,9 +1,10 @@
 package daemon
 
 import (
-	"database/sql"
 	"fmt"
+	"log"
 	"strings"
+	"time"
 
 	"github.com/carsteneu/yesmem/internal/models"
 )
@@ -101,12 +102,18 @@ func (h *Handler) handleDeepSearch(params map[string]any) Response {
 	includeThinking, _ := params["include_thinking"].(bool)
 	includeCommands, _ := params["include_commands"].(bool)
 
+	t0 := time.Now()
+	ftsStart := time.Now()
+
 	// FTS5 now indexes thinking blocks (content_blob copied to content),
 	// so we search all types directly — no separate enrichment queries needed
 	hits, err := h.store.SearchMessagesDeepCtx(query, includeThinking, includeCommands, since, before, limit*3)
 	if err != nil {
 		return errorResponse(err.Error())
 	}
+	ftsMs := time.Since(ftsStart).Milliseconds()
+
+	ctxStart := time.Now()
 
 	// Batch-load session metadata (single query instead of N+1)
 	sessionIDs := make([]string, 0, len(hits))
@@ -133,7 +140,45 @@ func (h *Handler) handleDeepSearch(params map[string]any) Response {
 	}
 
 	msgDB := h.store.MessagesDB()
+
+	// Batch-load ±3 context windows: one query per session (not per hit)
+	type ctxMsg struct{ seq int; content, ts string }
+	ctxBySession := make(map[string][]ctxMsg)
+	if msgDB != nil {
+		type sessionRange struct{ min, max int }
+		ranges := make(map[string]*sessionRange)
+		for _, hit := range hits {
+			r := ranges[hit.SessionID]
+			if r == nil {
+				r = &sessionRange{min: hit.Sequence - 3, max: hit.Sequence + 3}
+				ranges[hit.SessionID] = r
+			} else {
+				if n := hit.Sequence - 3; n < r.min {
+					r.min = n
+				}
+				if n := hit.Sequence + 3; n > r.max {
+					r.max = n
+				}
+			}
+		}
+		for sid, r := range ranges {
+			rows, err := msgDB.Query(
+				`SELECT sequence, content, timestamp FROM messages WHERE session_id = ? AND sequence BETWEEN ? AND ? ORDER BY sequence`,
+				sid, r.min, r.max)
+			if err != nil {
+				continue
+			}
+			for rows.Next() {
+				var m ctxMsg
+				rows.Scan(&m.seq, &m.content, &m.ts)
+				ctxBySession[sid] = append(ctxBySession[sid], m)
+			}
+			rows.Close()
+		}
+	}
+
 	var out []enriched
+	const maxCtxSize = 10000
 	for _, hit := range hits {
 		if len(out) >= limit {
 			break
@@ -156,55 +201,44 @@ func (h *Handler) handleDeepSearch(params map[string]any) Response {
 		if project != "" && !models.ProjectMatches(proj, project) {
 			continue
 		}
-		snippet := hit.Content
-		// deep_search returns full content — that's the whole point.
-		// Regular search() truncates to 300 chars; deep_search does not.
-		// Build ±3 message context window
-		contextWindow := buildMessageContext(msgDB, hit.SessionID, hit.Sequence)
+		snippet := ""
+		contextWindow := ""
+		if msgs, ok := ctxBySession[hit.SessionID]; ok {
+			var sb strings.Builder
+			for _, m := range msgs {
+				if m.seq < hit.Sequence-3 || m.seq > hit.Sequence+3 {
+					continue
+				}
+				content := m.content
+				if m.seq == hit.Sequence {
+					snippet = content
+				}
+				if m.seq != hit.Sequence && len(content) > 1000 {
+					content = content[:1000] + "..."
+				}
+				date := ""
+				if len(m.ts) >= 10 {
+					date = "[" + m.ts[:10] + "] "
+				}
+				if m.seq == hit.Sequence {
+					fmt.Fprintf(&sb, "%s>>> %s\n", date, content)
+				} else {
+					fmt.Fprintf(&sb, "%s%s\n", date, content)
+				}
+				if sb.Len() > maxCtxSize {
+					break
+				}
+			}
+			contextWindow = sb.String()
+		}
 		out = append(out, enriched{
 			SessionID: hit.SessionID, Project: proj, Timestamp: hit.Timestamp,
 			Snippet: snippet, Context: contextWindow, Score: -hit.Rank, MessageType: hit.MessageType,
 			AgentType: agentType, ParentSessionID: parentSID, SourceAgent: sourceAgent,
 		})
 	}
+	ctxMs := time.Since(ctxStart).Milliseconds()
+	totalMs := time.Since(t0).Milliseconds()
+	log.Printf("deep_search: q='%s' fts=%dms ctx=%dms n=%d total=%dms", query, ftsMs, ctxMs, len(out), totalMs)
 	return jsonResponse(out)
-}
-
-// buildMessageContext returns ±3 surrounding messages for context around a search hit.
-func buildMessageContext(db *sql.DB, sessionID string, sequence int) string {
-	if db == nil || sequence <= 0 {
-		return ""
-	}
-	rows, err := db.Query(`SELECT sequence, content, timestamp FROM messages WHERE session_id = ? AND sequence BETWEEN ? AND ? ORDER BY sequence`, sessionID, sequence-3, sequence+3)
-	if err != nil {
-		return ""
-	}
-	defer rows.Close()
-
-	var sb strings.Builder
-	const maxContextSize = 10000 // deep_search context window — generous for actual inspection
-	for rows.Next() {
-		var seq int
-		var content, ts string
-		if err := rows.Scan(&seq, &content, &ts); err != nil {
-			continue
-		}
-		// Truncate individual context messages (not the hit itself)
-		if seq != sequence && len(content) > 1000 {
-			content = content[:1000] + "..."
-		}
-		date := ""
-		if len(ts) >= 10 {
-			date = "[" + ts[:10] + "] "
-		}
-		if seq == sequence {
-			fmt.Fprintf(&sb, "%s>>> %s\n", date, content)
-		} else {
-			fmt.Fprintf(&sb, "%s%s\n", date, content)
-		}
-		if sb.Len() > maxContextSize {
-			break
-		}
-	}
-	return sb.String()
 }

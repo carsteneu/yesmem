@@ -18,7 +18,7 @@ var excludedPrefixes = []string{
 	"/proc/", "/sys/", "/dev/",
 }
 
-var excludedExtensions = []string{".log", ".txt"}
+var excludedExtensions = []string{".log", ".txt", ".md", ".gitignore", ".gitattributes", ".gitmodules", ".gitconfig"}
 
 // ParseNavCommand checks if a shell command is a code-navigation command
 // targeting specific files. Returns the tool name, file paths, and whether
@@ -152,20 +152,23 @@ func ParseREPLNavCommands(code string) []string {
 	return cmds
 }
 
-// SuggestYesmemTool returns a suggestion for which yesmem MCP tool to use
-// instead of the given shell navigation tool.
-func SuggestYesmemTool(navTool, filePath string) string {
+// SuggestYesmemTool returns a concrete yesmem MCP tool call to use
+// instead of the given shell navigation tool on the given file.
+func SuggestYesmemTool(navTool, filePath, project string) string {
 	switch navTool {
 	case "grep", "egrep", "fgrep", "rg":
-		return "search_code_index(pattern) for symbol search, or search_code(pattern) for text grep with graph context"
+		return fmt.Sprintf("search_code_index(\"%s\", \"%s\") for symbol search, or search_code(\"%s\", \"%s\") for text grep",
+			filepath.Base(filePath), project, filepath.Base(filePath), project)
 	case "sed":
-		return "get_code_snippet(file, start_line, end_line) for reading a line range"
+		return fmt.Sprintf("get_code_snippet(file=\"%s\", project=\"%s\", start_line=x, end_line=y)", filePath, project)
 	case "cat":
-		return "get_file_symbols(file) for symbol overview, then get_code_snippet for targeted ranges"
+		return fmt.Sprintf("get_file_symbols(\"%s\", \"%s\") for overview, then get_code_snippet(file=\"%s\", project=\"%s\", start_line=x, end_line=y)",
+			filePath, project, filePath, project)
 	case "head", "tail":
-		return "get_code_snippet(file, start_line, end_line) for reading a specific range"
+		return fmt.Sprintf("get_code_snippet(file=\"%s\", project=\"%s\", start_line=x, end_line=y)", filePath, project)
 	case "awk":
-		return "get_code_snippet(file, start_line, end_line) or search_code(pattern) depending on use"
+		return fmt.Sprintf("get_code_snippet(file=\"%s\", project=\"%s\", start_line=x, end_line=y) or search_code(pattern, \"%s\")",
+			filePath, project, project)
 	}
 	return ""
 }
@@ -185,10 +188,9 @@ func CheckCodeNav(cmd, cwd, project, sessionID string, isIndexed func(string, st
 
 	for _, f := range files {
 		if isIndexed(project, f) {
-			suggestion := SuggestYesmemTool(tool, f)
-			reason = "yesmem has indexed this file. Use MCP tools instead of shell navigation:\n" +
-				"  " + suggestion + "\n" +
-				"To dismiss for this session: dismiss_code_nav(session_id=\"" + sessionID + "\")"
+			suggestion := SuggestYesmemTool(tool, f, project)
+			reason = fmt.Sprintf("BLOCKED: Use yesmem MCP tools instead of shell navigation for indexed file %s\n"+
+				"  → %s", f, suggestion)
 			return reason, true
 		}
 	}

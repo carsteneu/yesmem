@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/carsteneu/yesmem/internal/briefing"
@@ -170,6 +171,10 @@ case "migrate":
 		runCapBlobPut()
 	case "cap-blob-get":
 		runCapBlobGet()
+	case "worker":
+		runWorker(os.Args[2:])
+	case "llm-complete":
+		runLLMComplete(os.Args[2:])
 	case "spawn-agents":
 		runSpawnAgents(os.Args[2:])
 	case "agent-tty":
@@ -184,6 +189,13 @@ case "migrate":
 }
 
 func runMCP() {
+	// Prevent MCP recursion deadlock: when the daemon spawns opencode
+	// (which loads yesmem mcp), the child mcp must not reconnect to the
+	// same daemon that is blocked waiting for opencode to finish.
+	if os.Getenv("YESMEM_DAEMON_CHILD") == "1" {
+		os.Exit(0)
+	}
+
 	dataDir := yesmemDataDir()
 
 	srv, err := yesmcp.New(dataDir)
@@ -196,6 +208,8 @@ func runMCP() {
 }
 
 func runDaemon() {
+	runtime.GOMAXPROCS(4)
+
 	home, _ := os.UserHomeDir()
 	dataDir := yesmemDataDir()
 	projectsDir := filepath.Join(home, ".claude", "projects")
@@ -227,6 +241,7 @@ func runDaemon() {
 		Replace:          replace,
 		HTTPEnabled:      enableHTTP || appCfg.HTTP.Enabled,
 		HTTPListen:       appCfg.HTTP.Listen,
+		CapsDir:          appCfg.CapsDir,
 	}); err != nil {
 		log.Fatalf("daemon: %v", err)
 	}

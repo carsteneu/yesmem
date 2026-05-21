@@ -80,6 +80,67 @@ func TestCachedScanner_WorksWithoutGit(t *testing.T) {
 	}
 }
 
+func TestCachedScanner_GetCachedGraph(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0644)
+	os.MkdirAll(filepath.Join(dir, ".git", "refs", "heads"), 0755)
+	os.WriteFile(filepath.Join(dir, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0644)
+	os.WriteFile(filepath.Join(dir, ".git", "refs", "heads", "main"), []byte("abc123\n"), 0644)
+
+	cs := NewCachedScanner(&DirectoryScanner{})
+
+	// Case 1: Before any Scan, GetCachedGraph returns nil
+	if g := cs.GetCachedGraph(dir); g != nil {
+		t.Error("GetCachedGraph before Scan should return nil")
+	}
+
+	// Case 2: After Scan, GetCachedGraph returns non-nil graph
+	r1, err := cs.Scan(dir)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if r1 == nil {
+		t.Fatal("scan should return result")
+	}
+	g1 := cs.GetCachedGraph(dir)
+	if g1 == nil {
+		t.Fatal("GetCachedGraph after Scan should return non-nil")
+	}
+	if g1.NodeCount() == 0 {
+		t.Error("graph should contain nodes for a .go file")
+	}
+
+	// Case 3: Same HEAD returns same graph pointer (cached)
+	r2, err := cs.Scan(dir)
+	if err != nil {
+		t.Fatalf("scan 2: %v", err)
+	}
+	if r1 != r2 {
+		t.Error("second scan with same HEAD should return cached result")
+	}
+	g2 := cs.GetCachedGraph(dir)
+	if g1 != g2 {
+		t.Error("GetCachedGraph with same HEAD should return same pointer")
+	}
+
+	// Case 4: New HEAD returns new graph
+	os.WriteFile(filepath.Join(dir, ".git", "refs", "heads", "main"), []byte("def456\n"), 0644)
+	r3, err := cs.Scan(dir)
+	if err != nil {
+		t.Fatalf("scan 3: %v", err)
+	}
+	if r3 == r1 {
+		t.Error("scan after HEAD change should return new result")
+	}
+	g3 := cs.GetCachedGraph(dir)
+	if g3 == nil {
+		t.Fatal("GetCachedGraph after HEAD change should return non-nil")
+	}
+	if g3 == g1 {
+		t.Error("GetCachedGraph after HEAD change should return new graph")
+	}
+}
+
 func TestReadGitHead_ReadsRef(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, ".git", "refs", "heads"), 0755)

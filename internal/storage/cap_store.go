@@ -573,3 +573,52 @@ func (s *Store) capStoreTableExists(fullName string) bool {
 	s.capStoreDB.QueryRow(`SELECT COUNT(*) FROM cap_store_meta WHERE full_name = ?`, fullName).Scan(&count)
 	return count > 0
 }
+
+var validOrderPattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(?:\s+(?:ASC|DESC))?(?:\s*,\s*[a-zA-Z_][a-zA-Z0-9_]*(?:\s+(?:ASC|DESC))?)*$`)
+
+func sanitizeOrderClause(order string) error {
+	if !validOrderPattern.MatchString(order) {
+		return fmt.Errorf("invalid ORDER BY: %q (allowed: column [ASC|DESC] [, ...])", order)
+	}
+	return nil
+}
+
+func (s *Store) CapsClaimAndRead(capName, tableName, where, order string, args []any, set map[string]any, returning []string) (map[string]any, error) {
+	if err := validateCapName(capName); err != nil { return nil, err }
+	if err := validateCapName(tableName); err != nil { return nil, err }
+	fullName := resolveTableName(capName, tableName)
+	if !s.capStoreTableExists(fullName) { return nil, fmt.Errorf("table %s.%s does not exist", capName, tableName) }
+	if where == "" { return nil, fmt.Errorf("WHERE clause required for claim_and_read") }
+	if err := sanitizeWhere(where); err != nil { return nil, err }
+	if order == "" { order = "id ASC" }
+	if err := sanitizeOrderClause(order); err != nil { return nil, err }
+	if len(returning) == 0 { returning = []string{"*"} }
+	for _, col := range returning {
+		if col == "*" { continue }
+		if err := validateCapName(col); err != nil { return nil, fmt.Errorf("returning column %s: %w", col, err) }
+	}
+	if len(set) == 0 { return nil, fmt.Errorf("set columns required for claim_and_read") }
+	var setClauses []string
+	var setVals []any
+	for k, v := range set {
+		if err := validateCapName(k); err != nil { return nil, fmt.Errorf("set column %s: %w", k, err) }
+		setClauses = append(setClauses, k+" = ?")
+		setVals = append(setVals, v)
+	}
+	returningStr := strings.Join(returning, ", ")
+	query := fmt.Sprintf("UPDATE %s SET %s WHERE id = (SELECT id FROM %s WHERE %s ORDER BY %s LIMIT 1) RETURNING %s", fullName, strings.Join(setClauses, ", "), fullName, where, order, returningStr)
+	queryVals := append(setVals, args...)
+	rows, err := s.capStoreDB.Query(query, queryVals...)
+	if err != nil { return nil, fmt.Errorf("claim_and_read: %w", err) }
+	defer rows.Close()
+	columns, err := rows.Columns()
+	if err != nil { return nil, err }
+	if !rows.Next() { return nil, rows.Err() }
+	values := make([]any, len(columns))
+	ptrs := make([]any, len(columns))
+	for i := range values { ptrs[i] = &values[i] }
+	if err := rows.Scan(ptrs...); err != nil { return nil, err }
+	row := make(map[string]any, len(columns))
+	for i, col := range columns { row[col] = values[i] }
+	return row, nil
+}

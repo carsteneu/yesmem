@@ -26,12 +26,13 @@ func RunThink(dataDir string) {
 	}
 
 	pid := os.Getppid()
-	registerPID(dataDir, input.SessionID, pid)
-	writePIDFile(dataDir, input.SessionID, pid)
+	RegisterPID(dataDir, input.SessionID, pid)
+	WritePIDFile(dataDir, input.SessionID, pid)
 }
 
-// registerPID tells the daemon which OS PID belongs to this session.
-func registerPID(dataDir, sessionID string, pid int) {
+// RegisterPID tells the daemon which OS PID belongs to this session.
+// Best-effort — silently no-ops on daemon dial failure (hook must not block startup).
+func RegisterPID(dataDir, sessionID string, pid int) {
 	client, err := daemon.Dial(dataDir)
 	if err != nil {
 		return
@@ -40,9 +41,9 @@ func registerPID(dataDir, sessionID string, pid int) {
 	client.Call("register_pid", map[string]any{"session_id": sessionID, "pid": float64(pid)})
 }
 
-// writePIDFile persists PID→session_id mapping to disk so MCP servers
+// WritePIDFile persists PID→session_id mapping to disk so MCP servers
 // can resolve their session after daemon restarts.
-func writePIDFile(dataDir, sessionID string, pid int) {
+func WritePIDFile(dataDir, sessionID string, pid int) {
 	dir := filepath.Join(dataDir, "sessions")
 	os.MkdirAll(dir, 0700)
 	os.WriteFile(filepath.Join(dir, fmt.Sprintf("%d", pid)), []byte(sessionID), 0600)

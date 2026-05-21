@@ -17,3 +17,13 @@ func ProjectMatches(a, b string) bool {
 	}
 	return filepath.Base(a) == filepath.Base(b)
 }
+
+// CanonicalProject returns the canonical (parent) project basename for a CWD path.
+// If CWD is inside a .worktrees/ directory, returns the parent directory basename.
+// Otherwise returns filepath.Base(cwd).
+func CanonicalProject(cwd string) string {
+	if i := strings.Index(cwd, "/.worktrees/"); i >= 0 {
+		return filepath.Base(cwd[:i])
+	}
+	return filepath.Base(cwd)
+}

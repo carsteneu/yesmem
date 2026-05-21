@@ -11,7 +11,7 @@ import (
 
 func seedCapProposed(t *testing.T, h *Handler, capName, proposedBash string) int64 {
 	t.Helper()
-	caps, err := h.store.GetActiveLearnings("cap", "", "", "")
+	caps, err := h.store.GetActiveLearnings("cap", "", "", "", 0)
 	if err != nil {
 		t.Fatalf("lookup active cap %q: %v", capName, err)
 	}
@@ -78,7 +78,7 @@ func TestCapProposalDecide_AcceptUpdatesActiveCap(t *testing.T) {
 		t.Fatalf("accept failed: %s", resp.Error)
 	}
 
-	caps, _ := h.store.GetActiveLearnings("cap", "", "", "")
+	caps, _ := h.store.GetActiveLearnings("cap", "", "", "", 0)
 	var body string
 	for _, c := range caps {
 		m, err := ParseCapMeta(c.Context)
@@ -126,7 +126,7 @@ func TestCapProposalDecide_RejectKeepsActiveCap(t *testing.T) {
 		t.Fatalf("reject failed: %s", resp.Error)
 	}
 
-	caps, _ := h.store.GetActiveLearnings("cap", "", "", "")
+	caps, _ := h.store.GetActiveLearnings("cap", "", "", "", 0)
 	var body string
 	for _, c := range caps {
 		m, err := ParseCapMeta(c.Context)
@@ -220,7 +220,7 @@ func TestCapProposalDecide_AcceptPreservesBundleMetadata(t *testing.T) {
 		t.Fatalf("accept failed: %s", resp.Error)
 	}
 
-	caps, err := h.store.GetActiveLearnings("cap", "yesmem", "", "")
+	caps, err := h.store.GetActiveLearnings("cap", "yesmem", "", "", 0)
 	if err != nil {
 		t.Fatalf("read caps: %v", err)
 	}
@@ -360,7 +360,7 @@ func TestCapProposalDecide_AcceptTargetsScriptByName(t *testing.T) {
 		t.Fatalf("seed save_cap: %s", saveResp.Error)
 	}
 
-	caps, err := h.store.GetActiveLearnings("cap", "yesmem", "", "")
+	caps, err := h.store.GetActiveLearnings("cap", "yesmem", "", "", 0)
 	if err != nil {
 		t.Fatalf("get active: %v", err)
 	}
@@ -414,7 +414,7 @@ func TestCapProposalDecide_AcceptTargetsScriptByName(t *testing.T) {
 		t.Fatalf("accept: %s", resp.Error)
 	}
 
-	caps, err = h.store.GetActiveLearnings("cap", "yesmem", "", "")
+	caps, err = h.store.GetActiveLearnings("cap", "yesmem", "", "", 0)
 	if err != nil {
 		t.Fatalf("re-read active caps: %v", err)
 	}

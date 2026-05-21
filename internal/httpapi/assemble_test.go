@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -239,5 +240,111 @@ func TestInjectFreshRemember_Empty(t *testing.T) {
 	last := messages[len(messages)-1].(map[string]any)
 	if _, ok := last["content"].([]any); ok {
 		t.Error("content should remain string when nothing injected")
+	}
+}
+
+func TestInjectBriefingMsg_SystemRole(t *testing.T) {
+	messages := []any{
+		map[string]any{"role": "user", "content": "hi"},
+	}
+	result := injectBriefingMsg(messages, "test briefing content")
+	if len(result) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(result))
+	}
+	first, ok := result[0].(map[string]any)
+	if !ok {
+		t.Fatal("first message not a map")
+	}
+	if first["role"] != "system" {
+		t.Errorf("expected role=system, got %q", first["role"])
+	}
+	content, _ := first["content"].(string)
+	if content == "" {
+		t.Fatal("briefing content is empty")
+	}
+	if !strings.Contains(content, "<MANDATORY_BRIEFING>") {
+		t.Error("missing <MANDATORY_BRIEFING> start tag")
+	}
+	if !strings.Contains(content, "</MANDATORY_BRIEFING>") {
+		t.Error("missing </MANDATORY_BRIEFING> end tag")
+	}
+	if !strings.Contains(content, "test briefing content") {
+		t.Error("missing briefing content inside wrapper")
+	}
+}
+
+func TestInjectBriefingMsg_AfterExistingSystem(t *testing.T) {
+	messages := []any{
+		map[string]any{"role": "system", "content": "you are a helpful assistant"},
+		map[string]any{"role": "user", "content": "hello"},
+	}
+	result := injectBriefingMsg(messages, "briefing")
+	if len(result) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(result))
+	}
+	first, _ := result[0].(map[string]any)
+	if first["role"] != "system" {
+		t.Errorf("first message should remain system, got %q", first["role"])
+	}
+	if first["content"] != "you are a helpful assistant" {
+		t.Errorf("original system message content was altered: %q", first["content"])
+	}
+	second, _ := result[1].(map[string]any)
+	if second["role"] != "system" {
+		t.Errorf("second message should be system (briefing), got %q", second["role"])
+	}
+}
+
+func TestInjectBriefingMsg_NoAssistantTurn(t *testing.T) {
+	messages := []any{
+		map[string]any{"role": "user", "content": "hi"},
+	}
+	result := injectBriefingMsg(messages, "briefing")
+	for _, m := range result {
+		msg := m.(map[string]any)
+		if msg["role"] == "assistant" {
+			content, _ := msg["content"].(string)
+			if strings.Contains(content, "Briefing gelesen") || strings.Contains(content, "gelesen") {
+				t.Error("briefing-gelesen assistant turn should not be present with system role")
+			}
+		}
+	}
+}
+
+func TestInjectBriefingMsg_DoesNotMutateInput(t *testing.T) {
+	messages := []any{
+		map[string]any{"role": "user", "content": "hi"},
+	}
+	originalLen := len(messages)
+	_ = injectBriefingMsg(messages, "briefing")
+	if len(messages) != originalLen {
+		t.Errorf("input was mutated: len %d -> %d", originalLen, len(messages))
+	}
+}
+
+func TestInjectBriefingMsg_EmptyInput(t *testing.T) {
+	result := injectBriefingMsg([]any{}, "briefing")
+	if len(result) != 1 {
+		t.Fatalf("expected 1 message for empty input, got %d", len(result))
+	}
+	msg := result[0].(map[string]any)
+	if msg["role"] != "system" {
+		t.Errorf("expected role=system, got %q", msg["role"])
+	}
+	content, _ := msg["content"].(string)
+	if !strings.Contains(content, "<MANDATORY_BRIEFING>") {
+		t.Error("missing wrapper on empty input")
+	}
+}
+
+func TestInjectBriefingMsg_IgnoresRolelessFirstMessage(t *testing.T) {
+	messages := []any{
+		map[string]any{"content": "no role here"},
+		map[string]any{"role": "user", "content": "hello"},
+	}
+	result := injectBriefingMsg(messages, "briefing")
+	first, _ := result[0].(map[string]any)
+	if role := first["role"]; role != "system" {
+		t.Errorf("briefing should be at position 0 when first message has no role, got role=%q at pos 0", role)
 	}
 }

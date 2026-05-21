@@ -25,121 +25,143 @@ import (
 // Pairs with `yesmem query --format objects` to give a pure-Go bordmittel
 // alternative to the sqlite3-CLI plus jq pipeline. Powered by github.com/itchyny/gojq.
 func runJSON(args []string) {
+	opts, expr, exitStatus, err := parseJSONArgs(args)
+	if err != nil {
+		if err == errJSONHelpRequested {
+			jsonUsage("")
+		}
+		jsonUsage(err.Error())
+	}
+	output, code, runErr := jsonCLIExecute(opts, expr, exitStatus, os.Stdin)
+	if runErr != nil {
+		log.Fatalf("json: %v", runErr)
+	}
+	if _, err := os.Stdout.Write(output); err != nil {
+		log.Fatalf("write stdout: %v", err)
+	}
+	if exitStatus || code != 0 {
+		os.Exit(code)
+	}
+}
+
+// errJSONHelpRequested signals that the caller asked for --help; runJSON treats
+// this as a clean exit while jsonCLIRun (worker path) treats it as an error.
+var errJSONHelpRequested = fmt.Errorf("help requested")
+
+// parseJSONArgs parses CLI-style arguments for `yesmem json` into structured
+// options. Returns errJSONHelpRequested if the user asked for --help.
+func parseJSONArgs(args []string) (jsonFilterOpts, string, bool, error) {
+	var opts jsonFilterOpts
 	expr := ""
-	raw := false
-	indent := 0
-	nullInput := false
-	rawInput := false
-	slurp := false
 	exitStatus := false
-	var varNames []string
-	var varValues []any
 
 	i := 0
 	for i < len(args) {
 		a := args[i]
 		switch {
 		case a == "-r" || a == "--raw-output":
-			raw = true
+			opts.raw = true
 			i++
 		case a == "-n" || a == "--null-input":
-			nullInput = true
+			opts.nullInput = true
 			i++
 		case a == "-R" || a == "--raw-input":
-			rawInput = true
+			opts.rawInput = true
 			i++
 		case a == "-s" || a == "--slurp":
-			slurp = true
+			opts.slurp = true
 			i++
 		case a == "-e" || a == "--exit-status":
 			exitStatus = true
 			i++
 		case a == "-c" || a == "--compact-output":
-			// already compact by default (indent=0); accept silently
 			i++
 		case a == "--indent":
 			if i+1 >= len(args) {
-				jsonUsage("--indent needs a value")
+				return opts, "", false, fmt.Errorf("--indent needs a value")
 			}
 			n, err := strconv.Atoi(args[i+1])
 			if err != nil || n < 0 {
-				jsonUsage(fmt.Sprintf("--indent: bad value %q", args[i+1]))
+				return opts, "", false, fmt.Errorf("--indent: bad value %q", args[i+1])
 			}
-			indent = n
+			opts.indent = n
 			i += 2
 		case strings.HasPrefix(a, "--indent="):
 			n, err := strconv.Atoi(strings.TrimPrefix(a, "--indent="))
 			if err != nil || n < 0 {
-				jsonUsage(fmt.Sprintf("--indent: bad value %q", a))
+				return opts, "", false, fmt.Errorf("--indent: bad value %q", a)
 			}
-			indent = n
+			opts.indent = n
 			i++
 		case a == "--arg":
 			if i+2 >= len(args) {
-				jsonUsage("--arg needs <name> <value>")
+				return opts, "", false, fmt.Errorf("--arg needs <name> <value>")
 			}
-			name := args[i+1]
-			val := args[i+2]
-			varNames = append(varNames, "$"+name)
-			varValues = append(varValues, val)
+			opts.varNames = append(opts.varNames, "$"+args[i+1])
+			opts.varValues = append(opts.varValues, args[i+2])
 			i += 3
 		case a == "--argjson":
 			if i+2 >= len(args) {
-				jsonUsage("--argjson needs <name> <value>")
+				return opts, "", false, fmt.Errorf("--argjson needs <name> <value>")
 			}
 			name := args[i+1]
 			var v any
 			if err := json.Unmarshal([]byte(args[i+2]), &v); err != nil {
-				jsonUsage(fmt.Sprintf("--argjson %s: invalid JSON: %v", name, err))
+				return opts, "", false, fmt.Errorf("--argjson %s: invalid JSON: %v", name, err)
 			}
-			varNames = append(varNames, "$"+name)
-			varValues = append(varValues, v)
+			opts.varNames = append(opts.varNames, "$"+name)
+			opts.varValues = append(opts.varValues, v)
 			i += 3
 		case a == "-h" || a == "--help":
-			jsonUsage("")
+			return opts, "", false, errJSONHelpRequested
 		default:
 			if expr == "" {
 				expr = a
 				i++
 			} else {
-				jsonUsage(fmt.Sprintf("unexpected argument: %q", a))
+				return opts, "", false, fmt.Errorf("unexpected argument: %q", a)
 			}
 		}
 	}
 
 	if expr == "" {
-		jsonUsage("missing jq expression")
+		return opts, "", false, fmt.Errorf("missing jq expression")
 	}
+	return opts, expr, exitStatus, nil
+}
 
-	input, err := io.ReadAll(os.Stdin)
+// jsonCLIRun reproduces `yesmem json` behavior in-process: parse args, read
+// stdin, apply filter, return the bytes that would be written to stdout plus
+// the exit code that `yesmem json` would have used. Used by the worker's
+// json_cli op so cap scripts can route jq calls through the long-lived worker
+// instead of spawning a new yesmem binary per filter.
+func jsonCLIRun(args []string, stdin io.Reader) ([]byte, int, error) {
+	opts, expr, exitStatus, err := parseJSONArgs(args)
 	if err != nil {
-		log.Fatalf("read stdin: %v", err)
+		return nil, 2, err
 	}
+	return jsonCLIExecute(opts, expr, exitStatus, stdin)
+}
 
-	res, err := applyJSONFilterWithOpts(input, expr, jsonFilterOpts{
-		raw:        raw,
-		indent:     indent,
-		nullInput:  nullInput,
-		rawInput:   rawInput,
-		slurp:      slurp,
-		varNames:   varNames,
-		varValues:  varValues,
-	})
+func jsonCLIExecute(opts jsonFilterOpts, expr string, exitStatus bool, stdin io.Reader) ([]byte, int, error) {
+	input, err := io.ReadAll(stdin)
 	if err != nil {
-		log.Fatalf("json: %v", err)
+		return nil, 2, fmt.Errorf("read input: %w", err)
 	}
-	if _, err := os.Stdout.Write(res.output); err != nil {
-		log.Fatalf("write stdout: %v", err)
+	res, err := applyJSONFilterWithOpts(input, expr, opts)
+	if err != nil {
+		return nil, 2, err
 	}
+	exit := 0
 	if exitStatus {
-		if !res.hasOutput {
-			os.Exit(4)
+		switch {
+		case !res.hasOutput:
+			exit = 4
+		case isFalseOrNull(res.lastVal):
+			exit = 1
 		}
-		if isFalseOrNull(res.lastVal) {
-			os.Exit(1)
-		}
-		os.Exit(0)
 	}
+	return res.output, exit, nil
 }
 
 func jsonUsage(msg string) {

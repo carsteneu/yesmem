@@ -1,20 +1,23 @@
 package wikirender
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 )
 
 type renderState struct {
 	cfg            *RenderConfig
-	projectPath    string
+	projectPath    string // cached Store.ResolveProjectPath — resolved once, avoids sub-queries inside row loops
 	learnings      map[int64]Learning
+	learningsMu    sync.Mutex
 	entities       map[string][]int64
 	byLearning     map[int64][]string
 	files          map[string]*FilePage
@@ -27,6 +30,9 @@ type renderState struct {
 	gitignore      []gitignorePattern
 	packageIntents map[string]string
 	tpls           *template.Template
+	computeMs      int64
+	tplExecMs      int64
+	skippedWrites  int
 }
 
 type learningView struct {
@@ -103,9 +109,11 @@ func Render(ctx context.Context, cfg RenderConfig) (*Result, error) {
 	}
 	start := time.Now()
 	rs := newRenderState(&cfg)
+	loadStart := time.Now()
 	if err := rs.loadAll(ctx); err != nil {
 		return nil, err
 	}
+	loadMs := time.Since(loadStart).Milliseconds()
 
 	rs.tpls = template.New("base").Funcs(tplFuncs())
 	for name, body := range map[string]string{
@@ -123,10 +131,12 @@ func Render(ctx context.Context, cfg RenderConfig) (*Result, error) {
 		template.Must(rs.tpls.New(name).Parse(body))
 	}
 
+	writeStart := time.Now()
 	if err := rs.writeAll(); err != nil {
 		return nil, err
 	}
 
+	writeMs := time.Since(writeStart).Milliseconds()
 	q := 0
 	for _, l := range rs.learnings {
 		if l.QuarantinedAt != "" {
@@ -143,37 +153,101 @@ func Render(ctx context.Context, cfg RenderConfig) (*Result, error) {
 		Contradictions: len(rs.contradictions),
 		BuiltAt:        time.Now().Format(time.RFC3339),
 		DurationMs:     time.Since(start).Milliseconds(),
+		LoadMs:         loadMs,
+		ComputeMs:      rs.computeMs,
+		WriteMs:        writeMs,
+		TplMs:          rs.tplExecMs,
+		SkippedWrites:  rs.skippedWrites,
 	}, nil
 }
 
 func (s *renderState) loadAll(ctx context.Context) error {
-	loaders := []struct {
-		name string
-		fn   func(context.Context) error
-	}{
-		{"learnings", s.loadLearnings},
-		{"entities", s.loadEntities},
-		{"actions", s.loadActions},
-		{"keywords", s.loadKeywords},
-		{"supersedes-content", s.loadSupersedesContent},
-		{"file_coverage", s.loadFileCoverage},
-		{"contradictions", s.loadContradictions},
-		{"sessions", s.loadSessions},
+	// Phase 1: learnings must be loaded first — everything depends on them
+	if err := s.loadLearnings(ctx); err != nil {
+		return fmt.Errorf("learnings: %w", err)
 	}
-	for _, l := range loaders {
-		if err := l.fn(ctx); err != nil {
-			return fmt.Errorf("%s: %w", l.name, err)
+
+	// Pre-extract data from s.learnings (single-threaded, before any goroutine touches the map)
+	supIDs := make([]int64, 0)
+	sessIDs := make(map[string]bool)
+	for _, l := range s.learnings {
+		if l.Supersedes > 0 {
+			supIDs = append(supIDs, l.Supersedes)
+		}
+		if l.SessionID != "" {
+			sessIDs[l.SessionID] = true
 		}
 	}
+
+	// Phase 2: run independent queries in parallel
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var firstErr error
+	var supersedesContent map[int64]string
+
+	run := func(fn func() error) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := fn(); err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+
+	run(func() error { return s.loadEntities(ctx) })
+	run(func() error { return s.loadActions(ctx) })
+	run(func() error { return s.loadKeywords(ctx) })
+	run(func() error { return s.loadContradictions(ctx) })
+	run(func() error { return s.loadFileCoverage(ctx) })
+	run(func() error {
+		m, err := s.loadSupersedesContentForIDs(ctx, supIDs)
+		if err == nil && m != nil {
+			mu.Lock()
+			supersedesContent = m
+			mu.Unlock()
+		}
+		return err
+	})
+	run(func() error {
+		return s.loadSessionsForIDs(ctx, sessIDs)
+	})
+
+	wg.Wait()
+	if firstErr != nil {
+		return firstErr
+	}
+
+	// Phase 3: serial post-processing — needs data from all parallel goroutines
+	s.learningsMu.Lock()
+	if supersedesContent != nil {
+		for id, l := range s.learnings {
+			if l.Supersedes > 0 {
+				if c, ok := supersedesContent[l.Supersedes]; ok {
+					l.SupersedesContent = c
+					s.learnings[id] = l
+				}
+			}
+		}
+	}
+	s.learningsMu.Unlock()
+
 	if err := s.loadScan(); err != nil {
 		return err
 	}
 	s.mergeScanFiles()
 	s.loadCLAUDEIntents()
+	cStart := time.Now()
 	s.computeCoOccurrence()
 	s.computeRelatedLearnings()
+	s.computeMs = time.Since(cStart).Milliseconds()
 	s.linkLearningsToFiles()
 	s.loadFileSessions(ctx)
+	s.attachLearningsToSessions()
 	return nil
 }
 
@@ -656,12 +730,21 @@ func (s *renderState) writeHealth() error {
 }
 
 func (s *renderState) execTemplate(path, name string, data any) error {
-	f, err := os.Create(path)
-	if err != nil {
+	tplStart := time.Now()
+	var buf bytes.Buffer
+	if err := s.tpls.ExecuteTemplate(&buf, name, data); err != nil {
 		return err
 	}
-	defer f.Close()
-	return s.tpls.ExecuteTemplate(f, name, data)
+	s.tplExecMs += time.Since(tplStart).Milliseconds()
+	rendered := buf.Bytes()
+
+	existing, err := os.ReadFile(path)
+	if err == nil && bytes.Equal(existing, rendered) {
+		s.skippedWrites++
+		return nil
+	}
+
+	return os.WriteFile(path, rendered, 0644)
 }
 
 func (s *renderState) countTopics() int {

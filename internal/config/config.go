@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/carsteneu/yesmem/internal/embedding"
+	"github.com/carsteneu/yesmem/internal/models"
 	"gopkg.in/yaml.v3"
 )
 
@@ -29,7 +30,12 @@ type Config struct {
 	Agents                AgentsConfig              `yaml:"agents"`
 	ForkedAgents          ForkedAgentsConfig        `yaml:"forked_agents"`
 	DefaultSandboxProfile string                    `yaml:"default_sandbox_profile"`
+	CapsDir               string                    `yaml:"caps_dir"`
 	SecretsSanitization   SecretsSanitizationConfig `yaml:"secrets_sanitization"`
+	// ExcludeProjects lists project directories whose sessions are never indexed.
+	// Sessions with Project matching any of these paths are silently skipped.
+	// Example: ["/home", "/tmp"] prevents home-directory and temp-directory sessions.
+	ExcludeProjects []string `yaml:"exclude_projects"`
 }
 
 // ModelPricing holds per-million-token pricing for a model.
@@ -96,7 +102,9 @@ type ProxyConfig struct {
 	Enabled                  bool           `yaml:"enabled"`                    // auto-start proxy with daemon
 	Listen                   string         `yaml:"listen"`                     // listen address, e.g. ":9099"
 	Target                   string         `yaml:"target"`                     // target API URL, e.g. "https://api.anthropic.com"
-	OpenAITarget             string         `yaml:"openai_target"`              // upstream for OpenAI-format clients (default: "https://api.openai.com")
+	OpenAITarget             string            `yaml:"openai_target"`              // upstream for OpenAI-format clients (default: "https://api.openai.com")
+	ProviderTargets          map[string]string `yaml:"provider_targets"`           // per-provider upstream, e.g. deepseek: "https://api.deepseek.com"
+	AutoConfigureProviders   bool              `yaml:"auto_configure_providers"`  // auto-discover provider targets from opencode config (default: true)
 	TokenThreshold           int            `yaml:"token_threshold"`            // trigger stubbing above this token count (default: 180000)
 	TokenMinimumThreshold    int            `yaml:"token_minimum_threshold"`    // stub down to this floor (default: 80000)
 	KeepRecent               int            `yaml:"keep_recent"`                // messages to always keep unmodified
@@ -104,28 +112,173 @@ type ProxyConfig struct {
 	CacheTTL                 string         `yaml:"cache_ttl"`                  // "ephemeral" (5m, default) or "1h" (extended, 2× write cost)
 	UsageDeflationFactor     float64        `yaml:"usage_deflation_factor"`     // scale input_tokens reported to CC (0=off, 0.7=70%)
 	TokenThresholds          map[string]int `yaml:"token_thresholds"`           // model-specific thresholds: {"opus": 180000, "haiku": 130000}
-	PromptUngate             bool           `yaml:"prompt_ungate"`              // strip CLAUDE.md subordination disclaimer (default: true)
-	PromptRewrite            bool           `yaml:"prompt_rewrite"`             // strip output-throttling + inject quality directives (default: false)
-	PromptEnhance            bool           `yaml:"prompt_enhance"`             // CLAUDE.md authority boost, comment discipline, persona tone (default: false)
-	PromptToolPrefs          bool           `yaml:"prompt_tool_prefs"`          // inject [yesmem-tool-prefs] Edit/Write preference + error-semantics warning (default: true)
-	PromptOutputDiscipline   bool           `yaml:"prompt_output_discipline"`   // inject [yesmem-output-discipline] no-preamble + no-skill-eval + exploratory-heuristic (default: true)
-	PromptCodingDiscipline   bool           `yaml:"prompt_coding_discipline"`   // inject [yesmem-coding-discipline] read-before-propose + no-brute-force + no-half-finished (default: true)
-	PromptBeweislast         bool           `yaml:"prompt_beweislast"`          // inject [yesmem-beweislast] fabrication-guard + claim-vs-proof + stance-under-challenge + tool-result-honesty + long-context-erosion (default: true)
-	PromptScopeDiscipline    bool           `yaml:"prompt_scope_discipline"`    // inject [yesmem-scope-discipline] deliver-A-not-A+B+C + adjacent-findings-separate + scope-bound-authorization (default: true)
-	PromptDelegationContract bool           `yaml:"prompt_delegation_contract"` // inject [yesmem-delegation-contract] self-contained-prompts + parallel-dispatch (default: true)
-	PromptClarifyFirst       bool           `yaml:"prompt_clarify_first"`       // inject [yesmem-clarify-first] clarify only when alternative interpretations produce materially different work (default: true)
-	PromptCodeToolsFirst     bool           `yaml:"prompt_code_tools_first"`    // inject [yesmem-code-tools-first] prefer MCP code-navigation tools over Agent spawns (default: true)
-	PromptPatternSuggest     bool           `yaml:"prompt_pattern_suggest"`     // record repeated shell-command shapes for recorder-only cap-suggestion analysis (default: true)
+	PromptUngate             bool           `yaml:"prompt_ungate"`              // [deprecated] use claude_prompt.prompt_ungate
+	PromptRewrite            bool           `yaml:"prompt_rewrite"`             // [deprecated] use claude_prompt.prompt_rewrite
+	PromptEnhance            bool           `yaml:"prompt_enhance"`             // [deprecated] use claude_prompt.prompt_enhance
+	PromptToolPrefs          bool           `yaml:"prompt_tool_prefs"`          // [deprecated] use claude_prompt.prompt_tool_prefs
+	PromptOutputDiscipline   bool           `yaml:"prompt_output_discipline"`   // [deprecated] use claude_prompt.prompt_output_discipline
+	PromptCodingDiscipline   bool           `yaml:"prompt_coding_discipline"`   // [deprecated] use claude_prompt.prompt_coding_discipline
+	PromptBeweislast         bool           `yaml:"prompt_beweislast"`          // [deprecated] use claude_prompt.prompt_beweislast
+	PromptScopeDiscipline    bool           `yaml:"prompt_scope_discipline"`    // [deprecated] use claude_prompt.prompt_scope_discipline
+	PromptDelegationContract bool           `yaml:"prompt_delegation_contract"` // [deprecated] use claude_prompt.prompt_delegation_contract
+	PromptClarifyFirst       bool           `yaml:"prompt_clarify_first"`       // [deprecated] use claude_prompt.prompt_clarify_first
+	PromptCodeToolsFirst     bool           `yaml:"prompt_code_tools_first"`    // [deprecated] use claude_prompt.prompt_code_tools_first
+	PromptWikiFirst          bool           `yaml:"prompt_wiki_first"`          // [deprecated] use claude_prompt.prompt_wiki_first
+	PromptPatternSuggest     bool           `yaml:"prompt_pattern_suggest"`     // [deprecated] use claude_prompt.prompt_pattern_suggest
 	EffortFloor              string         `yaml:"effort_floor"`               // minimum effort level: "low", "medium", "high", "max" (default: "" = off)
 	SkillEvalInject          string         `yaml:"skill_eval_inject"`          // "true" = verbose eval output, "silent" = internal eval only, "false" = disabled (default: "silent")
+	CacheKeepaliveEnabled    bool                `yaml:"cache_keepalive_enabled"`
+	CacheKeepaliveMode       string              `yaml:"cache_keepalive_mode"`       // "auto", "5m", "1h"
+	CacheKeepalivePings5m    int                 `yaml:"cache_keepalive_pings_5m"`
+	CacheKeepalivePings1h    int                 `yaml:"cache_keepalive_pings_1h"`
+	CacheKeepaliveMinMessages int                `yaml:"cache_keepalive_min_messages"`
+	ResetCache               bool                `yaml:"reset_cache"`
+	CodeNavMode              string              `yaml:"code_nav_mode"`
+	CodeNavDismissCount      int                 `yaml:"code_nav_dismiss_count"`
+	SharedPrompt             *PromptFlags        `yaml:"shared_prompt"`
+	ClaudePrompt             *PromptFlags        `yaml:"claude_prompt"`
+	CodexPrompt              *PromptFlags        `yaml:"codex_prompt"`
+	OpencodePrompt           *PromptFlags        `yaml:"opencode_prompt"`
+	ModelFeatures            map[string]*FeatureGates `yaml:"model_features"`
+	FeatureDefaults          *FeatureGates            `yaml:"feature_defaults"`
+	CustomSystemPrompt       CustomSystemPromptConfig `yaml:"custom_system_prompt"`
+}
 
-	CacheKeepaliveEnabled bool   `yaml:"cache_keepalive_enabled"`  // send keepalive pings to prevent cache expiry (default: true)
-	CacheKeepaliveMode    string `yaml:"cache_keepalive_mode"`     // "auto" (detect from response), "5m", "1h" (default: "5m")
-	CacheKeepalivePings5m int    `yaml:"cache_keepalive_pings_5m"` // pings per idle phase when TTL=5min (default: 5)
-	CacheKeepalivePings1h int    `yaml:"cache_keepalive_pings_1h"` // pings per idle phase when TTL=1h (default: 1)
+// CustomSystemPromptConfig controls which pipelines get the SYSTEM.md template injection.
+type CustomSystemPromptConfig struct {
+	EnabledOpenCode   bool   `yaml:"enabled_opencode"`
+	EnabledClaudeCode bool   `yaml:"enabled_claude_code"`
+	EnabledCodex      bool   `yaml:"enabled_codex"`
+	TemplatePath      string `yaml:"template_path"`
+}
 
-	CodeNavMode         string `yaml:"code_nav_mode"`          // "block", "nudge", or "off" (default: "block")
-	CodeNavDismissCount int    `yaml:"code_nav_dismiss_count"` // permanent-off after N dismissals (default: 5)
+// FeatureGates controls which yesmem behavioral features are active
+// for a given model/provider. Default (zero value) = all disabled.
+// This is separate from PromptFlags which control prompt text injection.
+type FeatureGates struct {
+	SkillEval      bool `yaml:"skill_eval"`       // inject [skill-eval] instruction block
+	Briefing       bool `yaml:"briefing"`         // inject yesmem briefing at session start
+	RulesReminder  bool `yaml:"rules_reminder"`   // inject rules/guidelines reminder
+	PlanCheckpoint bool `yaml:"plan_checkpoint"`  // inject plan checkpoint reminders
+	ThinkReminder  bool `yaml:"think_reminder"`   // inject extended-thinking reminder
+	Timestamps     bool `yaml:"timestamps"`       // inject [HH:MM:SS] [msg:N] [+Δ] markers
+}
+
+// PromptFlags holds prompt injection flags for a specific profile.
+type PromptFlags struct {
+	Ungate             bool `yaml:"prompt_ungate"`
+	Rewrite            bool `yaml:"prompt_rewrite"`
+	Enhance            bool `yaml:"prompt_enhance"`
+	ToolPrefs          bool `yaml:"prompt_tool_prefs"`
+	OutputDiscipline   bool `yaml:"prompt_output_discipline"`
+	CodingDiscipline   bool `yaml:"prompt_coding_discipline"`
+	Beweislast         bool `yaml:"prompt_beweislast"`
+	ScopeDiscipline    bool `yaml:"prompt_scope_discipline"`
+	DelegationContract bool `yaml:"prompt_delegation_contract"`
+	ClarifyFirst       bool `yaml:"prompt_clarify_first"`
+	CodeToolsFirst     bool `yaml:"prompt_code_tools_first"`
+	WikiFirst          bool `yaml:"prompt_wiki_first"`
+	PatternSuggest     bool `yaml:"prompt_pattern_suggest"`
+}
+
+// claudeLegacyFlags returns PromptFlags from the deprecated flat ProxyConfig fields.
+func (p *ProxyConfig) claudeLegacyFlags() *PromptFlags {
+	return &PromptFlags{
+		Ungate:             p.PromptUngate,
+		Rewrite:            p.PromptRewrite,
+		Enhance:            p.PromptEnhance,
+		ToolPrefs:          p.PromptToolPrefs,
+		OutputDiscipline:   p.PromptOutputDiscipline,
+		CodingDiscipline:   p.PromptCodingDiscipline,
+		Beweislast:         p.PromptBeweislast,
+		ScopeDiscipline:    p.PromptScopeDiscipline,
+		DelegationContract: p.PromptDelegationContract,
+		ClarifyFirst:       p.PromptClarifyFirst,
+		CodeToolsFirst:     p.PromptCodeToolsFirst,
+		WikiFirst:          p.PromptWikiFirst,
+		PatternSuggest:     p.PromptPatternSuggest,
+	}
+}
+
+// EffectivePromptFlags resolves the effective prompt flags for a profile.
+// Merge order (last wins): hard defaults → SharedPrompt → profile-specific → legacy flat fields (claude only).
+func (p *ProxyConfig) EffectivePromptFlags(profile models.PromptProfile) *PromptFlags {
+	// Start with shared prompt as base (or zero-value if nil).
+	merged := &PromptFlags{}
+	if p.SharedPrompt != nil {
+		*merged = *p.SharedPrompt
+	}
+
+	// Apply profile-specific overrides.
+	var profileFlags *PromptFlags
+	switch profile {
+	case models.ProfileClaude:
+		profileFlags = p.ClaudePrompt
+	case models.ProfileCodex:
+		profileFlags = p.CodexPrompt
+	case models.ProfileOpencode:
+		profileFlags = p.OpencodePrompt
+	}
+	if profileFlags != nil {
+		mergeFlags(merged, profileFlags)
+	}
+
+	// For Claude: deprecated flat fields are the legacy default.
+	// They serve as a base layer if ClaudePrompt is nil or doesn't set a field.
+	if profile == models.ProfileClaude {
+		legacy := p.claudeLegacyFlags()
+		mergeFlags(merged, legacy)
+	}
+
+	return merged
+}
+
+// mergeFlags copies non-zero values from src into dst.
+// For booleans, "non-zero" means the field is true — this implements
+// the pattern where profile-specific config only sets the flags it enables,
+// and zero (false) means "inherit from parent layer".
+func mergeFlags(dst, src *PromptFlags) {
+	if src == nil || dst == nil {
+		return
+	}
+	// Copy each field only if src has it enabled.
+	// A false in src means "no opinion" — merged keeps its existing value.
+	if src.Ungate {
+		dst.Ungate = true
+	}
+	if src.Rewrite {
+		dst.Rewrite = true
+	}
+	if src.Enhance {
+		dst.Enhance = true
+	}
+	if src.ToolPrefs {
+		dst.ToolPrefs = true
+	}
+	if src.OutputDiscipline {
+		dst.OutputDiscipline = true
+	}
+	if src.CodingDiscipline {
+		dst.CodingDiscipline = true
+	}
+	if src.Beweislast {
+		dst.Beweislast = true
+	}
+	if src.ScopeDiscipline {
+		dst.ScopeDiscipline = true
+	}
+	if src.DelegationContract {
+		dst.DelegationContract = true
+	}
+	if src.ClarifyFirst {
+		dst.ClarifyFirst = true
+	}
+	if src.CodeToolsFirst {
+		dst.CodeToolsFirst = true
+	}
+	if src.PatternSuggest {
+		dst.PatternSuggest = true
+	}
 }
 
 // HTTPConfig controls the OpenClaw HTTP API server.
@@ -189,6 +342,7 @@ type PathsConfig struct {
 	BleveIndex     string `yaml:"bleve_index"`
 	Archive        string `yaml:"archive"`
 	ClaudeProjects string `yaml:"claude_projects"`
+	OpencodeDB     string `yaml:"opencode_db"`
 }
 
 // Default returns a config with sensible defaults.
@@ -211,8 +365,8 @@ func Default() *Config {
 		},
 		LLM: LLMConfig{
 			Provider:              "auto",
-			DailyBudgetExtractUSD: 5.0,
-			DailyBudgetQualityUSD: 2.0,
+			DailyBudgetExtractUSD: 20.0,
+			DailyBudgetQualityUSD: 10.0,
 			MaxBudgetPerCallUSD:   1.0,
 		},
 		Pricing: DefaultPricing(),
@@ -240,6 +394,7 @@ func Default() *Config {
 			BleveIndex:     filepath.Join(dataDir, "bleve-index"),
 			Archive:        filepath.Join(dataDir, "archive"),
 			ClaudeProjects: filepath.Join(home, ".claude", "projects"),
+			OpencodeDB:     filepath.Join(home, ".local", "share", "opencode", "opencode.db"),
 		},
 		Embedding: embedding.DefaultEmbeddingConfig(),
 		Proxy: ProxyConfig{
@@ -247,6 +402,7 @@ func Default() *Config {
 			Listen:                   ":9099",
 			Target:                   "https://api.anthropic.com",
 			OpenAITarget:             "https://api.openai.com",
+			AutoConfigureProviders:   true,
 			TokenThreshold:           250000,
 			TokenMinimumThreshold:    100000,
 			KeepRecent:               10,
@@ -262,20 +418,49 @@ func Default() *Config {
 			PromptDelegationContract: true,
 			PromptClarifyFirst:       true,
 			PromptCodeToolsFirst:     true,
+			PromptWikiFirst:          true,
 			PromptPatternSuggest:     true,
+			// Profile-aware defaults: shared layer enables agent-neutral injectors for all profiles.
+			// Claude-specific flags (ToolPrefs, CodeToolsFirst, DelegationContract) are only in
+			// the legacy flat fields (mapped to ClaudePrompt by claudeLegacyFlags).
+			SharedPrompt: &PromptFlags{
+				OutputDiscipline: true,
+				CodingDiscipline: true,
+				Beweislast:       true,
+				ScopeDiscipline:  true,
+				ClarifyFirst:     true,
+				CodeToolsFirst: true,
+			},
 			SkillEvalInject:          "silent",
-			CacheKeepaliveEnabled:    true,
-			CacheKeepaliveMode:       "5m",
-			CacheKeepalivePings5m:    5,
-			CacheKeepalivePings1h:    1,
+		ModelFeatures: map[string]*FeatureGates{
+			"claude":   {SkillEval: true, Briefing: true, RulesReminder: true, PlanCheckpoint: true, ThinkReminder: true, Timestamps: false},
+			"deepseek": {SkillEval: true, Briefing: true, RulesReminder: true, PlanCheckpoint: false, ThinkReminder: true, Timestamps: true},
+			"gpt":      {SkillEval: true, Briefing: true, RulesReminder: true, ThinkReminder: false, Timestamps: false},
+			"openai":   {SkillEval: true, Briefing: true, RulesReminder: true, ThinkReminder: false, Timestamps: false},
+		},
+		FeatureDefaults: &FeatureGates{
+			SkillEval: true, Briefing: true, RulesReminder: true, PlanCheckpoint: true, ThinkReminder: true, Timestamps: true,
+		},
+			CacheKeepaliveEnabled:     true,
+			CacheKeepaliveMode:        "5m",
+			CacheKeepalivePings5m:     5,
+			CacheKeepalivePings1h:     1,
+			CacheKeepaliveMinMessages: 10,
 			CodeNavMode:              "block",
 			CodeNavDismissCount:      5,
 			TokenThresholds: map[string]int{
-				"opus":   180000,
-				"sonnet": 180000,
-				"haiku":  130000,
-				"gpt-5":  180000,
-				"codex":  180000,
+				"opus":     180000,
+				"sonnet":   180000,
+				"haiku":    130000,
+				"gpt-5":    180000,
+				"codex":    180000,
+				"deepseek": 500000,
+			},
+			CustomSystemPrompt: CustomSystemPromptConfig{
+				EnabledOpenCode:   true,
+				EnabledClaudeCode: false,
+				EnabledCodex:      false,
+				TemplatePath:      "~/.claude/yesmem/SYSTEM.md",
 			},
 		},
 		Signals: SignalsConfig{
@@ -471,12 +656,14 @@ func (c *Config) ResolvedOpenAIBaseURL() string {
 // DefaultPricing returns hardcoded per-million-token pricing as fallback defaults.
 func DefaultPricing() map[string]ModelPricing {
 	return map[string]ModelPricing{
-		"haiku":      {Input: 1.0, Output: 5.0},
-		"sonnet":     {Input: 3.0, Output: 15.0},
-		"opus":       {Input: 5.0, Output: 25.0},
-		"gpt-5-mini": {Input: 0.25, Output: 2.0},
-		"gpt-5.2":    {Input: 1.75, Output: 14.0},
-		"gpt-5.4":    {Input: 2.5, Output: 15.0},
+		"haiku":             {Input: 1.0, Output: 5.0},
+		"sonnet":            {Input: 3.0, Output: 15.0},
+		"opus":              {Input: 5.0, Output: 25.0},
+		"gpt-5-mini":        {Input: 0.25, Output: 2.0},
+		"gpt-5.2":           {Input: 1.75, Output: 14.0},
+		"gpt-5.4":           {Input: 2.5, Output: 15.0},
+		"deepseek-v4-flash": {Input: 0.14, Output: 0.56},
+		"deepseek-v4-pro":   {Input: 0.28, Output: 1.12},
 	}
 }
 

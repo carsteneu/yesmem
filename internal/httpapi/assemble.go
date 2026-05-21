@@ -82,32 +82,9 @@ func (s *Server) handleAssemble(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Step 2: Inject briefing as user/assistant message pair after system message (if present)
+	// Step 2: Inject briefing as system message with mandatory marker
 	if briefingText != "" {
-		insertIdx := 0
-		if len(messages) > 0 {
-			if first, ok := messages[0].(map[string]any); ok {
-				if first["role"] == "system" || first["role"] == nil {
-					// Check if it looks like a system block
-					insertIdx = 1
-				}
-			}
-		}
-		briefingPair := []any{
-			map[string]any{
-				"role":    "user",
-				"content": briefingText,
-			},
-			map[string]any{
-				"role":    "assistant",
-				"content": "Briefing gelesen.",
-			},
-		}
-		newMessages := make([]any, 0, len(messages)+2)
-		newMessages = append(newMessages, messages[:insertIdx]...)
-		newMessages = append(newMessages, briefingPair...)
-		newMessages = append(newMessages, messages[insertIdx:]...)
-		messages = newMessages
+		messages = injectBriefingMsg(messages, briefingText)
 	}
 
 	// Step 3: Strip redundant system-reminders
@@ -399,4 +376,27 @@ func appendToLastUserMessage(messages []any, text string) []any {
 // injectReflectionHint appends the Bohrhammer InlineReflectionHint to the last user message.
 func injectReflectionHint(messages *[]any) {
 	*messages = appendToLastUserMessage(*messages, proxy.InlineReflectionHint)
+}
+
+// injectBriefingMsg prepends the briefing text as a system-role message wrapped in
+// a <MANDATORY_BRIEFING> tag. If the first message is already a system message,
+// the briefing is inserted after it (index 1). Otherwise it goes at index 0.
+func injectBriefingMsg(messages []any, briefingText string) []any {
+	insertIdx := 0
+	if len(messages) > 0 {
+		if first, ok := messages[0].(map[string]any); ok {
+			if role, _ := first["role"].(string); role == "system" {
+				insertIdx = 1
+			}
+		}
+	}
+	briefingMsg := map[string]any{
+		"role":    "system",
+		"content": "<MANDATORY_BRIEFING>\n" + briefingText + "\n</MANDATORY_BRIEFING>",
+	}
+	newMessages := make([]any, 0, len(messages)+1)
+	newMessages = append(newMessages, messages[:insertIdx]...)
+	newMessages = append(newMessages, briefingMsg)
+	newMessages = append(newMessages, messages[insertIdx:]...)
+	return newMessages
 }

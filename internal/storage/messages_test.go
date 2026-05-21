@@ -40,6 +40,21 @@ func seedSearchMessages(t *testing.T, s *Store) {
 	}
 }
 
+func loadContents(t *testing.T, s *Store, hits []MessageSearchResult) {
+	t.Helper()
+	ids := make([]int64, len(hits))
+	for i, h := range hits {
+		ids[i] = h.ID
+	}
+	contents, err := s.GetMessageContents(ids)
+	if err != nil {
+		t.Fatalf("get message contents: %v", err)
+	}
+	for i := range hits {
+		hits[i].Content = contents[hits[i].ID]
+	}
+}
+
 func contentsByDay(hits []MessageSearchResult) map[string]bool {
 	out := map[string]bool{}
 	for _, h := range hits {
@@ -148,6 +163,7 @@ func TestSearchMessagesDeepCtx_FiltersByDate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("search deep: %v", err)
 	}
+	loadContents(t, s, hits)
 	got := contentsByDay(hits)
 	if got["27"] || got["29"] {
 		t.Fatalf("expected only 04-28, got %v", got)
@@ -166,6 +182,7 @@ func TestSearchMessagesDeepCtx_BackwardCompatLegacyDeepNoFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("search deep: %v", err)
 	}
+	loadContents(t, s, hits)
 	got := contentsByDay(hits)
 	if !got["27"] || !got["28"] || !got["29"] {
 		t.Fatalf("legacy SearchMessagesDeep must return all days, got %v", got)

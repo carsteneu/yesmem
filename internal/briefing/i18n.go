@@ -39,6 +39,7 @@ type Strings struct {
 	LabelPrevious      string `yaml:"label_previous"`
 	LabelConfident     string `yaml:"label_confident"`
 	LabelWeak          string `yaml:"label_weak"`
+	AgentName          string `yaml:"agent_name"` // "Claude" (default) or "Agent" for opencode/codex`
 	LabelGap           string `yaml:"label_gap"`
 	LabelMemoryTools   string `yaml:"label_memory_tools"`
 	LabelAvailableDocs string `yaml:"label_available_docs"`
@@ -124,6 +125,7 @@ func DefaultStrings() Strings {
 		LabelPrevious:      "Before:",
 		LabelConfident:     "Confident:",
 		LabelWeak:          "Not yet awake:",
+		AgentName:          "Claude", // overridden by Generator.SetSourceAgent for non-Claude profiles
 		LabelGap:           "Gap:",
 		LabelMemoryTools:   "How I can work with my memory:",
 		LabelAvailableDocs: "Documentation sources available — docs_search(query) to look up, list_docs() for overview.",
@@ -176,9 +178,7 @@ DO NOT EXTRACT:
 - Session state that changes in minutes
 
 Max 3 learnings. Fewer with substance > many fragments. Empty array is a valid answer.
-Answer:
-- Which previous learnings are now outdated or wrong? (status: revised/invalidated)
-- Are there NEW learnings that pass the quality filter?`,
+Return ONLY a JSON object matching the format specified below. No other text. No markdown.`,
 		ForkTaskEvaluate:           "Task 2 — Evaluate injected memories:",
 		ForkTaskEvaluateBody:       "The following memories were loaded from long-term memory into this conversation:",
 		ForkTaskEvaluateImpact:     "For EACH memory:\n- impact_score (0.0-1.0): Was it actually used in the responses?\n  0.0 = completely ignored, 0.5 = marginally referenced, 1.0 = central to a response\n- verdict: useful | critical_save | outdated | noise | wrong | irrelevant\n- action: boost | save | supersede | noise | flag | skip",

@@ -19,19 +19,24 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/carsteneu/yesmem/internal/buildinfo"
+	"github.com/carsteneu/yesmem/internal/config"
+	"github.com/carsteneu/yesmem/internal/models"
 	tokenizer "github.com/qhenkart/anthropic-tokenizer-go"
 )
 
 // Config holds proxy configuration.
 type Config struct {
-	ListenAddr            string         // e.g. ":9099"
-	TargetURL             string         // e.g. "https://api.anthropic.com"
-	TokenThreshold        int            // trigger stubbing above this estimated token count
-	TokenMinimumThreshold int            // stub down to this floor
-	TokenThresholds       map[string]int // model-specific thresholds: {"opus": 180000, "haiku": 130000}
-	KeepRecent            int            // number of messages to always keep unmodified
-	DataDir               string         // yesmem data directory for DB access
-	OpenAITargetURL       string         // upstream for OpenAI-format clients; if empty, uses TargetURL
+	ListenAddr            string            // e.g. ":9099"
+	TargetURL             string            // e.g. "https://api.anthropic.com"
+	TokenThreshold        int               // trigger stubbing above this estimated token count
+	TokenMinimumThreshold int               // stub down to this floor
+	TokenThresholds       map[string]int    // model-specific thresholds: {"opus": 180000, "haiku": 130000}
+	KeepRecent            int               // number of messages to always keep unmodified
+	DataDir               string            // yesmem data directory for DB access
+	OpenAITargetURL       string            // upstream for OpenAI-format clients; if empty, uses TargetURL
+	ProviderTargets       map[string]string // per-provider upstream URLs, e.g. {"deepseek": "https://api.deepseek.com"}
+	AutoConfigureProviders bool              // enable auto-discovery of provider targets from opencode config
 
 	// Signal reflection
 	SignalsEnabled     bool   // enable async signal reflection calls
@@ -60,15 +65,17 @@ type Config struct {
 	PromptDelegationContract bool   // inject [yesmem-delegation-contract] self-contained-prompts + parallel-dispatch
 	PromptClarifyFirst       bool   // inject [yesmem-clarify-first] clarify only when alternative interpretations produce materially different work
 	PromptCodeToolsFirst     bool   // inject [yesmem-code-tools-first] prefer MCP code-navigation tools over Agent spawns
+	PromptWikiFirst          bool   // inject [yesmem-wiki-first] check per-file wiki BEFORE editing
 	PromptPatternSuggest     bool   // record repeated shell-command shapes for offline cap-suggestion analysis
 	EffortFloor              string // minimum effort level: "low", "medium", "high", "max" (empty = off)
 	SkillEvalInject          string // "true" = verbose eval, "silent" = internal eval only, "false" = disabled
 
 	// Cache keepalive
-	CacheKeepaliveEnabled bool
-	CacheKeepaliveMode    string // "auto", "5m", "1h"
-	CacheKeepalivePings5m int
-	CacheKeepalivePings1h int
+	CacheKeepaliveEnabled     bool
+	CacheKeepaliveMode        string // "auto", "5m", "1h"
+	CacheKeepalivePings5m     int
+	CacheKeepalivePings1h     int
+	CacheKeepaliveMinMessages int // skip keepalive when request body has fewer messages (0 = always)
 
 	// Forked agents
 	ForkedAgentsEnabled            bool
@@ -78,8 +85,27 @@ type Config struct {
 	ForkedAgentsMaxForksPerSession int
 	ForkedAgentsDebug              bool
 
+	// Quality model fallback for forked agents
+	QualityModelID string
+
 	// Cache state management
 	ResetCache bool // clear persisted frozen stubs and decay state on startup
+
+	// ModelFeatures: per-model behavioral feature gates (prefix-matched).
+	// Falls back to FeatureDefaults for models not listed.
+	ModelFeatures   map[string]*config.FeatureGates `yaml:"model_features"`
+	FeatureDefaults *config.FeatureGates            `yaml:"feature_defaults"`
+
+	// Custom system prompt: shared SYSTEM.md template for OpenCode and Claude Code pipelines.
+	CustomSystemPrompt CustomSystemPromptConfig
+}
+
+// CustomSystemPromptConfig controls which proxy pipelines use the SYSTEM.md template.
+type CustomSystemPromptConfig struct {
+	EnabledOpenCode   bool
+	EnabledClaudeCode bool
+	EnabledCodex      bool
+	TemplatePath      string
 }
 
 const maxAnnotations = 5000 // evict oldest when exceeded
@@ -99,8 +125,10 @@ const (
 // Server is the infinite-thread proxy.
 type Server struct {
 	cfg        Config
+	autoProviderTargets map[string]string // auto-discovered modelID → upstreamURL
 	httpClient *http.Client
 	logger     *log.Logger
+	version    string // build version for log tracing
 	requestIdx atomic.Int64
 
 	// Post-hoc annotations: tool_use_id → first ~120 chars of Claude's response
@@ -198,6 +226,12 @@ type Server struct {
 	cacheStatusWriter *CacheStatusWriter
 	cacheKeepalive    *CacheKeepalive
 	cacheTTLDetector  *CacheTTLDetector
+	// promptCfg is the profile-aware prompt configuration from config.ProxyConfig.
+	// Used to resolve EffectivePromptFlags(profile) for multi-agent prompt isolation.
+	promptCfg *config.ProxyConfig
+	// threadCWD caches the working directory per thread (for opencode: only in first message)
+	threadCWDMu sync.RWMutex
+	threadCWD   map[string]string // threadID → cwd
 
 	// Cumulative token savings from collapsing (per threadID)
 	rawSavingsMu sync.Mutex
@@ -209,6 +243,9 @@ type Server struct {
 	// Forked agent state: per-thread token growth + failure tracking
 	forkState   *ForkState
 	forkConfigs []ForkConfig
+
+	// Custom system prompt template for OpenCode (loaded from DataDir/SYSTEM.md)
+	customSystemPrompt []byte
 
 	// Rules re-injection: condensed CLAUDE.md rules injected every ~40k tokens
 	rulesMu               sync.RWMutex
@@ -247,6 +284,7 @@ func Run(cfg Config) error {
 		stats:                 &ProxyStats{startTime: time.Now()},
 		selfPrimes:            make(map[string]string),
 		lastInjectedIDs:       make(map[string]map[int64]string),
+		version:               buildinfo.Version,
 		sessionInjectCounts:   make(map[string]map[int64]int),
 		lastTurnInjected:      make(map[string]map[int64]bool),
 		responseTimes:         make(map[string]time.Time),
@@ -267,8 +305,22 @@ func Run(cfg Config) error {
 		msgCounters:           newMsgCounters(),
 		loopStates:            make(map[string]*LoopState),
 		injectionOverhead:     make(map[string]int),
-		forkState:             NewForkState(cfg.ForkedAgentsTokenGrowthTrigger, cfg.ForkedAgentsMaxFailures, cfg.ForkedAgentsMaxForksPerSession),
+		forkState:             NewForkState(cfg.ForkedAgentsTokenGrowthTrigger, 60000, cfg.ForkedAgentsMaxFailures, cfg.ForkedAgentsMaxForksPerSession),
 		forkConfigs:           []ForkConfig{},
+	}
+
+	// Load custom system prompt from configured path
+	if cfg.CustomSystemPrompt.TemplatePath != "" &&
+		(cfg.CustomSystemPrompt.EnabledOpenCode || cfg.CustomSystemPrompt.EnabledClaudeCode || cfg.CustomSystemPrompt.EnabledCodex) {
+		s.customSystemPrompt = loadSystemPromptFromPath(cfg.CustomSystemPrompt.TemplatePath)
+		if s.customSystemPrompt != nil {
+			s.logger.Printf("[proxy] loaded custom system prompt from %s (%d bytes, opencode=%v cc=%v codex=%v)",
+				cfg.CustomSystemPrompt.TemplatePath, len(s.customSystemPrompt),
+				cfg.CustomSystemPrompt.EnabledOpenCode, cfg.CustomSystemPrompt.EnabledClaudeCode, cfg.CustomSystemPrompt.EnabledCodex)
+		} else {
+			s.logger.Printf("[proxy] WARNING: custom_system_prompt enabled but template not found at %q — feature disabled",
+				cfg.CustomSystemPrompt.TemplatePath)
+		}
 	}
 
 	// Log persisted detection state
@@ -281,12 +333,14 @@ func Run(cfg Config) error {
 
 	if cfg.CacheKeepaliveEnabled {
 		s.cacheKeepalive = NewCacheKeepalive(CacheKeepaliveConfig{
-			Target:   cfg.TargetURL,
-			Mode:     cfg.CacheKeepaliveMode,
-			Pings5m:  cfg.CacheKeepalivePings5m,
-			Pings1h:  cfg.CacheKeepalivePings1h,
-			Detector: s.cacheTTLDetector,
-			Logger:   s.logger,
+			Target:          cfg.TargetURL,
+			ProviderTargets: cfg.ProviderTargets,
+			Mode:            cfg.CacheKeepaliveMode,
+			Pings5m:         cfg.CacheKeepalivePings5m,
+			Pings1h:         cfg.CacheKeepalivePings1h,
+			MinMessages:     cfg.CacheKeepaliveMinMessages,
+			Detector:        s.cacheTTLDetector,
+			Logger:          s.logger,
 			OnPing: func(threadID string, cacheRead, cacheWrite int) {
 				s.cacheTTLDetector.RecordResponse(cacheRead, cacheWrite, 0)
 				if s.frozenStubs != nil {
@@ -307,8 +361,9 @@ func Run(cfg Config) error {
 
 	// Register forked agent configs
 	if cfg.ForkedAgentsEnabled {
-		s.forkConfigs = append(s.forkConfigs, NewExtractAndEvaluateConfig(cfg.ForkedAgentsModel))
-		modelDesc := cfg.ForkedAgentsModel
+		model := cfg.ForkedAgentsModel
+		s.forkConfigs = append(s.forkConfigs, NewExtractAndEvaluateConfig(model))
+		modelDesc := model
 		if modelDesc == "" {
 			modelDesc = "(same as main thread)"
 		}
@@ -448,6 +503,13 @@ func Run(cfg Config) error {
 		s.logger.Printf("[proxy] tokenizer initialized")
 	}
 
+	// Auto-discover provider targets from opencode config
+	if cfg.AutoConfigureProviders {
+		s.autoProviderTargets = runAutoDiscovery(s.logger)
+	} else {
+		s.logger.Printf("[proxy] auto_configure_providers is disabled — skipping auto-discovery")
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/", s.handleRequest)
@@ -484,11 +546,13 @@ func Run(cfg Config) error {
 }
 
 // effectiveTokenThreshold returns the runtime token threshold for a given model.
-// Priority: MCP override (model-specific) > MCP override (global) > config model-specific > config global.
+// Priority: session override (via set_config with session_id) > model-specific override (MCP set_config token_threshold:<model>)
+// > model-specific override (config TokenThresholds) > global override (set_config token_threshold) > config global default.
 func (s *Server) effectiveTokenThreshold(model string) int {
 	s.configOverrideMu.RLock()
 	overrides := s.tokenThresholdOverrides
 	s.configOverrideMu.RUnlock()
+	// 1. MCP override (model-specific)
 	if len(overrides) > 0 && model != "" {
 		lower := strings.ToLower(model)
 		for key, threshold := range overrides {
@@ -497,12 +561,7 @@ func (s *Server) effectiveTokenThreshold(model string) int {
 			}
 		}
 	}
-	// Global override fallback (key "")
-	if len(overrides) > 0 {
-		if globalOverride, ok := overrides[""]; ok && globalOverride > 0 {
-			return globalOverride
-		}
-	}
+	// 2. Config model-specific
 	if model != "" && len(s.cfg.TokenThresholds) > 0 {
 		lower := strings.ToLower(model)
 		for key, threshold := range s.cfg.TokenThresholds {
@@ -511,6 +570,13 @@ func (s *Server) effectiveTokenThreshold(model string) int {
 			}
 		}
 	}
+	// 3. Global override fallback (key "")
+	if len(overrides) > 0 {
+		if globalOverride, ok := overrides[""]; ok && globalOverride > 0 {
+			return globalOverride
+		}
+	}
+	// 4. Config global default
 	return s.cfg.TokenThreshold
 }
 
@@ -539,9 +605,9 @@ func (s *Server) SetTokenThresholdOverride(modelKey string, threshold int) {
 }
 
 // refreshConfigOverrides loads runtime config overrides from daemon proxy_state.
-// Checks session-specific override first (by threadID), then falls back to global.
+// Checks in priority order: session-specific, model-specific, then global.
 func (s *Server) refreshConfigOverrides(threadID string) {
-	// Try session-specific first
+	// 1. Session-specific override (highest priority)
 	if threadID != "" {
 		result, err := s.queryDaemon("get_proxy_state", map[string]any{"key": "config_override:token_threshold:" + threadID})
 		if err == nil && result != nil {
@@ -556,7 +622,21 @@ func (s *Server) refreshConfigOverrides(threadID string) {
 			}
 		}
 	}
-	// Fall back to global
+	// 2. Model-specific overrides (e.g. config_override:token_threshold:deepseek)
+	for modelKey := range s.cfg.TokenThresholds {
+		result, err := s.queryDaemon("get_proxy_state", map[string]any{"key": "config_override:token_threshold:" + modelKey})
+		if err == nil && result != nil {
+			var resp struct {
+				Value string `json:"value"`
+			}
+			if json.Unmarshal(result, &resp) == nil && resp.Value != "" {
+				if v, err := strconv.Atoi(resp.Value); err == nil && v > 0 {
+					s.SetTokenThresholdOverride(modelKey, v)
+				}
+			}
+		}
+	}
+	// 3. Global override (fallback)
 	result, err := s.queryDaemon("get_proxy_state", map[string]any{"key": "config_override:token_threshold"})
 	if err != nil || result == nil {
 		return
@@ -731,7 +811,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 
 	// Use session_id directly as thread ID (unique per CC session).
 	// Prefer X-Claude-Code-Session-Id header (CC v2.1.86+), fallback to body metadata.
-	threadID := extractSessionID(req, r.Header.Get("X-Claude-Code-Session-Id"))
+	threadID := extractSessionID(req, r.Header.Get("X-Claude-Code-Session-Id"), "")
 	if threadID == "" {
 		threadID = DeriveThreadID(req)
 	}
@@ -788,8 +868,15 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		needsReserialization = true
 	}
 
+	// Profile-aware prompt flags: Claude profile merges shared_prompt + claude_prompt + legacy flat fields.
+	pfInject := s.getPromptFlags(models.ProfileClaude)
+
+	// CC custom system prompt replacement: must run before strip/rewrite so replaced blocks
+	// don't trigger false-positive strip/rewrite calls.
+	s.applyCCSystemPrompt(req)
+
 	// prompt_ungate: strip the CLAUDE.md subordination disclaimer so user instructions carry full authority.
-	if s.cfg.PromptUngate {
+	if pfInject.Ungate {
 		if StripCLAUDEMDDisclaimer(req) {
 			s.logger.Printf("[req %d] SYSTEM: stripped CLAUDE.md disclaimer", reqIdx)
 			needsReserialization = true
@@ -797,55 +884,59 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// prompt_rewrite: strip output-throttling directives, rewrite quality caps, inject Ant-quality directives
-	if s.cfg.PromptRewrite {
-		userAgent := r.Header.Get("User-Agent")
-		if StripOutputEfficiency(req) {
-			s.logger.Printf("[req %d] REWRITE: stripped Output efficiency section", reqIdx)
-			needsReserialization = true
-		} else {
-			s.logRewriteMiss("StripOutputEfficiency", userAgent)
-		}
-		if StripToneBrevity(req) {
-			s.logger.Printf("[req %d] REWRITE: stripped 'short and concise' from Tone", reqIdx)
-			needsReserialization = true
-		} else {
-			s.logRewriteMiss("StripToneBrevity", userAgent)
-		}
-		if RewriteGoldPlating(req) {
-			s.logger.Printf("[req %d] REWRITE: rewritten gold-plating directive", reqIdx)
-			needsReserialization = true
-		}
-		if RewriteErrorHandling(req) {
-			s.logger.Printf("[req %d] REWRITE: rewritten error handling directive", reqIdx)
-			needsReserialization = true
-		}
-		if RewriteThreeLinesRule(req) {
-			s.logger.Printf("[req %d] REWRITE: rewritten three-lines rule", reqIdx)
-			needsReserialization = true
-		}
-		if RewriteSubagentCompleteness(req) {
-			s.logger.Printf("[req %d] REWRITE: rewritten subagent completeness", reqIdx)
-			needsReserialization = true
-		}
-		if RewriteExploreAgentSpeed(req) {
-			s.logger.Printf("[req %d] REWRITE: rewritten explore agent speed bias", reqIdx)
-			needsReserialization = true
-		}
-		if RewriteSubagentCodeSuppression(req) {
-			s.logger.Printf("[req %d] REWRITE: rewritten subagent code suppression", reqIdx)
-			needsReserialization = true
-		}
-		if RewriteScopeMatching(req) {
-			s.logger.Printf("[req %d] REWRITE: rewritten scope matching", reqIdx)
-			needsReserialization = true
-		}
+	if pfInject.Rewrite {
+		// When CC custom system prompt is active, the system prompt has been replaced with SYSTEM.md.
+		// Strip/rewrite calls would not find their target strings — skip to avoid log noise.
+		if !s.cfg.CustomSystemPrompt.EnabledClaudeCode {
+			userAgent := r.Header.Get("User-Agent")
+			if StripOutputEfficiency(req) {
+				s.logger.Printf("[req %d] REWRITE: stripped Output efficiency section", reqIdx)
+				needsReserialization = true
+			} else {
+				s.logRewriteMiss("StripOutputEfficiency", userAgent)
+			}
+			if StripToneBrevity(req) {
+				s.logger.Printf("[req %d] REWRITE: stripped 'short and concise' from Tone", reqIdx)
+				needsReserialization = true
+			} else {
+				s.logRewriteMiss("StripToneBrevity", userAgent)
+			}
+			if RewriteGoldPlating(req) {
+				s.logger.Printf("[req %d] REWRITE: rewritten gold-plating directive", reqIdx)
+				needsReserialization = true
+			}
+			if RewriteErrorHandling(req) {
+				s.logger.Printf("[req %d] REWRITE: rewritten error handling directive", reqIdx)
+				needsReserialization = true
+			}
+			if RewriteThreeLinesRule(req) {
+				s.logger.Printf("[req %d] REWRITE: rewritten three-lines rule", reqIdx)
+				needsReserialization = true
+			}
+			if RewriteSubagentCompleteness(req) {
+				s.logger.Printf("[req %d] REWRITE: rewritten subagent completeness", reqIdx)
+				needsReserialization = true
+			}
+			if RewriteExploreAgentSpeed(req) {
+				s.logger.Printf("[req %d] REWRITE: rewritten explore agent speed bias", reqIdx)
+				needsReserialization = true
+			}
+			if RewriteSubagentCodeSuppression(req) {
+				s.logger.Printf("[req %d] REWRITE: rewritten subagent code suppression", reqIdx)
+				needsReserialization = true
+			}
+			if RewriteScopeMatching(req) {
+				s.logger.Printf("[req %d] REWRITE: rewritten scope matching", reqIdx)
+				needsReserialization = true
+			}
+		} // end !EnabledClaudeCode guard
 		InjectAntDirectives(req)
 		s.logger.Printf("[req %d] REWRITE: injected Ant-quality directives", reqIdx)
 		needsReserialization = true
 	}
 
 	// prompt_enhance: CLAUDE.md authority + comment discipline + persona tone
-	if s.cfg.PromptEnhance {
+	if pfInject.Enhance {
 		InjectCLAUDEMDAuthority(req)
 		if raw, err := s.queryDaemon("get_persona", nil); err == nil {
 			var persona map[string]any
@@ -862,33 +953,37 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// yesmem directive blocks: restore guidance Anthropic dropped 2026-03→04.
-	// Each gated independently so users can disable one without losing the others.
-	if s.cfg.PromptToolPrefs || s.cfg.PromptOutputDiscipline || s.cfg.PromptCodingDiscipline ||
-		s.cfg.PromptBeweislast || s.cfg.PromptScopeDiscipline || s.cfg.PromptDelegationContract ||
-		s.cfg.PromptClarifyFirst {
-		if s.cfg.PromptToolPrefs {
-			InjectToolPrefs(req)
+	// Profile-aware via getPromptFlags(ProfileClaude) — shared + claude layers merged.
+	pf := s.getPromptFlags(models.ProfileClaude)
+	if pf.ToolPrefs || pf.OutputDiscipline || pf.CodingDiscipline ||
+		pf.Beweislast || pf.ScopeDiscipline || pf.DelegationContract ||
+		pf.ClarifyFirst {
+		if pf.ToolPrefs {
+			InjectClaudeToolPrefs(req)
 		}
-		if s.cfg.PromptOutputDiscipline {
+		if pf.OutputDiscipline {
 			InjectOutputDiscipline(req)
 		}
-		if s.cfg.PromptCodingDiscipline {
+		if pf.CodingDiscipline {
 			InjectCodingDiscipline(req)
 		}
-		if s.cfg.PromptBeweislast {
+		if pf.Beweislast {
 			InjectBeweislast(req)
 		}
-		if s.cfg.PromptScopeDiscipline {
+		if pf.ScopeDiscipline {
 			InjectScopeDiscipline(req)
 		}
-		if s.cfg.PromptDelegationContract {
+		if pf.DelegationContract {
 			InjectDelegationContract(req)
 		}
-		if s.cfg.PromptClarifyFirst {
+		if pf.ClarifyFirst {
 			InjectClarifyFirst(req)
 		}
-		if s.cfg.PromptCodeToolsFirst {
-			InjectCodeToolsFirst(req)
+		if pf.CodeToolsFirst {
+			InjectCodeToolsFirst(req, proj)
+		}
+		if pf.WikiFirst {
+			InjectWikiFirst(req, proj)
 		}
 		needsReserialization = true
 		s.logger.Printf("[req %d] DIRECTIVES: injected yesmem-* discipline blocks", reqIdx)
@@ -1251,9 +1346,11 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Inject [msg:N] (+ timestamp/delta if stored) on all PREVIOUS messages
-			if n := InjectTimestamps(s.timestampStore, threadID, currentMsgs, len(currentMsgs)-1, msgOffset, sawtoothStubs); n > 0 {
-				needsReserialization = true
-				s.logger.Printf("[req %d %s] timestamps: injected %d", reqIdx, proj, n)
+			if isFeatureEnabled(&s.cfg, model, "timestamps") {
+				if n := InjectTimestamps(s.timestampStore, threadID, currentMsgs, len(currentMsgs)-1, msgOffset, sawtoothStubs); n > 0 {
+					needsReserialization = true
+					s.logger.Printf("[req %d %s] timestamps: injected %d", reqIdx, proj, n)
+				}
 			}
 
 			// Current (last) user message: full timestamp + delta + msg:N from raw count
@@ -1266,7 +1363,9 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 					entry.Delta = formatDelta(now.Sub(respTime))
 				}
 				s.timestampStore.Store(threadID, rawMsgCount, entry)
-				prependMeta(lastMsg, BuildMeta(rawMsgCount, entry))
+				if isFeatureEnabled(&s.cfg, model, "timestamps") {
+					prependMeta(lastMsg, BuildMeta(rawMsgCount, entry))
+				}
 				needsReserialization = true
 			}
 
@@ -1313,7 +1412,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		if currentMessages == nil {
 			currentMessages = messages
 		}
-		req["messages"] = injectAssociativeContext(currentMessages, s.formatRulesReminder(rulesBlock, proj), s.cfg.SawtoothEnabled)
+		req["messages"] = injectAssociativeContext(currentMessages, s.formatRulesReminder(rulesBlock, proj, false), s.cfg.SawtoothEnabled)
 		needsReserialization = true
 		s.logger.Printf("%s[req %d %s tid=%s] rules reminder injected%s", colorBlue, reqIdx, proj, threadID, colorReset)
 	}
@@ -1615,12 +1714,13 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	if ShiftMessageBreakpoint(req) {
 		needsReserialization = true
 	}
-	// TTL upgrade only for API key auth — subscription (OAuth) users should not get extended TTL.
-	if s.cfg.CacheTTL != "" && s.cfg.CacheTTL != "ephemeral" && IsAPIKeyAuth(r.Header) {
-		if n := UpgradeCacheTTL(req, s.cfg.CacheTTL); n > 0 {
-			needsReserialization = true
-			s.logger.Printf("[req %d %s] cache TTL upgraded: %d blocks → %s", reqIdx, proj, n, s.cfg.CacheTTL)
-		}
+	// Normalize cache_control TTL across all blocks to prevent Anthropic from
+	// rejecting requests with increasing TTLs in block order. Auto-detects 1h
+	// when any existing block already carries it (config, Claude Code
+	// passthrough on --resume, or stale frozen prefix from an earlier turn).
+	if n := NormalizeCacheTTL(req, s.cfg.CacheTTL); n > 0 {
+		needsReserialization = true
+		s.logger.Printf("[req %d %s] cache TTL normalized: %d blocks", reqIdx, proj, n)
 	}
 	if n := EnforceCacheBreakpointLimit(req, maxCacheBreakpoints); n > 0 {
 		needsReserialization = true
@@ -1682,6 +1782,108 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		s.cacheStatusWriter.UpdateRawForThread(threadID, raw)
 	}
 	s.forwardWithAnnotation(w, r, body, reqIdx, toolUseIDs, proj, threadID, msgCount, finalEstimate)
+}
+
+// getPromptFlags resolves the effective prompt flags for a profile, falling back
+// to the Server's legacy flat config if promptCfg is nil (backward compatibility).
+func (s *Server) getPromptFlags(profile models.PromptProfile) *config.PromptFlags {
+	if s.promptCfg != nil {
+		return s.promptCfg.EffectivePromptFlags(profile)
+	}
+	// Legacy path: use flat fields as Claude defaults.
+	return &config.PromptFlags{
+		Ungate:             s.cfg.PromptUngate,
+		Rewrite:            s.cfg.PromptRewrite,
+		Enhance:            s.cfg.PromptEnhance,
+		ToolPrefs:          s.cfg.PromptToolPrefs,
+		OutputDiscipline:   s.cfg.PromptOutputDiscipline,
+		CodingDiscipline:   s.cfg.PromptCodingDiscipline,
+		Beweislast:         s.cfg.PromptBeweislast,
+		ScopeDiscipline:    s.cfg.PromptScopeDiscipline,
+		DelegationContract: s.cfg.PromptDelegationContract,
+		ClarifyFirst:       s.cfg.PromptClarifyFirst,
+		CodeToolsFirst:     s.cfg.PromptCodeToolsFirst,
+		WikiFirst:          s.cfg.PromptWikiFirst,
+		PatternSuggest:     s.cfg.PromptPatternSuggest,
+	}
+}
+
+// getThreadCWD returns the cached working directory for a thread.
+func (s *Server) getThreadCWD(threadID string) string {
+	s.threadCWDMu.RLock()
+	defer s.threadCWDMu.RUnlock()
+	if s.threadCWD == nil {
+		return ""
+	}
+	return s.threadCWD[threadID]
+}
+
+// setThreadCWD caches the working directory for a thread.
+func (s *Server) setThreadCWD(threadID, cwd string) {
+	s.threadCWDMu.Lock()
+	defer s.threadCWDMu.Unlock()
+	if s.threadCWD == nil {
+		s.threadCWD = make(map[string]string)
+	}
+	s.threadCWD[threadID] = cwd
+}
+
+// resolveOpenAITarget returns the upstream URL for an OpenAI-format request.
+// Checks ProviderTargets by prefix match (e.g. "deepseek" matches "deepseek-v4-pro"),
+// then by exact model name, then falls back to OpenAITargetURL.
+func (s *Server) resolveOpenAITarget(model string) string {
+	modelLower := strings.ToLower(model)
+	if len(s.cfg.ProviderTargets) > 0 {
+		for key, url := range s.cfg.ProviderTargets {
+			if url == "" {
+				continue
+			}
+			keyLower := strings.ToLower(key)
+			if strings.HasPrefix(modelLower, keyLower) || strings.HasPrefix(modelLower, keyLower+"-") {
+				return strings.TrimRight(url, "/")
+			}
+		}
+		for key, url := range s.cfg.ProviderTargets {
+			if url != "" && strings.EqualFold(key, model) {
+				return strings.TrimRight(url, "/")
+			}
+		}
+	}
+	// Auto-discovered targets (secondary — explicit provider_targets takes priority)
+	if len(s.autoProviderTargets) > 0 {
+		if url, ok := s.autoProviderTargets[modelLower]; ok && url != "" {
+			return url
+		}
+	}
+
+	if s.cfg.OpenAITargetURL != "" {
+		return s.cfg.OpenAITargetURL
+	}
+	return s.cfg.TargetURL
+}
+
+// resolveAnthropicTarget returns the upstream URL for an Anthropic-format request.
+// Checks ProviderTargets by prefix match (e.g. "deepseek" matches "deepseek-v4-pro"),
+// then by exact model name, then falls back to TargetURL.
+func (s *Server) resolveAnthropicTarget(model string) string {
+	modelLower := strings.ToLower(model)
+	if len(s.cfg.ProviderTargets) > 0 {
+		for key, url := range s.cfg.ProviderTargets {
+			if url == "" {
+				continue
+			}
+			keyLower := strings.ToLower(key)
+			if strings.HasPrefix(modelLower, keyLower) || strings.HasPrefix(modelLower, keyLower+"-") {
+				return strings.TrimRight(url, "/")
+			}
+		}
+		for key, url := range s.cfg.ProviderTargets {
+			if url != "" && strings.EqualFold(key, model) {
+				return strings.TrimRight(url, "/")
+			}
+		}
+	}
+	return s.cfg.TargetURL
 }
 
 // bytesPerToken is the approximation factor for token estimation.

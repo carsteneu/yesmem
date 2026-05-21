@@ -50,8 +50,42 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := s.prepareOpenAIRequestContext(anthReq, reqIdx, r.Header.Get("X-Claude-Code-Session-Id"), r.Header.Get("User-Agent"))
-	s.runOpenAIParityPipeline(anthReq, &ctx)
+	ocSessionID := r.Header.Get("x-opencode-session")
+	if ocSessionID == "" {
+		ocSessionID = r.Header.Get("x-session-affinity")
+	}
+	if ocSessionID != "" {
+		s.logger.Printf("[req %d] %sopencode session=%s%s", reqIdx, colorGreen, ocSessionID, colorReset)
+	}
+	ctx := s.prepareOpenAIRequestContext(anthReq, reqIdx, r.Header.Get("X-Claude-Code-Session-Id"), ocSessionID, r.Header.Get("User-Agent"))
+	ctx.Model = model
+
+	// Non-interactive requests (CLI tools, extraction pipeline) have no session headers.
+	// Skip the entire proxy pipeline — no MCP calls, no associative context, no system blocks.
+	headerClaudeSession := r.Header.Get("X-Claude-Code-Session-Id")
+	ua := strings.ToLower(r.Header.Get("User-Agent"))
+	isCodex := strings.Contains(ua, "codex") || strings.Contains(ua, "codexcli")
+	if ocSessionID == "" && headerClaudeSession == "" && !isCodex {
+		s.logger.Printf("[req %d] non-interactive request — skipping proxy pipeline", reqIdx)
+	} else {
+		// Replace default system prompt with custom template (if enabled and loaded)
+		if s.cfg.CustomSystemPrompt.EnabledCodex && s.customSystemPrompt != nil {
+			skillBlock := extractSkillBlock(anthReq)
+			workDir := extractWorkingDirectory(anthReq)
+			tplCtx := buildSystemContext(buildSystemContextOpts{
+				WorkingDir:        workDir,
+				ModelID:           ctx.Model,
+				ModelDisplayName:  modelDisplayName(ctx.Model),
+				HostAgentName:     "Codex",
+			})
+			filled := fillSystemTemplate(s.customSystemPrompt, tplCtx)
+			filled = append(filled, []byte(skillBlock)...)
+			replaceFirstSystemBlock(anthReq, string(filled))
+			s.logger.Printf("[req %d] %sCUSTOM-SYSTEM: applied (%d bytes, skillBlock=%d)%s",
+				reqIdx, colorGreen, len(filled), len(skillBlock), colorReset)
+		}
+		s.runOpenAIParityPipeline(anthReq, &ctx)
+	}
 
 	outReq, err := translateAnthropicToResponses(anthReq)
 	if err != nil {

@@ -112,11 +112,11 @@ func TestBuildSkillEvalBlock_Silent(t *testing.T) {
 	if strings.Contains(block, "MANDATORY SKILL ACTIVATION") {
 		t.Error("silent block should NOT contain verbose mandatory instruction")
 	}
-	if !strings.Contains(block, "EVALUATE INTERNALLY") {
-		t.Error("silent block should contain EVALUATE INTERNALLY instruction")
+	if !strings.Contains(block, "ATTENTION") {
+		t.Error("silent block should contain ATTENTION marker")
 	}
-	if !strings.Contains(block, "Skill") {
-		t.Error("silent block should reference Skill tool")
+	if !strings.Contains(block, "SKILL CHECK") {
+		t.Error("silent block should contain SKILL CHECK instruction")
 	}
 	if strings.Contains(block, "Output format") {
 		t.Error("silent block should NOT contain output format instructions")
@@ -134,8 +134,8 @@ func TestBuildSkillEvalBlock_Disabled(t *testing.T) {
 func TestBuildSkillEvalBlock_EmptyDefaultsSilent(t *testing.T) {
 	block := buildSkillEvalBlock("")
 
-	if !strings.Contains(block, "EVALUATE INTERNALLY") {
-		t.Error("empty mode should default to silent behavior")
+	if !strings.Contains(block, "ATTENTION") {
+		t.Error("empty mode should default to ATTENTION marker")
 	}
 }
 

@@ -2,8 +2,14 @@ package daemon
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 	"time"
 )
 
@@ -27,10 +33,25 @@ func (h *Handler) resolveSessionID(params map[string]any, key string) string {
 			}
 		}
 		h.pidMapMu.Unlock()
+		// PID not in memory — try PID file on disk (non-Claude agents persist these)
+		if sid := h.tryRecoverFromPIDFile(int(pid)); sid != "" {
+			h.pidMapMu.Lock()
+			h.pidMap[sid] = int(pid)
+			h.pidMapMu.Unlock()
+			return sid
+		}
 	}
 	h.activeSessionMu.Lock()
 	defer h.activeSessionMu.Unlock()
-	return h.activeSessionID
+	if h.activeSessionID != "" {
+		return h.activeSessionID
+	}
+	// Last resort: restore from persisted state (opencode sessions persist this)
+	if sid, err := h.store.GetProxyState("active_session_opencode"); err == nil && sid != "" {
+		h.activeSessionID = sid
+		return sid
+	}
+	return ""
 }
 
 func (h *Handler) handleStartDialog(params map[string]any) Response {
@@ -255,8 +276,10 @@ func (h *Handler) handleEndDialog(params map[string]any) Response {
 	return jsonResponse(map[string]any{"status": "ended", "dialog_id": dialogID})
 }
 
-// handleRegisterPID stores the OS PID of a Claude Code process for stdin injection.
-// Also updates activeSessionID so MCP tools can resolve the sender.
+// handleRegisterPID stores the OS PID of a Claude Code / OpenCode process for
+// MCP tool session resolution. Also updates activeSessionID so MCP tools can
+// resolve the sender. Non-Claude agents can pass source_agent to persist their
+// identity for briefing generation.
 func (h *Handler) handleRegisterPID(params map[string]any) Response {
 	sessionID, _ := params["session_id"].(string)
 	pid, _ := params["pid"].(float64)
@@ -272,7 +295,70 @@ func (h *Handler) handleRegisterPID(params map[string]any) Response {
 	h.activeSessionID = sessionID
 	h.activeSessionMu.Unlock()
 
+	// Persist source_agent for non-Claude agents so briefings identify correctly
+	if sa, _ := params["source_agent"].(string); sa != "" {
+		_ = h.store.SetProxyState("source_agent:"+sessionID, sa)
+	}
+
+	// Write PID file for recovery after daemon restart (non-Claude agents only)
+	if sa, _ := params["source_agent"].(string); sa == "opencode" || sa == "codex" {
+		pidDir := filepath.Join(h.dataDir, "sessions")
+		os.MkdirAll(pidDir, 0755)
+		pidFile := filepath.Join(pidDir, fmt.Sprintf("%d", int(pid)))
+		os.WriteFile(pidFile, []byte(sessionID+"\n"), 0644)
+		// Persist active session so resolveSessionID fallback works after restart
+		_ = h.store.SetProxyState("active_session_opencode", sessionID)
+	}
+
 	return jsonResponse(map[string]any{"status": "ok"})
+}
+
+// RebuildFromPIDFiles scans dataDir/sessions/ for PID→sessionID mappings
+// and restores pidMap after a daemon restart. Only loads entries for
+// currently running PIDs (stale entries from dead processes are skipped).
+// Non-Claude agents (opencode, codex) write PID files in handleRegisterPID.
+func (h *Handler) RebuildFromPIDFiles() {
+	pidDir := filepath.Join(h.dataDir, "sessions")
+	entries, err := os.ReadDir(pidDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		pid, convErr := strconv.Atoi(e.Name())
+		if convErr != nil {
+			continue
+		}
+		// Check if process is still alive; delete stale PID file if not
+		if err := syscall.Kill(pid, 0); err != nil {
+			os.Remove(filepath.Join(pidDir, e.Name()))
+			continue
+		}
+		data, readErr := os.ReadFile(filepath.Join(pidDir, e.Name()))
+		if readErr != nil {
+			continue
+		}
+		sid := strings.TrimSpace(string(data))
+		if sid == "" {
+			continue
+		}
+		h.pidMapMu.Lock()
+		h.pidMap[sid] = pid
+		h.pidMapMu.Unlock()
+	}
+}
+
+// tryRecoverFromPIDFile reads a single PID file to recover sessionID.
+// Used as a lazy fallback in resolveSessionID when pidMap has no entry.
+func (h *Handler) tryRecoverFromPIDFile(pid int) string {
+	pidFile := filepath.Join(h.dataDir, "sessions", strconv.Itoa(pid))
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 // handleRegisterWindow stores the X11 window ID and terminal type for xdotool push.

@@ -206,6 +206,23 @@ func openSQLite(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("set journal_size_limit: %w", err)
 	}
+	// Increase page cache from default 2MB to 64MB — critical for the 55-column
+	// learnings table and frequent multi-join queries (briefing, search, clustering).
+	if _, err := db.Exec("PRAGMA cache_size=-64000"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set cache_size: %w", err)
+	}
+	// Memory-mapped I/O for read-heavy workloads: proxy, briefing, hybrid search.
+	// 256MB is safe for the typical 512MB–1GB yesmem host; mmap is advisory.
+	if _, err := db.Exec("PRAGMA mmap_size=268435456"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set mmap_size: %w", err)
+	}
+	// Keep temporary tables (ORDER BY on unindexed columns) in memory.
+	if _, err := db.Exec("PRAGMA temp_store=MEMORY"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set temp_store: %w", err)
+	}
 
 	return db, nil
 }

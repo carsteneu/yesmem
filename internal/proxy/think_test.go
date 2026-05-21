@@ -69,23 +69,26 @@ func TestBuildThinkReminder_NonClaudeUsesSelectiveSearchText(t *testing.T) {
 	s := &Server{thinkCounters: make(map[string]int)}
 
 	r := s.buildThinkReminder("thread-1", "", true)
-	if !strings.Contains(r, "decide whether prior memory is likely to matter") {
-		t.Error("expected non-Claude reminder text")
+	if !strings.Contains(r, "hybrid_search()") {
+		t.Error("expected hybrid_search in non-Claude reminder")
 	}
-	if !strings.Contains(r, "follow with deep_search()") {
-		t.Error("expected deep_search fallback in non-Claude reminder")
+	if !strings.Contains(r, "MANDATORY") {
+		t.Error("expected MANDATORY wording in non-Claude reminder")
+	}
+	if strings.Contains(r, "unsure about past decisions") {
+		t.Error("non-Claude reminder should use shorter wording")
+	}
+	if strings.Contains(r, "deep_search()") {
+		t.Error("non-Claude reminder should not reference deep_search unnecessarily")
 	}
 	if strings.Contains(r, "check your memory first") {
 		t.Error("non-Claude reminder should not use the Claude-style mandatory text")
 	}
-	if !strings.Contains(r, "Do not repeat memory lookups") {
-		t.Error("expected generic anti-loop guardrail")
+	if strings.Contains(r, "Do not repeat memory lookups") {
+		t.Error("non-Claude reminder should not include Claude-only guardrails")
 	}
-	if !strings.Contains(r, "prefer visible timestamps and current state before memory lookup") {
-		t.Error("expected direct-status guardrail")
-	}
-	if !strings.Contains(r, "supplements but does not replace memory") {
-		t.Error("expected memory-first guardrail")
+	if strings.Contains(r, "prefer visible timestamps") {
+		t.Error("non-Claude reminder should not include Claude-only guardrails")
 	}
 }
 

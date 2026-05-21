@@ -209,15 +209,12 @@ func TestInjectCLAUDEMDAuthority_AddsBlock(t *testing.T) {
 	}
 }
 
-// --- InjectToolPrefs ---
+// --- InjectClaudeToolPrefs ---
 
-func TestInjectToolPrefs_AddsBlock(t *testing.T) {
-	req := map[string]any{
-		"system": []any{
-			map[string]any{"type": "text", "text": "You are Claude."},
-		},
-	}
-	InjectToolPrefs(req)
+func TestInjectClaudeToolPrefs_AddsBlock(t *testing.T) {
+	req := map[string]any{"system": "old"}
+
+	InjectClaudeToolPrefs(req)
 	blocks := req["system"].([]any)
 	if len(blocks) != 2 {
 		t.Fatalf("expected 2 blocks, got %d", len(blocks))
@@ -287,7 +284,7 @@ func TestInjectCodingDiscipline_AddsBlock(t *testing.T) {
 // Shared: all three new injects preserve existing blocks.
 func TestInjectDirectives_PreserveExistingBlocks(t *testing.T) {
 	injects := []func(map[string]any){
-		InjectToolPrefs,
+		InjectClaudeToolPrefs,
 		InjectOutputDiscipline,
 		InjectCodingDiscipline,
 		InjectBeweislast,
@@ -830,6 +827,58 @@ func TestInjectClarifyFirst_AddsBlock(t *testing.T) {
 	}
 }
 
+func TestInjectWikiFirst_AddsBlock(t *testing.T) {
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": "You are Claude."},
+		},
+	}
+
+	InjectWikiFirst(req, "")
+
+	blocks := req["system"].([]any)
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks, got %d", len(blocks))
+	}
+	text, _ := blocks[1].(map[string]any)["text"].(string)
+	if !strings.HasPrefix(text, "[yesmem-wiki-first]") {
+		t.Errorf("block should be tagged: %s", text)
+	}
+	for _, keyword := range []string{"~/.claude/yesmem/wiki/", "BEFORE editing", "gotchas", "learnings", "search_code_index"} {
+		if !strings.Contains(text, keyword) {
+			t.Errorf("wiki-first block should mention %q", keyword)
+		}
+	}
+	if strings.Contains(text, "Project:") {
+		t.Errorf("block should not contain Project prefix when project is empty: %s", text)
+	}
+}
+
+func TestInjectWikiFirst_AddsBlockWithProject(t *testing.T) {
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": "You are Claude."},
+		},
+	}
+
+	InjectWikiFirst(req, "/home/user/projects/yesmem")
+
+	blocks := req["system"].([]any)
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks, got %d", len(blocks))
+	}
+	text, _ := blocks[1].(map[string]any)["text"].(string)
+	if !strings.HasPrefix(text, "[yesmem-wiki-first]") {
+		t.Errorf("block should be tagged: %s", text)
+	}
+	if !strings.Contains(text, "Project:") {
+		t.Errorf("block should contain Project prefix when project is set: %s", text)
+	}
+	if !strings.Contains(text, "/home/user/projects/yesmem") {
+		t.Errorf("block should contain project path: %s", text)
+	}
+}
+
 // --- Idempotence: repeated inject must not duplicate blocks ---
 
 func TestInjectDirectives_Idempotent(t *testing.T) {
@@ -840,7 +889,7 @@ func TestInjectDirectives_Idempotent(t *testing.T) {
 	}{
 		{"AntDirectives", "yesmem-directives", InjectAntDirectives},
 		{"CLAUDEMDAuthority", "yesmem-enhance", InjectCLAUDEMDAuthority},
-		{"ToolPrefs", "yesmem-tool-prefs", InjectToolPrefs},
+		{"ToolPrefs", "yesmem-tool-prefs", InjectClaudeToolPrefs},
 		{"OutputDiscipline", "yesmem-output-discipline", InjectOutputDiscipline},
 		{"CodingDiscipline", "yesmem-coding-discipline", InjectCodingDiscipline},
 		{"Beweislast", "yesmem-beweislast", InjectBeweislast},

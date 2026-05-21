@@ -186,7 +186,7 @@ func toInt64(v any) int64 {
 // proposal's project so the 3-way project filter in GetActiveLearnings
 // (project = ? OR project IS NULL OR project = '') resolves the correct row.
 func (h *Handler) acceptCapProposal(capName, project, scriptName, newBody string) (Response, error) {
-	activeCaps, err := h.store.GetActiveLearnings("cap", project, "", "")
+	activeCaps, err := h.store.GetActiveLearnings("cap", project, "", "", 0)
 	if err != nil {
 		return Response{}, fmt.Errorf("cap_proposal_decide: load active caps: %w", err)
 	}

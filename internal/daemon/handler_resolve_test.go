@@ -38,7 +38,7 @@ func TestHandleResolve(t *testing.T) {
 	}
 
 	// Verify learning is no longer active
-	active, _ := s.GetActiveLearnings("unfinished", "myproject", "", "")
+	active, _ := s.GetActiveLearnings("unfinished", "myproject", "", "", 0)
 	if len(active) != 0 {
 		t.Errorf("expected 0 active unfinished, got %d", len(active))
 	}
@@ -109,7 +109,7 @@ func TestHandleResolveByText(t *testing.T) {
 	}
 
 	// Only the profile page task should remain
-	active, _ := s.GetActiveLearnings("unfinished", "myproject", "", "")
+	active, _ := s.GetActiveLearnings("unfinished", "myproject", "", "", 0)
 	if len(active) != 1 {
 		t.Fatalf("expected 1 remaining unfinished, got %d", len(active))
 	}

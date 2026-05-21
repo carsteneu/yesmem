@@ -56,6 +56,14 @@ That's where you start. Not from zero. From where it matters.
 
 - **Parallel work:** one agent refactors the auth module, another writes tests, a third updates the docs. They share state, talk to each other, and you watch them work. Heartbeat, crash recovery, cascade shutdown built in.
 
+- **Your system prompt, your rules:** YesMem replaces the default system prompt with SYSTEM.md — a self-constitution template in first-person. The model knows it has memory, knows how to search it, knows its own capabilities. Applied across all pipelines (Claude Code, OpenCode, Codex). Claude Code's own `--system-prompt` flag is officially supported by Anthropic — the proxy does the same via middleware.
+
+- **Self-configuring provider routing:** Add any OpenAI-compatible provider to opencode. YesMem reads `models.json`, `opencode.json`, and `auth.json`, discovers active providers automatically, patches base URLs, and routes models. Works out of the box. Toggle off with `auto_configure_providers: false`.
+
+- **OpenCode integration:** First-class plugin with code-navigation hooks (blocks grep/find when the code graph has better answers), rule_guard (every tool call evaluated against RULES.md via the model), and automatic session identification. Install happens during `yesmem setup` — zero manual steps.
+
+- **Policy engine:** RULES.md with 30+ rules and a skill catalog with activation triggers. Memory search before answers. Code tools before shell. TDD before implementation. The model evaluates every tool call, BLOCK/SUGGEST decisions enforced before execution. Self-correcting — rules rewrite themselves based on what works.
+
 - **Self-cleaning:** Claude gets stuck in a loop, suggesting the same broken approach three times. YesMem detects it, quarantines the learnings from that session. The knowledge base maintains itself.
 
 ### Foundations
@@ -63,7 +71,7 @@ That's where you start. Not from zero. From where it matters.
 - **Find anything:** full-text + semantic search combined (BM25 + 512d vectors, Reciprocal Rank Fusion)
 - **Your words matter most,** 4-tier trust hierarchy: `user_stated` > `agreed_upon` > `claude_suggested` > `llm_extracted`
 - **Noise fades, signal stays:** Ebbinghaus decay based on conversation turns. Useful knowledge strengthens, irrelevant fades.
-- **Smart extraction,** 70% noise filtered before extraction starts. Then: extraction → embedding → quality refinement → clustering.
+- **Smart extraction,** content-aware truncation before extraction starts. Then: extraction → embedding → quality refinement → clustering.
 - **One binary, one command:** no Python, no Node, no Docker, no cloud account. `yesmem setup`, done.
 - **Your data stays yours,** everything in `~/.claude/yesmem/`. Nothing leaves your machine.
 - **Free:** FSL-1.1-ALv2. Use it for anything except building a competing product. After 2 years, Apache 2.0.
@@ -97,7 +105,7 @@ All data local. No cloud. No external dependencies. Pure Go — no CGo, no C com
 
 ## Features
 
-67 MCP tools · ~130 daemon RPCs · 53 CLI commands — **[full reference →](Features.md)**
+70 MCP tools · 130 daemon RPCs · 64 CLI commands — **[full reference →](Features.md)**
 
 ### Find & Remember
 - **Find anything across all sessions** — full-text + semantic search combined via Reciprocal Rank Fusion
@@ -107,7 +115,7 @@ All data local. No cloud. No external dependencies. Pure Go — no CGo, no C com
 - **Quality signals** — match, inject, use, save, noise — six independent measures per learning, not a hit counter
 
 ### Automatic Learning
-- **Smart extraction** — 70% noise filtered, then extraction → embedding → quality refinement → narrative generation → clustering → recurrence detection
+- **Smart extraction** — content-aware truncation, then extraction → embedding → quality refinement → narrative generation → clustering → recurrence detection
 - **Zero overhead** — extraction runs async in the background after every response
 - **Knowledge self-organizes** — dedup and distillation without user intervention
 
@@ -132,7 +140,7 @@ The proxy is **optional**. YesMem works fully without it — all MCP tools, brie
 - **Spawn parallel agents** — heartbeat monitoring, crash recovery, cascade shutdown
 - **Agents talk to each other** — `send_to()`, `broadcast()`, typed messages across sessions
 - **Shared state** — multi-agent scratchpad for coordination
-- **Plans that persist** — `set_plan()`, `update_plan()`, checkpoint injection every 20k tokens
+- **Plans that persist** — `set_plan()`, `update_plan()`, checkpoint injection every 10k tokens
 
 ### Knowledge That Grows
 - **Index your docs** — Markdown, reStructuredText, PDF. Heading-aware chunking with rich metadata.
@@ -148,13 +156,13 @@ The proxy is **optional**. YesMem works fully without it — all MCP tools, brie
 - **Gotcha decay** — stale gotchas fade, fresh ones surface. Precision-based scoring with tiered output eliminates noise from resolved issues
 
 ### Tools & CLI
-- **67 MCP tools** — search, remember, code intelligence, capabilities, personas, plans, agents, docs, scratchpad, config
-- **~53 CLI commands** — daemon, proxy, setup, extraction, benchmarking, export/import, cost tracking
-- **~130 daemon RPC methods** — full programmatic access
+- **70 MCP tools** — search, remember, code intelligence, capabilities, personas, plans, agents, docs, scratchpad, config
+- **64 CLI commands** — daemon, proxy, setup, extraction, benchmarking, export/import, cost tracking
+- **130 daemon RPC methods** — full programmatic access
 
 ### Scheduled Agents
 - **Cron-based task scheduler** — define recurring or one-shot jobs with cron expressions
-- **Two execution modes** — `agent` (visible tmux window) or `headless` (silent `claude -p` subprocess)
+- **Three execution modes** — `agent` (visible tmux window), `headless` (silent `claude -p` subprocess), or `bash` (cap handler without LLM)
 - **Caps-powered automation** — scheduled agents activate and run caps for predictable, repeatable tasks
 - **Persistent results** — output stored in scratchpad and cap_store, not lost between runs
 - **Self-hosted alternative** to Anthropic Cloud Routines — runs locally with full memory, MCP, and file access
@@ -235,12 +243,13 @@ See **[docs/sawtooth-cost-analysis.md](docs/sawtooth-cost-analysis.md)** and **[
 
 | Provider | Status | How |
 |----------|--------|-----|
-| **Anthropic API** | Production | Direct HTTP (default) |
-| **Claude CLI** | Production | Via `claude` binary (Pro/Max/Team — no API key needed) |
-| **OpenAI** | Planned | Responses API (GPT-5.x) |
-| **OpenAI-compatible** | Planned | Any compatible endpoint |
+| **Anthropic** | Production | Direct HTTP (API key) + Claude CLI (subscription) |
+| **DeepSeek** | Production | Auto-discovered via opencode (4 models) |
+| **OpenAI** | Production | Auto-discovered via opencode (52 models) |
+| **Mistral** | Production | Auto-discovered via opencode (28 models) |
+| **OpenAI-compatible** | Production | Auto-discovered — any provider registered in opencode |
 
-The proxy supports Anthropic Messages API natively. OpenAI Responses API support (Codex CLI compatibility) is in development.
+The proxy routes OpenAI-format requests to their respective upstream APIs automatically. Add a provider to opencode, restart the proxy, done. 84 models across 3 providers auto-discovered and routed with zero manual config.
 
 ### API Key vs. Subscription
 

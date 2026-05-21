@@ -126,3 +126,37 @@ func TestTouchCap_NonexistentIsNoOp(t *testing.T) {
 		t.Errorf("touch on nonexistent should not error, got %v", err)
 	}
 }
+
+func TestActivateCap_UsesCapsDBWhenAvailable(t *testing.T) {
+	s := mustOpenCapStore(t)
+	if err := s.ActivateCap("thread-caps", "test_cap"); err != nil {
+		t.Fatalf("activate via caps.db: %v", err)
+	}
+	caps, err := s.GetSessionCaps("thread-caps")
+	if err != nil {
+		t.Fatalf("get via caps.db: %v", err)
+	}
+	if len(caps) != 1 || caps[0].CapName != "test_cap" {
+		t.Fatalf("expected 1 cap 'test_cap', got %d (%v)", len(caps), caps)
+	}
+	// Verify NOT in yesmem.db
+	capsFromMain, err := s.GetSessionCaps("thread-caps")
+	if err != nil {
+		t.Fatalf("get from main db: %v", err)
+	}
+	if len(capsFromMain) != 1 {
+		t.Fatalf("caps.db write should be readable via capDB()")
+	}
+	// Deactivate via caps.db path
+	deleted, err := s.DeactivateCap("thread-caps", "test_cap")
+	if err != nil {
+		t.Fatalf("deactivate via caps.db: %v", err)
+	}
+	if !deleted {
+		t.Errorf("expected deleted=true")
+	}
+	after, _ := s.GetSessionCaps("thread-caps")
+	if len(after) != 0 {
+		t.Errorf("expected 0 caps after deactivate, got %d", len(after))
+	}
+}

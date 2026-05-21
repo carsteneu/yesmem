@@ -113,8 +113,8 @@ func (s *Server) fetchRulesFromDaemon(project string) string {
 
 // formatRulesReminder wraps the condensed rules in a recognizable block.
 // Fetches permanent pins from daemon and appends them.
-// Adds a pointer to CLAUDE.md and docs_search for context beyond the reminder.
-func (s *Server) formatRulesReminder(rules, project string) string {
+// nonClaude controls whether the footer references CLAUDE.md (Claude Code) or OPENCODE.md (opencode/DeepSeek).
+func (s *Server) formatRulesReminder(rules, project string, nonClaude bool) string {
 	// Fetch permanent pins
 	var pinBlock string
 	if result, err := s.queryDaemon("get_pins", map[string]any{"project": project}); err == nil {
@@ -138,7 +138,13 @@ func (s *Server) formatRulesReminder(rules, project string) string {
 		}
 	}
 
-	footer := "\n\n---\nThese rules are an excerpt. Additional project-specific instructions (architecture, routes, code patterns) are in your system prompt (CLAUDE.md). When unsure: docs_search() for details.\nTimestamps [HH:MM:SS] [msg:N] [+Δ] are embedded in every message — always reference them for time-related statements."
+	var rulesFile string
+	if nonClaude {
+		rulesFile = "OPENCODE.md (or agents.md)"
+	} else {
+		rulesFile = "CLAUDE.md"
+	}
+	footer := fmt.Sprintf("\n\n---\nThese rules are an excerpt. Additional project-specific instructions (architecture, routes, code patterns) are in your system prompt (%s). When unsure: docs_search() for details.\nTimestamps [HH:MM:SS] [msg:N] [+Δ] are embedded in every message — always reference them for time-related statements.", rulesFile)
 	return fmt.Sprintf("[Rules Reminder]\n%s%s%s\n[/Rules Reminder]", rules, pinBlock, footer)
 }
 

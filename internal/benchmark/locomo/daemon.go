@@ -68,7 +68,7 @@ func (dc *DaemonClient) HybridSearch(query, project string, limit int) ([]Search
 		return nil, fmt.Errorf("dial daemon: %w", err)
 	}
 	defer client.Close()
-	_ = client.SetDeadline(time.Now().Add(12 * time.Second))
+	_ = client.SetDeadline(time.Now().Add(30 * time.Second))
 
 	params := map[string]any{
 		"query":   query,
@@ -113,7 +113,7 @@ func (dc *DaemonClient) Search(query, project string, limit int) ([]SearchResult
 		return nil, fmt.Errorf("dial daemon: %w", err)
 	}
 	defer client.Close()
-	_ = client.SetDeadline(time.Now().Add(12 * time.Second))
+	_ = client.SetDeadline(time.Now().Add(30 * time.Second))
 
 	params := map[string]any{
 		"query":   query,
@@ -148,7 +148,7 @@ func (dc *DaemonClient) DeepSearch(query, project string, limit int) ([]SearchRe
 		return nil, fmt.Errorf("dial daemon: %w", err)
 	}
 	defer client.Close()
-	_ = client.SetDeadline(time.Now().Add(12 * time.Second))
+	_ = client.SetDeadline(time.Now().Add(30 * time.Second))
 
 	params := map[string]any{
 		"query":             query,
@@ -195,7 +195,7 @@ func (dc *DaemonClient) DocsSearch(query, project string, limit int) ([]SearchRe
 		return nil, fmt.Errorf("dial daemon: %w", err)
 	}
 	defer client.Close()
-	_ = client.SetDeadline(time.Now().Add(12 * time.Second))
+	_ = client.SetDeadline(time.Now().Add(30 * time.Second))
 
 	params := map[string]any{
 		"query": query,

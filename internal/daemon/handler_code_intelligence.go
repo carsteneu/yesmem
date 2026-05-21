@@ -58,7 +58,10 @@ func (h *Handler) getCodeGraph(project string, params ...map[string]any) *codesc
 		return nil
 	}
 
-	graph := codescan.BuildCodeGraph(result)
+	graph := scanner.GetCachedGraph(projectDir)
+	if graph == nil {
+		graph = codescan.BuildCodeGraph(result)
+	}
 
 	if h.codeGraphs == nil {
 		h.codeGraphs = make(map[string]*codeGraphEntry)
@@ -72,6 +75,7 @@ func (h *Handler) getCodeGraph(project string, params ...map[string]any) *codesc
 
 // resolveProjectDir returns the filesystem path for a project name.
 // Prefers explicit project_dir or _cwd from params (worktree-aware) over stored path.
+// If project is already a valid absolute directory path, returns it directly.
 func (h *Handler) resolveProjectDir(project string, params ...map[string]any) string {
 	if len(params) > 0 && params[0] != nil {
 		if dir, _ := params[0]["project_dir"].(string); dir != "" {
@@ -83,6 +87,12 @@ func (h *Handler) resolveProjectDir(project string, params ...map[string]any) st
 	}
 	if project == "" {
 		return ""
+	}
+	// If project looks like an absolute path and exists, use it directly.
+	if len(project) > 0 && project[0] == '/' {
+		if info, err := os.Stat(project); err == nil && info.IsDir() {
+			return project
+		}
 	}
 	return h.store.ResolveProjectPath(project)
 }

@@ -136,6 +136,20 @@ func (h *Handler) spawnAgentProcess(id, sessionID, project, section, prompt, soc
 	var agentArgs []string
 
 	switch backend {
+	case "opencode":
+		if resume {
+			h.store.AgentUpdate(id, map[string]any{
+				"status":     "error",
+				"error":      "resume is only supported for claude agents",
+				"stopped_at": time.Now().Format(time.RFC3339),
+			})
+			return
+		}
+		agentBin = resolveAgentBinary(backend)
+		agentArgs = []string{"run", "--dangerously-skip-permissions", prompt}
+		if model != "" {
+			agentArgs = []string{"run", "--dangerously-skip-permissions", "--model", fmt.Sprintf("deepseek/%s", model), prompt}
+		}
 	case "codex":
 		if resume {
 			h.store.AgentUpdate(id, map[string]any{
@@ -145,7 +159,7 @@ func (h *Handler) spawnAgentProcess(id, sessionID, project, section, prompt, soc
 			})
 			return
 		}
-		agentBin = "codex"
+		agentBin = resolveAgentBinary(backend)
 		agentArgs = []string{
 			"--cd", workDir,
 			"--full-auto",
@@ -714,6 +728,26 @@ func ensureAgentPermissions(workDir string) {
 	os.MkdirAll(claudeDir, 0755)
 	settings := `{"permissions":{"allow":["Bash(*)","Read(*)","Write(*)","Edit(*)","Glob(*)","Grep(*)","WebSearch(*)","WebFetch(*)","Agent(*)"]},"disabledMcpjsonServers":[]}`
 	os.WriteFile(settingsPath, []byte(settings), 0644)
+}
+
+func resolveAgentBinary(backend string) string {
+	if path, err := exec.LookPath(backend); err == nil {
+		return path
+	}
+	homeDir, _ := os.UserHomeDir()
+	switch backend {
+	case "opencode":
+		return filepath.Join(homeDir, ".opencode", "bin", "opencode")
+	case "codex":
+		if path, err := exec.LookPath("node"); err == nil {
+			if dir := filepath.Dir(path); strings.Contains(dir, ".nvm") {
+				return filepath.Join(dir, "codex")
+			}
+		}
+		return "codex"
+	default:
+		return backend
+	}
 }
 
 func (h *Handler) resolveAgentWorkDir(project, workDir, backend string) string {

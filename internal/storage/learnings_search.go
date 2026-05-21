@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/carsteneu/yesmem/internal/models"
@@ -32,7 +33,8 @@ func (s *Store) QueryFacts(opts QueryFactsOpts) ([]models.Learning, error) {
 		COALESCE(l.hit_count, 0), COALESCE(l.emotional_intensity, 0.0), l.last_hit_at, COALESCE(l.session_flavor, ''), l.valid_until, l.supersedes, COALESCE(l.importance, 3), l.supersede_status, COALESCE(l.noise_count, 0), COALESCE(l.fail_count, 0),
 		COALESCE(l.match_count, 0), COALESCE(l.inject_count, 0), COALESCE(l.use_count, 0), COALESCE(l.save_count, 0), COALESCE(l.stability, 30.0),
 		COALESCE(l.context, ''), COALESCE(l.domain, 'code'), COALESCE(l.trigger_rule, ''), COALESCE(l.embedding_text, ''),
-		COALESCE(l.source_file, ''), COALESCE(l.source_hash, ''), COALESCE(l.doc_chunk_ref, 0), COALESCE(l.task_type, ''), COALESCE(l.turns_at_creation, 0), COALESCE(l.origin_tool, ''), COALESCE(l.source_msg_from, -1), COALESCE(l.source_msg_to, -1)`
+		COALESCE(l.source_file, ''), COALESCE(l.source_hash, ''), COALESCE(l.doc_chunk_ref, 0), COALESCE(l.task_type, ''), COALESCE(l.turns_at_creation, 0), COALESCE(l.origin_tool, ''), COALESCE(l.source_msg_from, -1), COALESCE(l.source_msg_to, -1),
+		COALESCE(l.canonical_project, '')`
 
 	query := `SELECT DISTINCT ` + selectCols + ` FROM learnings l`
 	var joins []string
@@ -64,8 +66,8 @@ func (s *Store) QueryFacts(opts QueryFactsOpts) ([]models.Learning, error) {
 		args = append(args, opts.Domain)
 	}
 	if opts.Project != "" {
-		where = append(where, `l.project = ?`)
-		args = append(args, opts.Project)
+		where = append(where, `l.canonical_project = ?`)
+		args = append(args, s.resolveCanonicalProject(opts.Project))
 	}
 	if opts.Category != "" {
 		where = append(where, `l.category = ?`)
@@ -111,7 +113,8 @@ func (s *Store) SearchUnfinished(query, project string) ([]models.Learning, erro
 		COALESCE(l.hit_count, 0), COALESCE(l.emotional_intensity, 0.0), l.last_hit_at, COALESCE(l.session_flavor, ''), l.valid_until, l.supersedes, COALESCE(l.importance, 3), l.supersede_status, COALESCE(l.noise_count, 0), COALESCE(l.fail_count, 0),
 		COALESCE(l.match_count, 0), COALESCE(l.inject_count, 0), COALESCE(l.use_count, 0), COALESCE(l.save_count, 0), COALESCE(l.stability, 30.0),
 		COALESCE(l.context, ''), COALESCE(l.domain, 'code'), COALESCE(l.trigger_rule, ''), COALESCE(l.embedding_text, ''),
-		COALESCE(l.source_file, ''), COALESCE(l.source_hash, ''), COALESCE(l.doc_chunk_ref, 0), COALESCE(l.task_type, ''), COALESCE(l.turns_at_creation, 0), COALESCE(l.origin_tool, ''), COALESCE(l.source_msg_from, -1), COALESCE(l.source_msg_to, -1)
+		COALESCE(l.source_file, ''), COALESCE(l.source_hash, ''), COALESCE(l.doc_chunk_ref, 0), COALESCE(l.task_type, ''), COALESCE(l.turns_at_creation, 0), COALESCE(l.origin_tool, ''), COALESCE(l.source_msg_from, -1), COALESCE(l.source_msg_to, -1),
+		COALESCE(l.canonical_project, '')
 		FROM learnings_fts
 		JOIN learnings l ON l.id = learnings_fts.rowid
 		WHERE learnings_fts MATCH ?
@@ -119,8 +122,8 @@ func (s *Store) SearchUnfinished(query, project string) ([]models.Learning, erro
 	args := []any{ftsQuery}
 
 	if project != "" {
-		base += ` AND (l.project = ? OR l.project IS NULL OR l.project = '')`
-		args = append(args, project)
+		base += ` AND (l.canonical_project = ? OR l.canonical_project = '')`
+		args = append(args, s.resolveCanonicalProject(project))
 	}
 
 	base += ` ORDER BY bm25(learnings_fts) LIMIT 10`
@@ -202,14 +205,28 @@ func (s *Store) SearchLearningsBM25Ctx(ctx context.Context, query, project, sinc
 		term  string
 		count int
 	}
-	var freqs []termFreq
+	var (
+		freqs  []termFreq
+		freqMu sync.Mutex
+		wg     sync.WaitGroup
+		sem    = make(chan struct{}, 4)
+	)
 	for _, q := range quoted {
-		var cnt int
-		_ = s.readerDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM learnings_fts WHERE learnings_fts MATCH ?`, q).Scan(&cnt)
-		if cnt > 0 {
-			freqs = append(freqs, termFreq{q, cnt})
-		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(term string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			var cnt int
+			_ = s.readerDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM learnings_fts WHERE learnings_fts MATCH ?`, term).Scan(&cnt)
+			if cnt > 0 {
+				freqMu.Lock()
+				freqs = append(freqs, termFreq{term, cnt})
+				freqMu.Unlock()
+			}
+		}(q)
 	}
+	wg.Wait()
 	if len(freqs) == 0 {
 		return nil, nil
 	}
@@ -278,22 +295,23 @@ func (s *Store) SearchLearningsBM25Ctx(ctx context.Context, query, project, sinc
 		args[i] = h.id
 	}
 
-	metaSQL := `SELECT CAST(id AS TEXT), COALESCE(project, ''), category, created_at FROM learnings WHERE id IN (` + strings.Join(placeholders, ",") + `) AND quarantined_at IS NULL`
+	metaSQL := `SELECT CAST(id AS TEXT), COALESCE(project, ''), COALESCE(canonical_project, ''), category, created_at FROM learnings WHERE id IN (` + strings.Join(placeholders, ",") + `) AND quarantined_at IS NULL`
 	metaRows, err := s.readerDB().QueryContext(ctx, metaSQL, args...)
 	if err != nil {
 		return nil, fmt.Errorf("search learnings meta: %w", err)
 	}
 
 	type meta struct {
-		project   string
-		category  string
-		createdAt string
+		project           string
+		canonicalProject  string
+		category          string
+		createdAt         string
 	}
 	metaMap := make(map[string]meta, len(hits))
 	for metaRows.Next() {
-		var id, proj, cat, created string
-		if metaRows.Scan(&id, &proj, &cat, &created) == nil {
-			metaMap[id] = meta{project: proj, category: cat, createdAt: created}
+		var id, proj, canon, cat, created string
+		if metaRows.Scan(&id, &proj, &canon, &cat, &created) == nil {
+			metaMap[id] = meta{project: proj, canonicalProject: canon, category: cat, createdAt: created}
 		}
 	}
 	metaRows.Close()
@@ -312,7 +330,7 @@ func (s *Store) SearchLearningsBM25Ctx(ctx context.Context, query, project, sinc
 		case "unfinished":
 			score *= 0.7
 		}
-		if project != "" && m.project != "" && !models.ProjectMatches(m.project, project) {
+		if project != "" && m.canonicalProject != "" && m.canonicalProject != project {
 			continue
 		}
 		if since != "" && m.createdAt < since {
@@ -353,7 +371,8 @@ func (s *Store) FindLearningsByEntityMatch(entities []string, project string) ([
 		COALESCE(l.hit_count, 0), COALESCE(l.emotional_intensity, 0.0), l.last_hit_at, COALESCE(l.session_flavor, ''), l.valid_until, l.supersedes, COALESCE(l.importance, 3), l.supersede_status, COALESCE(l.noise_count, 0), COALESCE(l.fail_count, 0),
 		COALESCE(l.match_count, 0), COALESCE(l.inject_count, 0), COALESCE(l.use_count, 0), COALESCE(l.save_count, 0), COALESCE(l.stability, 30.0),
 		COALESCE(l.context, ''), COALESCE(l.domain, 'code'), COALESCE(l.trigger_rule, ''), COALESCE(l.embedding_text, ''),
-		COALESCE(l.source_file, ''), COALESCE(l.source_hash, ''), COALESCE(l.doc_chunk_ref, 0), COALESCE(l.task_type, ''), COALESCE(l.turns_at_creation, 0), COALESCE(l.origin_tool, ''), COALESCE(l.source_msg_from, -1), COALESCE(l.source_msg_to, -1)
+		COALESCE(l.source_file, ''), COALESCE(l.source_hash, ''), COALESCE(l.doc_chunk_ref, 0), COALESCE(l.task_type, ''), COALESCE(l.turns_at_creation, 0), COALESCE(l.origin_tool, ''), COALESCE(l.source_msg_from, -1), COALESCE(l.source_msg_to, -1),
+		COALESCE(l.canonical_project, '')
 		FROM learnings l
 		JOIN learning_entities le ON le.learning_id = l.id
 		WHERE le.value IN (` + strings.Join(placeholders, ",") + `)
@@ -361,7 +380,7 @@ func (s *Store) FindLearningsByEntityMatch(entities []string, project string) ([
 		AND l.valid_until IS NULL`
 
 	if project != "" {
-		query += ` AND (l.project = ? OR l.project IS NULL OR l.project = '')`
+		query += ` AND (l.canonical_project = ? OR l.canonical_project = '')`
 		args = append(args, project)
 	}
 
@@ -407,7 +426,7 @@ func (s *Store) SearchAnticipatedQueries(query, project string, limit int) ([]Le
 
 func (s *Store) runAQFTSQuery(ftsQuery, project string, limit int) ([]LearningSearchResult, error) {
 	rows, err := s.readerDB().Query(`
-		SELECT aq.learning_id, l.content, bm25(anticipated_queries_fts) AS score, COALESCE(l.project, '')
+		SELECT aq.learning_id, l.content, bm25(anticipated_queries_fts) AS score, COALESCE(l.project, ''), COALESCE(l.canonical_project, '')
 		FROM anticipated_queries_fts aq
 		JOIN learnings l ON l.id = aq.learning_id
 		WHERE anticipated_queries_fts MATCH ?
@@ -424,11 +443,11 @@ func (s *Store) runAQFTSQuery(ftsQuery, project string, limit int) ([]LearningSe
 		var lid int64
 		var content string
 		var score float64
-		var proj string
-		if err := rows.Scan(&lid, &content, &score, &proj); err != nil {
+		var proj, canon string
+		if err := rows.Scan(&lid, &content, &score, &proj, &canon); err != nil {
 			continue
 		}
-		if project != "" && proj != project {
+		if project != "" && canon != project {
 			continue
 		}
 		if seen[lid] {

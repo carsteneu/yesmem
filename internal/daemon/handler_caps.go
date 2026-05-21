@@ -26,7 +26,7 @@ func (h *Handler) handleGetCaps(params map[string]any) Response {
 	tag := stringOr(params, "tag", "")
 	limit := intOr(params, "limit", 50)
 
-	learnings, err := h.store.GetActiveLearnings("cap", project, "", "")
+	learnings, err := h.store.GetActiveLearnings("cap", project, "", "", 0)
 	if err != nil {
 		return errorResponse(fmt.Sprintf("get_caps: %v", err))
 	}
@@ -99,11 +99,16 @@ func (h *Handler) handleSaveCap(params map[string]any) Response {
 		autoActive = v
 	}
 
-	// Auto-supersede: find existing cap with same name
+	// Auto-supersede: find existing cap with same name.
+	// Skip if version unchanged (avoids churn on daemon restart).
+	incomingVersion := 0
+	if v, ok := params["version"].(float64); ok {
+		incomingVersion = int(v)
+	}
 	var supersededID *int64
 	var oldMeta *CapMeta
 	version := 1
-	existing, err := h.store.GetActiveLearnings("cap", project, "", "")
+	existing, err := h.store.GetActiveLearnings("cap", project, "", "", 0)
 	if err != nil {
 		return errorResponse(fmt.Sprintf("save_cap supersede lookup: %v", err))
 	}
@@ -113,6 +118,9 @@ func (h *Handler) handleSaveCap(params map[string]any) Response {
 			continue
 		}
 		if meta.Name == name {
+			if incomingVersion > 0 && incomingVersion == meta.Version {
+				return jsonResponse(map[string]any{"id": l.ID, "status": "unchanged"})
+			}
 			id := l.ID
 			supersededID = &id
 			version = meta.Version + 1
@@ -121,6 +129,9 @@ func (h *Handler) handleSaveCap(params map[string]any) Response {
 			break
 		}
 	}
+
+	content := name + " — " + description
+	hash := textutil.ContentHash(content)
 
 	hasScriptsParam := stringOr(params, "scripts", "") != ""
 	hasLegacyHandlers := stringOr(params, "handler_bash", "") != "" || stringOr(params, "handler_repl", "") != ""
@@ -163,14 +174,12 @@ func (h *Handler) handleSaveCap(params map[string]any) Response {
 		return errorResponse(fmt.Sprintf("save_cap: %v", err))
 	}
 
-	content := name + " — " + description
-	hash := textutil.ContentHash(content)
-
 	l := &models.Learning{
 		Content:            content,
 		Category:           "cap",
 		Source:             source,
 		Project:            project,
+		CanonicalProject:   canonicalProjectFor(project),
 		Confidence:         1.0,
 		Context:            ctxJSON,
 		Domain:             "code",
@@ -228,7 +237,7 @@ func (h *Handler) handleRegisterCaps(params map[string]any) Response {
 	project, _ := params["project"].(string)
 	tag, _ := params["tag"].(string)
 
-	caps, err := h.store.GetActiveLearnings("cap", project, "", "")
+	caps, err := h.store.GetActiveLearnings("cap", project, "", "", 0)
 	if err != nil {
 		return errorResponse(fmt.Sprintf("register_caps: %v", err))
 	}
@@ -313,7 +322,7 @@ func (h *Handler) handleActivateCap(params map[string]any) Response {
 	}
 	project := stringOr(params, "project", "")
 
-	caps, err := h.store.GetActiveLearnings("cap", "", "", "")
+	caps, err := h.store.GetActiveLearnings("cap", "", "", "", 0)
 	if err != nil {
 		return errorResponse(fmt.Sprintf("activate_cap: %v", err))
 	}
@@ -435,7 +444,7 @@ func (h *Handler) handleGetActiveCaps(params map[string]any) Response {
 		}
 	}
 
-	caps, err := h.store.GetActiveLearnings("cap", "", "", "")
+	caps, err := h.store.GetActiveLearnings("cap", "", "", "", 0)
 	if err != nil {
 		return errorResponse(fmt.Sprintf("get_active_caps: %v", err))
 	}

@@ -23,7 +23,7 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 		os.WriteFile(debugPath, body, 0644)
 	}
 
-	targetURL := s.cfg.TargetURL + origReq.URL.RequestURI()
+	targetURL := s.resolveAnthropicTarget(extractModelFromBody(body)) + origReq.URL.RequestURI()
 
 	proxyReq, err := http.NewRequestWithContext(origReq.Context(), origReq.Method, targetURL, bytes.NewReader(body))
 	if err != nil {
@@ -244,7 +244,7 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 		if len(estimatedTokens) > 0 {
 			est = estimatedTokens[0]
 		}
-		s.logger.Printf("[req %d] %s", reqIdx, usage.LogLine(reqIdx, 0, est, threadID))
+		s.logger.Printf("%s %s", fmtReq(reqIdx, s.version), usage.LogLine(reqIdx, 0, est, threadID))
 
 		// Sawtooth: track actual tokens for trigger decisions
 		if s.cfg.SawtoothEnabled && threadID != "" {
@@ -316,7 +316,7 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 		}(usage)
 
 		// Fire forked agents (async, fire-and-forget)
-		if usage.Complete && usage.CacheReadInputTokens > 0 && !s.forkState.IsDisabled(threadID) {
+		if usage.Complete && usage.CacheReadInputTokens > 0 && !s.forkState.IsDisabled(threadID) && isRealUserSession(threadID) {
 			totalTokens := usage.TotalInputTokens()
 			hasCache := usage.CacheReadInputTokens > 0
 			if s.forkState.ShouldFork(threadID, totalTokens, hasCache) {
@@ -368,7 +368,7 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 
 // forwardRaw forwards a request to the upstream API without any annotation extraction.
 func (s *Server) forwardRaw(w http.ResponseWriter, origReq *http.Request, body []byte) {
-	targetURL := s.cfg.TargetURL + origReq.URL.RequestURI()
+	targetURL := s.resolveAnthropicTarget(extractModelFromBody(body)) + origReq.URL.RequestURI()
 
 	proxyReq, err := http.NewRequestWithContext(origReq.Context(), origReq.Method, targetURL, bytes.NewReader(body))
 	if err != nil {

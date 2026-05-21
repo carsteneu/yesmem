@@ -45,7 +45,7 @@ func CheckPreAdmission(store *storage.Store, learning *models.Learning) PreAdmis
 
 	// Phase 3: Fallback — scan category directly (catches cases BM25 misses
 	// due to stemming/conjugation differences). Limited to 100 for performance.
-	catLearnings, err := store.GetActiveLearnings(learning.Category, learning.Project, "", "")
+	catLearnings, err := store.GetActiveLearnings(learning.Category, learning.Project, "", "", 0)
 	if err == nil && len(catLearnings) > 0 {
 		limit := len(catLearnings)
 		if limit > 100 {

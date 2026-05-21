@@ -156,9 +156,7 @@ var skillEvalBlock = SkillEvalStartMarker + "\n" +
 
 // buildSkillEvalBlock returns the cached skill evaluation instruction block.
 var silentSkillEvalBlock = SkillEvalStartMarker + "\n" +
-	"EVALUATE INTERNALLY: Check available skills and /commands against the current task.\n" +
-	"IF a skill applies → activate via Skill tool, then proceed.\n" +
-	"IF none apply → proceed directly. No evaluation output needed.\n" +
+	"ATTENTION — SKILL CHECK: If this task matches any available skill or /command → use Skill tool NOW. Otherwise proceed directly." +
 	SkillEvalEndMarker
 
 func buildSkillEvalBlock(mode string) string {

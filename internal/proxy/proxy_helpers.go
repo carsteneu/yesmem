@@ -13,11 +13,14 @@ import (
 	"time"
 )
 
-// extractSessionID extracts the Claude Code session_id.
-// Prefers the X-Claude-Code-Session-Id HTTP header (CC v2.1.86+).
-// Falls back to parsing metadata.user_id from the request body for
-// older clients or subscription accounts that may not send the header.
-func extractSessionID(req map[string]any, headerSessionID string) string {
+// extractSessionID extracts the session ID from headers and request metadata.
+// Priority: opencodeSessionID (x-opencode-session header) > headerSessionID
+// (X-Claude-Code-Session-Id) > metadata.user_id.session_id (JSON body).
+func extractSessionID(req map[string]any, headerSessionID, opencodeSessionID string) string {
+	// Prefer OpenCode's native session ID from x-opencode-session header
+	if opencodeSessionID != "" {
+		return opencodeSessionID
+	}
 	if headerSessionID != "" {
 		return headerSessionID
 	}
@@ -49,7 +52,7 @@ func DeriveThreadID(req map[string]any) string {
 	wrote := false
 
 	// Session ID from metadata.user_id — unique per CC session
-	if sid := extractSessionID(req, ""); sid != "" {
+	if sid := extractSessionID(req, "", ""); sid != "" {
 		h.Write([]byte(sid))
 		wrote = true
 	}
@@ -144,7 +147,7 @@ func deriveThreadIDFromMessages(req map[string]any) string {
 	wrote := false
 
 	// Session ID from metadata.user_id — unique per CC session
-	if sid := extractSessionID(req, ""); sid != "" {
+	if sid := extractSessionID(req, "", ""); sid != "" {
 		h.Write([]byte(sid))
 	}
 
@@ -265,9 +268,10 @@ func extractSystemTexts(system any) []string {
 }
 
 func extractWorkingDirectoryFromText(text string) string {
-	const marker = "Primary working directory: "
-	if idx := strings.Index(text, marker); idx >= 0 {
-		rest := text[idx+len(marker):]
+	// Claude Code format: "Primary working directory: /path/to/project"
+	const ccMarker = "Primary working directory: "
+	if idx := strings.Index(text, ccMarker); idx >= 0 {
+		rest := text[idx+len(ccMarker):]
 		if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
 			rest = rest[:nl]
 		} else if nl := strings.Index(rest, `\n`); nl >= 0 {
@@ -276,6 +280,19 @@ func extractWorkingDirectoryFromText(text string) string {
 		return strings.TrimSpace(rest)
 	}
 
+	// Opencode format: "Working directory: /path/to/project"
+	const ocMarker = "Working directory: "
+	if idx := strings.Index(text, ocMarker); idx >= 0 {
+		rest := text[idx+len(ocMarker):]
+		if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
+			rest = rest[:nl]
+		} else if nl := strings.Index(rest, `\n`); nl >= 0 {
+			rest = rest[:nl]
+		}
+		return strings.TrimSpace(rest)
+	}
+
+	// Codex format: <cwd>/path</cwd>
 	const cwdOpen = "<cwd>"
 	const cwdClose = "</cwd>"
 	if idx := strings.Index(text, cwdOpen); idx >= 0 {
@@ -541,7 +558,7 @@ func countCompactedMsgs(blocks []CompactedBlock) int {
 // prependMeta prepends a metadata string to a message's first text content.
 // Handles both string content and content-block arrays. Skips if already annotated.
 func prependMeta(msg map[string]any, meta string) {
-	prefix := meta + " "
+	prefix := meta + "\n"
 
 	switch content := msg["content"].(type) {
 	case string:
@@ -577,21 +594,74 @@ func hasMetaPrefix(text string) bool {
 	return strings.Contains(text[:end], "[msg:")
 }
 
-// stripMetaPrefixText removes any leading [timestamp] [msg:N] [+delta] annotations from text.
+// stripMetaPrefixText removes any leading [timestamp] [msg:N] [+delta] annotations from text,
+// as well as subsequent [think-reminder], [skill-eval], [rules] meta-inject lines.
 func stripMetaPrefixText(text string) string {
 	if !hasMetaPrefix(text) {
 		return text
 	}
-	// Strip consecutive [...] blocks at the start
-	s := text
-	for strings.HasPrefix(s, "[") {
-		end := strings.Index(s, "] ")
-		if end < 0 {
+
+	lines := strings.Split(text, "\n")
+	if len(lines) == 0 {
+		return text
+	}
+
+	// Strip first line's [...] blocks (timestamp, msg:N, +delta).
+	// Handle both "] " and "]\n" separators.
+	first := lines[0]
+	for strings.HasPrefix(first, "[") {
+		bEnd := strings.IndexByte(first, ']')
+		if bEnd < 0 {
 			break
 		}
-		s = s[end+2:]
+		if bEnd+1 < len(first) {
+			next := first[bEnd+1]
+			if next == ' ' {
+				first = first[bEnd+2:] // "] " — strip bracket block + space
+			} else if next == '\n' {
+				first = first[bEnd+1:] // "]\n" — strip bracket, newline becomes line separator
+			} else {
+				first = first[bEnd+1:] // "]X" — strip bracket only (unusual, but safe)
+			}
+		} else {
+			first = first[bEnd+1:] // "]" — strip bracket, end of string
+			break
+		}
 	}
-	return s
+
+	// Re-split if the first line's stripping introduced newlines
+	if strings.Contains(first, "\n") {
+		parts := strings.Split(first, "\n")
+		first = parts[0]
+		lines = append(parts[1:], lines[1:]...)
+	}
+
+	if first == "" && len(lines) == 1 {
+		return ""
+	}
+	if first != "" {
+		lines[0] = first
+	} else {
+		lines = lines[1:]
+	}
+
+	// Strip known inject lines from the start
+	known := []string{"[think-reminder] ", "[skill-eval] ", "[rules] ", "[ts-hint] "}
+	for len(lines) > 0 {
+		stripped := false
+		for _, k := range known {
+			if strings.HasPrefix(lines[0], k) {
+				lines = lines[1:]
+				stripped = true
+				break
+			}
+		}
+		if !stripped {
+			break
+		}
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 // stripMetaPrefix removes any [timestamp] [msg:N] [+delta] prefix from a message's text content.
@@ -658,4 +728,11 @@ func (s *Server) getRawEstimate(threadID string) int {
 		return 0
 	}
 	return s.rawSavings[threadID]
+}
+
+// isRealUserSession returns true for session IDs that represent real user sessions
+// (opencode:ses_* or claude:ses_* prefixed). Internal/automated threads use plain
+// UUIDs or other formats and should not trigger forked agent extraction.
+func isRealUserSession(threadID string) bool {
+	return strings.HasPrefix(threadID, "opencode:ses_") || strings.HasPrefix(threadID, "claude:ses_")
 }

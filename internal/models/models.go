@@ -9,8 +9,9 @@ import (
 )
 
 const (
-	SourceAgentClaude = "claude"
-	SourceAgentCodex  = "codex"
+	SourceAgentClaude   = "claude"
+	SourceAgentCodex    = "codex"
+	SourceAgentOpencode = "opencode"
 )
 
 // Session represents a Claude Code chat session.
@@ -70,6 +71,7 @@ type Learning struct {
 	OriginTool      string     `json:"origin_tool,omitempty"` // user, bash_command_input, file_read, web_external, cap_<name>, llm_extracted_session
 	SourceAgent     string     `json:"source_agent,omitempty"`
 	TargetAgent     string     `json:"target_agent,omitempty"`
+	CanonicalProject string    `json:"canonical_project,omitempty"` // parent project basename for worktree→main promotion
 	HitCount           int        `json:"hit_count"`
 	FailCount          int        `json:"fail_count"`
 	EmotionalIntensity float64    `json:"emotional_intensity,omitempty"`
@@ -305,6 +307,10 @@ func NormalizeSourceAgent(sourceAgent string) string {
 	if sourceAgent == "" {
 		return SourceAgentClaude
 	}
+	switch sourceAgent {
+	case "open-code":
+		return SourceAgentOpencode
+	}
 	return sourceAgent
 }
 
@@ -320,11 +326,18 @@ func NormalizeTargetAgent(targetAgent string) string {
 
 // DetectSourceAgentFromPath infers the originating agent from a session path.
 // Unknown layouts fall back to Claude's historic .claude/projects scheme.
+//
+// NOTE: This function has no live callers (grep confirms). When activated,
+// it needs an opencode-marker branch (/opencode/ or opencode.db).
 func DetectSourceAgentFromPath(path string) string {
 	clean := filepath.Clean(path)
 	codexMarker := string(os.PathSeparator) + ".codex" + string(os.PathSeparator) + "sessions"
 	if strings.Contains(clean, codexMarker+string(os.PathSeparator)) || strings.HasSuffix(clean, codexMarker) {
 		return SourceAgentCodex
+	}
+	opencodeMarker := string(os.PathSeparator) + "opencode" + string(os.PathSeparator)
+	if strings.Contains(clean, opencodeMarker) {
+		return SourceAgentOpencode
 	}
 	return SourceAgentClaude
 }

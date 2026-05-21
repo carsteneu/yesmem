@@ -41,13 +41,13 @@ func (g *Generator) GenerateRecovery() string {
 	}
 
 	isCompact := g.recovery.Source == "compact"
-	return formatRecovery(sess, msgs, isCompact)
+	return formatRecovery(sess, msgs, isCompact, g.profile())
 }
 
 // formatRecovery formats session data into a recovery text block.
 // compact=true produces a shorter version (~200-300 tokens) for post-compact.
 // compact=false produces a fuller version (~500-1000 tokens) for post-clear.
-func formatRecovery(sess *models.Session, msgs []models.Message, compact bool) string {
+func formatRecovery(sess *models.Session, msgs []models.Message, compact bool, profile models.PromptProfile) string {
 	var b strings.Builder
 
 	if compact {
@@ -106,7 +106,7 @@ func formatRecovery(sess *models.Session, msgs []models.Message, compact bool) s
 		for _, m := range recentMsgs {
 			prefix := "User"
 			if m.Role == "assistant" {
-				prefix = "Claude"
+				prefix = agentPrefix(profile)
 			}
 			content := m.Content
 			maxLen := 200
@@ -179,6 +179,14 @@ func extractRecentConversation(msgs []models.Message, limit int) []models.Messag
 		textMsgs = textMsgs[len(textMsgs)-limit:]
 	}
 	return textMsgs
+}
+
+// agentPrefix returns the display name for the agent in recovery output.
+func agentPrefix(p models.PromptProfile) string {
+	if p.IsClaude() {
+		return "Claude"
+	}
+	return "Agent" // neutral for opencode, codex, generic
 }
 
 // Ensure Store has the methods we need (compile-time check).

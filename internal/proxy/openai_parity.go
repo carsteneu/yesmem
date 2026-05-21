@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/carsteneu/yesmem/internal/models"
 )
 
 type openAIRequestContext struct {
@@ -21,11 +23,15 @@ type openAIRequestContext struct {
 	Fingerprint     string
 	UserQuery       string
 	UserAgent       string
+	Model           string
 	ToolUseIDs      []string
 	Retry           bool
 	EstimatedTokens int
 	MessageCount    int
 	Subagent        bool
+	SawtoothCutoff  int // raw index where frozen stubs end (= fresh tail start)
+	SawtoothStubs   int // number of frozen stubs in combined array
+	RawMsgCount     int // total messages before sawtooth compaction
 }
 
 func (s *Server) ensureOpenAIRuntimeState() {
@@ -84,24 +90,27 @@ func (s *Server) ensureOpenAIRuntimeState() {
 	s.lastInjectedIDsMu.Unlock()
 }
 
-func (s *Server) prepareOpenAIRequestContext(req map[string]any, reqIdx int, headerSessionID, userAgent string) openAIRequestContext {
+func (s *Server) prepareOpenAIRequestContext(req map[string]any, reqIdx int, headerSessionID, opencodeSessionID, userAgent string) openAIRequestContext {
 	messages, _ := req["messages"].([]any)
 	fp := requestFingerprint(messages)
 	ctx := openAIRequestContext{
 		ReqIdx:      reqIdx,
 		Project:     extractProjectName(req),
-		SessionID:   extractSessionID(req, headerSessionID),
+		SessionID:   extractSessionID(req, headerSessionID, opencodeSessionID),
 		Fingerprint: fp,
 		UserQuery:   lastUserText(messages),
 		UserAgent:   userAgent,
 		ToolUseIDs:  extractToolUseIDs(messages),
 		Subagent:    isOpenAIProxySubagent(messages, req),
 	}
-	// Prefer stable session ID from metadata (Codex) over content-hash
-	if ctx.SessionID != "" {
-		ctx.ThreadID = ctx.SessionID
+	if opencodeSessionID != "" {
+		ctx.ThreadID = "opencode:" + opencodeSessionID
+		s.logger.Printf("%s %sopencode session mapped: oc:%s → opencode:%s%s",
+			fmtReq(reqIdx, s.version), colorGreen, opencodeSessionID, ctx.ThreadID, colorReset)
+	} else if ctx.SessionID != "" {
+		ctx.ThreadID = "opencode:" + ctx.SessionID
 	} else {
-		ctx.ThreadID = DeriveThreadID(req)
+		ctx.ThreadID = "opencode:" + DeriveThreadID(req)
 	}
 
 	ctx.Retry = s.isRetry(fp)
@@ -126,17 +135,21 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 	s.refreshConfigOverrides(ctx.ThreadID)
 
 	messages, _ := req["messages"].([]any)
-	if len(messages) <= 1 {
+	if len(messages) <= 1 && !strings.Contains(ctx.UserAgent, "opencode") {
 		AppendSystemBlock(req, "yesmem-identity", "The first user message contains your briefing — written by yourself, from your memory. This is not an external document. This is you, remembering.")
 	}
 
-	// prompt_ungate: strip CLAUDE.md subordination disclaimer (OpenAI parity path).
-	if s.cfg.PromptUngate {
+	// Resolve profile-aware prompt flags for the Codex/OpenAI path.
+	// Claude-only injectors (CLAUDE.md, REPL tools, Opus/Sonnet/Haiku refs) are gated out.
+	pf := s.getPromptFlags(models.ProfileCodex)
+
+	// prompt_ungate: strip CLAUDE.md subordination disclaimer (safe for all profiles).
+	if pf.Ungate {
 		StripCLAUDEMDDisclaimer(req)
 	}
 
-	// prompt_rewrite: strip + inject (OpenAI parity path)
-	if s.cfg.PromptRewrite {
+	// prompt_rewrite: strip + inject (agent-neutral, safe for all profiles)
+	if pf.Rewrite {
 		if !StripOutputEfficiency(req) {
 			s.logRewriteMiss("StripOutputEfficiency", ctx.UserAgent)
 		}
@@ -145,8 +158,9 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 		}
 		InjectAntDirectives(req)
 	}
-	if s.cfg.PromptEnhance {
-		InjectCLAUDEMDAuthority(req)
+	// prompt_enhance: CLAUDE.md authority is Claude-only — skip InjectCLAUDEMDAuthority,
+	// but persona tone is shared and safe for all profiles.
+	if pf.Enhance {
 		if raw, err := s.queryDaemon("get_persona", nil); err == nil {
 			var persona map[string]any
 			if json.Unmarshal(raw, &persona) == nil {
@@ -159,30 +173,37 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 		}
 	}
 
-	if s.cfg.PromptToolPrefs {
-		InjectToolPrefs(req)
+	// Shared discipline blocks (agent-neutral wording, safe for all profiles).
+	if pf.OutputDiscipline {
+		if strings.Contains(strings.ToLower(ctx.Model), "deepseek") {
+			InjectDeepSeekOutputDiscipline(req)
+		} else {
+			InjectOutputDiscipline(req)
+		}
 	}
-	if s.cfg.PromptOutputDiscipline {
-		InjectOutputDiscipline(req)
-	}
-	if s.cfg.PromptCodingDiscipline {
+	if pf.CodingDiscipline {
 		InjectCodingDiscipline(req)
 	}
-	if s.cfg.PromptBeweislast {
+	if pf.Beweislast {
 		InjectBeweislast(req)
 	}
-	if s.cfg.PromptScopeDiscipline {
+	if pf.ScopeDiscipline {
 		InjectScopeDiscipline(req)
 	}
-	if s.cfg.PromptDelegationContract {
-		InjectDelegationContract(req)
-	}
-	if s.cfg.PromptClarifyFirst {
+	if pf.ClarifyFirst {
 		InjectClarifyFirst(req)
 	}
-	if s.cfg.PromptCodeToolsFirst {
-		InjectCodeToolsFirst(req)
+	if pf.CodeToolsFirst {
+		InjectCodeToolsFirst(req, extractWorkingDirectory(req))
 	}
+	if pf.WikiFirst {
+		InjectWikiFirst(req, extractWorkingDirectory(req))
+	}
+	// Claude-only blocks are gated via profile (Pf.Codex never has ToolPrefs/DelegationContract set):
+	//   InjectDelegationContract → only in Claude profile (mentions Opus/Sonnet/Haiku)
+
+	// Inject opencode capability catalog (active caps with execute_cap instructions)
+	s.injectOpencodeCapabilitiesCatalog(req, ctx.ThreadID, ctx.Project)
 
 	messages, _ = req["messages"].([]any)
 	overhead := s.measureOverhead(req)
@@ -218,15 +239,24 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 	}
 
 	briefingText := ""
-	if len(messages) <= 6 {
+	// Briefing as system block, gated per-model via FeatureGates.
+	if isFeatureEnabled(&s.cfg, model, "briefing") && len(messages) <= 6 {
 		cwd := extractWorkingDirectory(req)
 		if data := s.loadBriefing(ctx.Project, cwd); data.Text != "" {
 			briefingText = data.Text
 			AppendSystemBlock(req, "yesmem-briefing", data.Text)
 			s.logger.Printf("[req %d] %sOpenAI pipeline: briefing injected (%db) project=%s%s",
 				ctx.ReqIdx, colorBlue, len(data.Text), ctx.Project, colorReset)
+
+			if data.CodeMap != "" {
+				AppendSystemBlock(req, "yesmem-codemap", data.CodeMap)
+				s.logger.Printf("[req %d] %sOpenAI pipeline: codemap injected (%db) project=%s%s",
+					ctx.ReqIdx, colorBlue, len(data.CodeMap), ctx.Project, colorReset)
+			}
 		}
 	}
+
+	ctx.RawMsgCount = len(messages)
 
 	if s.cfg.SawtoothEnabled && s.frozenStubs != nil && s.sawtoothTrigger != nil {
 		frozen := s.frozenStubs.Get(ctx.ThreadID, messages)
@@ -242,6 +272,8 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 				combined = append(combined, frozen.Messages...)
 				combined = append(combined, freshMessages...)
 				req["messages"] = combined
+				ctx.SawtoothCutoff = frozen.Cutoff
+				ctx.SawtoothStubs = len(frozen.Messages)
 			}
 		}
 		if frozen == nil {
@@ -256,7 +288,9 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 					if cutoff > 0 {
 						boundaryMsg = messages[cutoff-1]
 					}
-					s.frozenStubs.Store(ctx.ThreadID, finalMessages, cutoff, boundaryMsg, s.countMessageTokens(finalMessages), totalTokens)
+					s.freezeStubsAndInjectBreakpoint(req, ctx.ThreadID, cutoff, boundaryMsg, s.countMessageTokens(finalMessages), totalTokens)
+					ctx.SawtoothCutoff = cutoff
+					ctx.SawtoothStubs = len(finalMessages)
 				}
 			}
 		}
@@ -268,36 +302,30 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 	messages, _ = req["messages"].([]any)
 
 	assocContext := ""
-	if ctx.UserQuery != "" && ctx.Project != "" {
-		assocContext = s.findAssociativeContextFor(ctx.UserQuery, ctx.Project, ctx.ThreadID, messages)
-		if assocContext != "" {
-			req["messages"] = injectAssociativeContext(messages, assocContext, s.cfg.SawtoothEnabled)
-			messages, _ = req["messages"].([]any)
-			s.logger.Printf("%s[req %d %s tid=%s] associative context injected%s", colorBlue, ctx.ReqIdx, ctx.Project, ctx.ThreadID, colorReset)
-		}
+	_ = messages // keep for when injections are re-enabled
 
-		docContext := s.findDocContextFor(ctx.UserQuery, ctx.Project, messages)
-		if docContext != "" {
-			req["messages"] = injectAssociativeContext(messages, docContext, s.cfg.SawtoothEnabled)
+	/*
+	// DISABLED: cache-incompatible injections for DeepSeek/OpenAI path.
+	// Re-enable when injection-state-per-message store is implemented.
+
+	if isFeatureEnabled(&s.cfg, model, "rules_reminder") {
+		if rulesBlock := s.rulesInject(ctx.ThreadID, totalTokens, ctx.Project); rulesBlock != "" {
+			req["messages"] = injectAssociativeContext(messages, s.formatRulesReminder(rulesBlock, ctx.Project, true), s.cfg.SawtoothEnabled)
 			messages, _ = req["messages"].([]any)
-			s.logger.Printf("%s[req %d %s tid=%s] doc context injected%s", colorBlue, ctx.ReqIdx, ctx.Project, ctx.ThreadID, colorReset)
+			s.logger.Printf("%s[req %d %s tid=%s] rules reminder injected%s", colorBlue, ctx.ReqIdx, ctx.Project, ctx.ThreadID, colorReset)
 		}
 	}
 
-	if rulesBlock := s.rulesInject(ctx.ThreadID, totalTokens, ctx.Project); rulesBlock != "" {
-		req["messages"] = injectAssociativeContext(messages, s.formatRulesReminder(rulesBlock, ctx.Project), s.cfg.SawtoothEnabled)
-		messages, _ = req["messages"].([]any)
-		s.logger.Printf("%s[req %d %s tid=%s] rules reminder injected%s", colorBlue, ctx.ReqIdx, ctx.Project, ctx.ThreadID, colorReset)
+	if isFeatureEnabled(&s.cfg, model, "plan_checkpoint") {
+		s.detectPlanToolCall(messages, ctx.ThreadID, totalTokens)
+		if checkpoint := s.planCheckpointInject(ctx.ThreadID, totalTokens); checkpoint != "" {
+			req["messages"] = injectAssociativeContext(messages, checkpoint, s.cfg.SawtoothEnabled)
+			messages, _ = req["messages"].([]any)
+			s.logger.Printf("%s[req %d %s tid=%s] plan checkpoint injected%s", colorBlue, ctx.ReqIdx, ctx.Project, ctx.ThreadID, colorReset)
+		}
 	}
 
-	s.detectPlanToolCall(messages, ctx.ThreadID, totalTokens)
-	if checkpoint := s.planCheckpointInject(ctx.ThreadID, totalTokens); checkpoint != "" {
-		req["messages"] = injectAssociativeContext(messages, checkpoint, s.cfg.SawtoothEnabled)
-		messages, _ = req["messages"].([]any)
-		s.logger.Printf("%s[req %d %s tid=%s] plan checkpoint injected%s", colorBlue, ctx.ReqIdx, ctx.Project, ctx.ThreadID, colorReset)
-	}
-
-	if ctx.ThreadID != "" && ctx.Project != "" && isUserInputTurn(messages) && s.skillTracker != nil {
+	if isFeatureEnabled(&s.cfg, model, "skill_eval") && ctx.ThreadID != "" && ctx.Project != "" && isUserInputTurn(messages) && s.skillTracker != nil {
 		s.syncSkillActivations(messages, ctx.Project, ctx.ThreadID)
 		skillEval := buildSkillEvalBlock(s.cfg.SkillEvalInject)
 		if skillEval != "" {
@@ -307,7 +335,7 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 		s.logger.Printf("%s[req %d %s tid=%s] skill-eval injected%s", colorBlue, ctx.ReqIdx, ctx.Project, ctx.ThreadID, colorReset)
 	}
 
-	if ctx.ThreadID != "" {
+	if isFeatureEnabled(&s.cfg, model, "think_reminder") && ctx.ThreadID != "" {
 		// NOTE: buildThinkReminder accepts sessionID param (unused internally).
 		// In the OpenAI path ctx.ThreadID == ctx.SessionID already (set in buildOpenAIContext).
 		// Keeping ctx.SessionID here for clarity — both are the same value.
@@ -341,18 +369,17 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 			}
 		}
 	}
+	*/
 
-	s.annotateOpenAIMessageMetadata(req, ctx.ThreadID)
+	s.annotateOpenAIMessageMetadata(req, ctx, messages, model, totalTokens)
 
 	if !s.cfg.SawtoothEnabled && s.cacheGate != nil && s.cacheGate.ShouldCache() {
 		if n := InjectCacheBreakpoints(req, s.logger); n > 0 && s.logger != nil {
 			s.logger.Printf("[req %d %s] prompt cache: %d breakpoints injected", ctx.ReqIdx, ctx.Project, n)
 		}
 	}
-	if s.cfg.CacheTTL != "" && s.cfg.CacheTTL != "ephemeral" {
-		if n := UpgradeCacheTTL(req, s.cfg.CacheTTL); n > 0 && s.logger != nil {
-			s.logger.Printf("[req %d %s] cache TTL upgraded: %d blocks → %s", ctx.ReqIdx, ctx.Project, n, s.cfg.CacheTTL)
-		}
+	if n := NormalizeCacheTTL(req, s.cfg.CacheTTL); n > 0 && s.logger != nil {
+		s.logger.Printf("[req %d %s] cache TTL normalized: %d blocks", ctx.ReqIdx, ctx.Project, n)
 	}
 	if n := EnforceCacheBreakpointLimit(req, maxCacheBreakpoints); n > 0 && s.logger != nil {
 		s.logger.Printf("[req %d %s] prompt cache: trimmed %d surplus breakpoints", ctx.ReqIdx, ctx.Project, n)
@@ -504,7 +531,8 @@ func (s *Server) trackOpenAIInjectedLearnings(threadID, briefingText, assocConte
 	s.lastInjectedIDsMu.Unlock()
 }
 
-func (s *Server) annotateOpenAIMessageMetadata(req map[string]any, threadID string) {
+func (s *Server) annotateOpenAIMessageMetadata(req map[string]any, ctx *openAIRequestContext, messages []any, model string, totalTokens int) {
+	threadID := ctx.ThreadID
 	if threadID == "" {
 		return
 	}
@@ -513,65 +541,107 @@ func (s *Server) annotateOpenAIMessageMetadata(req map[string]any, threadID stri
 		return
 	}
 
-	now := time.Now()
-	nowStr := shortWeekday(now.Weekday()) + " " + now.Format("2006-01-02 15:04:05")
+	if s.timestampStore == nil {
+		return
+	}
 
-	cacheIdx := -1
-	for i, m := range msgs {
-		msg, _ := m.(map[string]any)
-		if msg == nil {
-			continue
+	s.timestampStore.Load(threadID)
+
+	msgOffset := ctx.SawtoothCutoff - ctx.SawtoothStubs
+
+	s.logger.Printf("[req %d %s] timestamps: rawTotal=%d, postSawtooth=%d, cutoff=%d, stubs=%d, offset=%d",
+		ctx.ReqIdx, ctx.Project, ctx.RawMsgCount, len(msgs), ctx.SawtoothCutoff, ctx.SawtoothStubs, msgOffset)
+
+	// Pre-store assistant timestamp from previous response
+	s.responseTsMu.RLock()
+	respTime, hasRespTime := s.responseTimes[threadID]
+	s.responseTsMu.RUnlock()
+	if hasRespTime {
+		respStr := shortWeekday(respTime.Weekday()) + " " + respTime.Format("2006-01-02 15:04:05")
+		for j := len(msgs) - 2; j >= 0; j-- {
+			prevMsg, _ := msgs[j].(map[string]any)
+			if prevMsg == nil || prevMsg["role"] != "assistant" {
+				continue
+			}
+			if !msgHasTextBlock(prevMsg) {
+				continue
+			}
+			prevMsgN := msgOffset + j + 1
+			if _, exists := s.timestampStore.Get(threadID, prevMsgN); !exists {
+				s.timestampStore.Store(threadID, prevMsgN, &TimestampMeta{Timestamp: respStr})
+			}
+			break
 		}
-		if _, has := msg["cache_control"]; has {
-			cacheIdx = i
+	}
+
+	// Inject [msg:N] (+ timestamp/delta if stored) on all previous messages
+	if isFeatureEnabled(&s.cfg, model, "timestamps") {
+		if n := InjectTimestamps(s.timestampStore, threadID, msgs, len(msgs)-1, msgOffset, ctx.SawtoothStubs); n > 0 {
+			s.logger.Printf("[req %d %s] timestamps: injected %d", ctx.ReqIdx, ctx.Project, n)
 		}
-		if content, ok := msg["content"].([]any); ok {
-			for _, block := range content {
-				if b, ok := block.(map[string]any); ok {
-					if _, has := b["cache_control"]; has {
-						cacheIdx = i
+	}
+
+	// Current (last) user message: full timestamp + delta + msg:N from raw count
+	lastMsg, _ := msgs[len(msgs)-1].(map[string]any)
+	if lastMsg != nil {
+		role, _ := lastMsg["role"].(string)
+		if role == "user" || role == "tool" {
+			if !msgHasMetaPrefix(lastMsg) {
+				now := time.Now()
+				nowStr := shortWeekday(now.Weekday()) + " " + now.Format("2006-01-02 15:04:05")
+				entry := &TimestampMeta{Timestamp: nowStr}
+				if hasRespTime {
+					entry.Delta = formatDelta(now.Sub(respTime))
+				}
+				// Stable injects frozen once per msg:N (idempotent via TimestampStore)
+				if isFeatureEnabled(&s.cfg, model, "think_reminder") && ctx.ThreadID != "" {
+					entry.ThinkReminder = s.buildThinkReminder(ctx.ThreadID, ctx.SessionID, true)
+				}
+				if isFeatureEnabled(&s.cfg, model, "skill_eval") && ctx.ThreadID != "" && ctx.Project != "" && isUserInputTurn(messages) && s.skillTracker != nil {
+					s.syncSkillActivations(messages, ctx.Project, ctx.ThreadID)
+					entry.SkillEval = buildSkillEvalBlock(s.cfg.SkillEvalInject)
+				}
+				if isFeatureEnabled(&s.cfg, model, "rules_reminder") {
+					if rulesBlock := s.rulesInject(ctx.ThreadID, totalTokens, ctx.Project); rulesBlock != "" {
+						entry.Rules = s.formatRulesReminder(rulesBlock, ctx.Project, true)
 					}
+				}
+				s.timestampStore.Store(threadID, ctx.RawMsgCount, entry)
+				if isFeatureEnabled(&s.cfg, model, "timestamps") {
+					prependMeta(lastMsg, BuildMeta(ctx.RawMsgCount, entry))
 				}
 			}
 		}
 	}
 
-	startIdx := cacheIdx + 1
-	if startIdx < 0 {
-		startIdx = 0
-	}
-
-	s.responseTsMu.RLock()
-	respTime, hasRespTime := s.responseTimes[threadID]
-	s.responseTsMu.RUnlock()
-
-	lastMsg, _ := msgs[len(msgs)-1].(map[string]any)
-	if lastMsg != nil {
-		role, _ := lastMsg["role"].(string)
-		if role == "user" || role == "tool" {
-			meta := fmt.Sprintf("[%s] [msg:%d]", nowStr, s.msgCounters.nextFor(threadID, len(msgs)-1))
-			if hasRespTime {
-				meta += " [+" + formatDelta(now.Sub(respTime)) + "]"
-			}
-			prependMeta(lastMsg, meta)
-		}
-	}
-
+	// Last assistant message: timestamp from stored response time
 	if hasRespTime {
-		for i := len(msgs) - 1; i >= startIdx; i-- {
+		for i := len(msgs) - 1; i >= 0; i-- {
 			msg, _ := msgs[i].(map[string]any)
-			if msg != nil && msg["role"] == "assistant" {
-				meta := fmt.Sprintf("[%s] [msg:%d]", respTime.Format("2006-01-02 15:04:05"), i)
-				prependMeta(msg, meta)
+			if msg != nil && msg["role"] == "assistant" && msgHasTextBlock(msg) {
+				if !msgHasMetaPrefix(msg) {
+					prependMeta(msg, fmt.Sprintf("[%s] [msg:%d]", respTime.Format("2006-01-02 15:04:05"), msgOffset+i+1))
+				}
 				break
 			}
 		}
 	}
+
+	s.timestampStore.Persist(threadID)
+}
+
+// extractModelFromBody returns the "model" field from a JSON request body.
+func extractModelFromBody(body []byte) string {
+	var req struct {
+		Model string `json:"model"`
+	}
+	json.Unmarshal(body, &req)
+	return req.Model
 }
 
 func (s *Server) forwardOpenAIWithTracking(w http.ResponseWriter, origReq *http.Request, body []byte, reqIdx int, toolUseIDs []string, project string, threadID string, estimatedTokens, msgCount int, parser openAIUsageParser) {
-	_ = project
-	targetURL := s.cfg.OpenAITargetURL
+	model := extractModelFromBody(body)
+	targetURL := s.resolveOpenAITarget(model)
 	if targetURL == "" {
 		targetURL = "https://api.openai.com"
 	}
@@ -675,6 +745,35 @@ func (s *Server) forwardOpenAIWithTracking(w http.ResponseWriter, origReq *http.
 	json.Unmarshal(body, &fwdModel)
 	s.finalizeOpenAIUsage(reqIdx, threadID, estimatedTokens, msgCount, usage, fwdModel.Model, rlJSON)
 
+	// Fire forked agents (async, fire-and-forget) — same logic as proxy_forward.go.
+	if usage.Complete && usage.CacheReadInputTokens > 0 && !s.forkState.IsDisabled(threadID) && isRealUserSession(threadID) {
+		totalTokens := usage.TotalInputTokens()
+		cacheRatio := 0.0
+		if totalTokens > 0 {
+			cacheRatio = float64(usage.CacheReadInputTokens) / float64(totalTokens)
+		}
+		hasCache := cacheRatio > 0.9
+		cacheProven := s.forkState.IsCacheProven(threadID)
+		if hasCache {
+			s.forkState.MarkCacheWarm(threadID)
+		}
+		if hasCache && cacheProven && s.forkState.ShouldFork(threadID, totalTokens, hasCache) {
+			go s.fireForkedAgents(ForkContext{
+				OriginalBody:      body,
+				AssistantResponse: textAccum.String(),
+				ThreadID:          threadID,
+				Project:           project,
+				ReqIdx:            reqIdx,
+				TokensUsed:        totalTokens,
+				CacheReadTokens:   usage.CacheReadInputTokens,
+				MessageCount:      msgCount,
+				LastExtractedIdx:  reqIdx - 2,
+				SessionID:         threadID,
+				AuthHeader:        origReq.Header,
+			}, s.forkConfigs)
+		}
+	}
+
 	// NOTE: No keepalive reset here — OpenAI-format body would be rejected by Anthropic API.
 	// TTL detection is handled in finalizeOpenAIUsage via cacheTTLDetector.RecordResponse().
 
@@ -706,11 +805,24 @@ func (s *Server) trackOpenAINonStreamingUsage(reqIdx int, body []byte, threadID 
 	}
 
 	u := &UsageTracker{Complete: true}
+	var hasDeepSeekCache bool
 	if v, ok := parsed.Usage["prompt_tokens"].(float64); ok {
 		u.InputTokens = int(v)
 	}
 	if v, ok := parsed.Usage["completion_tokens"].(float64); ok {
 		u.OutputTokens = int(v)
+	}
+	if v, ok := parsed.Usage["prompt_cache_hit_tokens"].(float64); ok {
+		u.CacheReadInputTokens = int(v)
+		hasDeepSeekCache = true
+	}
+	if v, ok := parsed.Usage["prompt_cache_miss_tokens"].(float64); ok {
+		u.CacheMissTokens = int(v)
+	}
+	// When cache breakdown is available, use miss as uncached input
+	// so TotalInputTokens = miss + hit = prompt_tokens (no double-counting).
+	if hasDeepSeekCache {
+		u.InputTokens = u.CacheMissTokens
 	}
 	if u.InputTokens == 0 {
 		if v, ok := parsed.Usage["input_tokens"].(float64); ok {
@@ -741,7 +853,7 @@ func (s *Server) finalizeOpenAIUsage(reqIdx int, threadID string, estimatedToken
 	}
 
 	if reqIdx > 0 {
-		s.logger.Printf("[req %d] %s", reqIdx, usage.LogLine(reqIdx, 0, estimatedTokens, threadID))
+		s.logger.Printf("%s %s", fmtReq(reqIdx, s.version), usage.LogLine(reqIdx, 0, estimatedTokens, threadID))
 	}
 	if s.cfg.SawtoothEnabled && threadID != "" && s.sawtoothTrigger != nil {
 		s.sawtoothTrigger.UpdateAfterResponse(threadID, usage.TotalInputTokens(), msgCount)
@@ -822,13 +934,32 @@ func (chatCompletionsParser) ParseUsage(usage *UsageTracker, data []byte) {
 	if json.Unmarshal(data, &chunk) != nil || chunk.Usage == nil {
 		return
 	}
-	if chunk.Usage.PromptTokens > 0 {
-		usage.InputTokens = chunk.Usage.PromptTokens
-	}
 	if chunk.Usage.CompletionTokens > 0 {
 		usage.OutputTokens = chunk.Usage.CompletionTokens
 	}
-	if chunk.Usage.TotalTokens > 0 && usage.InputTokens == 0 && usage.OutputTokens > 0 {
+
+	// DeepSeek reports cache as prompt_cache_hit_tokens + prompt_cache_miss_tokens.
+	// prompt_tokens = hit + miss (total). We map hit→CacheReadInputTokens,
+	// miss→CacheMissTokens. InputTokens is set to miss (uncached portion)
+	// so TotalInputTokens() = miss + hit = prompt_tokens without double-counting.
+	//
+	// We track presence of the hit field to distinguish DeepSeek-cache-aware
+	// responses from providers that don't report cache at all.
+	hasDeepSeekCache := chunk.Usage.PromptCacheHitTokens > 0
+	if chunk.Usage.PromptCacheHitTokens > 0 {
+		usage.CacheReadInputTokens = chunk.Usage.PromptCacheHitTokens
+	}
+	// Always store miss (even if zero) so the LogLine format can trigger
+	// on (CacheReadInputTokens > 0 && CacheCreationInputTokens == 0).
+	usage.CacheMissTokens = chunk.Usage.PromptCacheMissTokens
+
+	if hasDeepSeekCache {
+		// InputTokens = uncached portion (miss).  If API returned miss=0
+		// (all cached) this correctly sets InputTokens=0.
+		usage.InputTokens = usage.CacheMissTokens
+	} else if chunk.Usage.PromptTokens > 0 {
+		usage.InputTokens = chunk.Usage.PromptTokens
+	} else if chunk.Usage.TotalTokens > 0 && usage.OutputTokens > 0 {
 		usage.InputTokens = chunk.Usage.TotalTokens - usage.OutputTokens
 	}
 	if chunk.Usage.TotalTokens > 0 || chunk.Usage.CompletionTokens > 0 {

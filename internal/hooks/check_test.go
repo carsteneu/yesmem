@@ -338,7 +338,7 @@ func TestWebFetchGotchaMatching(t *testing.T) {
 	keywords := extractKeywords("WebFetch reddit.com")
 
 	// Reload learning to get entities populated
-	gotchas, err := store.GetActiveLearnings("gotcha", "", "", "")
+	gotchas, err := store.GetActiveLearnings("gotcha", "", "", "", 0)
 	if err != nil || len(gotchas) == 0 {
 		t.Fatalf("GetActiveLearnings: %v (len=%d)", err, len(gotchas))
 	}
@@ -683,5 +683,38 @@ func TestBuildGotchaOutput_Empty(t *testing.T) {
 	}
 	if len(injected) != 0 || len(matched) != 0 {
 		t.Errorf("expected empty slices, got injected=%v matched=%v", injected, matched)
+	}
+}
+
+func TestIsRelevantForTool(t *testing.T) {
+	tests := []struct {
+		name     string
+		actions  []string
+		toolName string
+		want     bool
+	}{
+		{"rm on bash", []string{"rm -rf"}, "bash", true},
+		{"rm on read", []string{"rm -rf"}, "read", false},
+		{"rm on glob", []string{"rm"}, "glob", false},
+		{"git push on bash", []string{"git push"}, "bash", true},
+		{"git push on read", []string{"git push"}, "read", false},
+		{"edit on write", []string{"edit"}, "write", true},
+		{"write on bash", []string{"write"}, "bash", true},
+		{"no actions on read", []string{}, "read", true},
+		{"no actions on bash", []string{}, "bash", true},
+		{"make deploy on bash", []string{"make deploy"}, "bash", true},
+		{"make deploy on grep", []string{"make deploy"}, "grep", false},
+		{"mv on write", []string{"mv"}, "write", true},
+		{"cp on read", []string{"cp"}, "read", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := &models.Learning{Actions: tt.actions}
+			got := isRelevantForTool(g, tt.toolName)
+			if got != tt.want {
+				t.Errorf("isRelevantForTool(actions=%v, tool=%q) = %v, want %v",
+					tt.actions, tt.toolName, got, tt.want)
+			}
+		})
 	}
 }

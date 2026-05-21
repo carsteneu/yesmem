@@ -32,8 +32,10 @@ func (h *Handler) handleCapStore(params map[string]any) Response {
 		return h.capStoreDelete(capName, tableName, params)
 	case "list_tables":
 		return h.capStoreListTables(capName)
+	case "claim_and_read":
+		return h.capStoreClaimAndRead(capName, tableName, params)
 	default:
-		return errorResponse(fmt.Sprintf("unknown cap_store action %q (allowed: create_table, upsert, query, delete, list_tables)", action))
+		return errorResponse(fmt.Sprintf("unknown cap_store action %q (allowed: create_table, upsert, query, delete, list_tables, claim_and_read)", action))
 	}
 }
 
@@ -223,6 +225,40 @@ func parseMapParam(raw any) map[string]any {
 		if json.Unmarshal([]byte(s), &m) == nil {
 			return m
 		}
+	}
+	return nil
+}
+
+func (h *Handler) capStoreClaimAndRead(capName, tableName string, params map[string]any) Response {
+	if tableName == "" { return errorResponse("table name required for claim_and_read") }
+	where, _ := params["where"].(string)
+	if where == "" { return errorResponse("where clause required for claim_and_read") }
+	order, _ := params["order"].(string)
+	if order == "" { order = "id ASC" }
+	var args []any
+	if argsRaw, ok := params["args"].([]any); ok { args = argsRaw
+	} else if argsStr, ok := params["args"].(string); ok && argsStr != "" {
+		if err := json.Unmarshal([]byte(argsStr), &args); err != nil { return errorResponse(fmt.Sprintf("args must be a JSON array: %v", err)) }
+	}
+	set := parseMapParam(params["set"])
+	if len(set) == 0 { return errorResponse("set columns required for claim_and_read") }
+	returning := parseStringSlice(params["returning"])
+	if len(returning) == 0 { returning = []string{"*"} }
+	row, err := h.store.CapsClaimAndRead(capName, tableName, where, order, args, set, returning)
+	if err != nil { return errorResponse(fmt.Sprintf("claim_and_read: %v", err)) }
+	if row == nil { return jsonResponse(map[string]any{"claimed": false}) }
+	return jsonResponse(map[string]any{"claimed": true, "row": row})
+}
+
+func parseStringSlice(raw any) []string {
+	if arr, ok := raw.([]any); ok {
+		out := make([]string, len(arr))
+		for i, v := range arr { out[i] = fmt.Sprint(v) }
+		return out
+	}
+	if s, ok := raw.(string); ok && s != "" {
+		var arr []string
+		if json.Unmarshal([]byte(s), &arr) == nil { return arr }
 	}
 	return nil
 }

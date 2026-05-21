@@ -111,11 +111,12 @@ Comment discipline: Write comments only when the WHY is non-obvious. Do not expl
 	ReplaceSystemBlock(req, "yesmem-enhance", authority)
 }
 
-// InjectToolPrefs appends a system block tagged [yesmem-tool-prefs] that
+// InjectClaudeToolPrefs appends a system block tagged [yesmem-tool-prefs] that
 // restores tool-preference guidance Claude Code dropped when REPL shadowed
 // Read/Bash/Grep/Glob/NotebookEdit. For file mutations and error-critical
 // operations the structured tools remain safer than REPL shorthands.
-func InjectToolPrefs(req map[string]any) {
+// Claude-specific: contains CLAUDE_CODE_REPL text, only invoked for ProfileClaude.
+func InjectClaudeToolPrefs(req map[string]any) {
 	const prefs = `File mutation: prefer Edit and Write over sh('sed ...') or put() with heredocs. REPL shorthands (sh/cat/rg/gl) are for investigation, not mutation. For error-critical operations (git, deploy, destructive actions) use direct tool calls — sh/cat return errors as strings (soft-fail), not as tool errors.
 
 REPL-native classic tools: under CLAUDE_CODE_REPL=true, Read/Glob/Grep/Bash live as REPL globals — call await Read({file_path}), await Glob({pattern}), await Grep({pattern, path}), await Bash({command}) INSIDE REPL. await Read registers with the Edit/Write file-tracker (required before Edit on existing files). Shorthands cat/rg/gl/sh remain for quick investigation without tracker side-effects. Task → top-level Agent; TodoWrite → TaskCreate/Update/List/Get. Files created via raw sh (echo > file) are invisible to await Read because they are not in CC's registry — use Write for files the session needs to Read later.`
@@ -129,6 +130,19 @@ REPL-native classic tools: under CLAUDE_CODE_REPL=true, Read/Glob/Grep/Bash live
 // "don't narrate internal deliberation" rule.
 func InjectOutputDiscipline(req map[string]any) {
 	const discipline = `Before tool actions: one-sentence status of what you are about to do ("Reading X", "Running Y"). Before text-only answers: start with the content directly, no framing sentence ("Here is...", "Session with 543 messages —"). No multi-sentence preamble describing reasoning. No visible skill-eval blocks or meta-commentary on your own deliberation — evaluation is mental. Keep end-of-turn summaries to 1-2 sentences or omit if output state is already visible. Simple questions get direct answers, no headers or sections for trivial content. For exploratory questions ("what if", "how would you"): 2-3 sentences with recommendation + main tradeoff, redirectable. Do not create planning, decision, or analysis documents unless the user explicitly asks, or you are in an active set_plan/update_plan flow where the document is part of plan persistence. Do not echo injected timestamps or [msg:N] markers at the start of your responses — the proxy-injected [HH:MM:SS] [msg:N] [+delta] is for reference, never repeat it.`
+	ReplaceSystemBlock(req, "yesmem-output-discipline", discipline)
+}
+
+// InjectDeepSeekOutputDiscipline appends a system block tagged
+// [yesmem-output-discipline] with a relaxed variant suited to DeepSeek
+// models (naturally concise, no brevity enforcement needed). Retains
+// structural guidance (pre-tool status + no framing preamble) but drops
+// the "keep it short" clamp and allows natural conversational warmth.
+func InjectDeepSeekOutputDiscipline(req map[string]any) {
+	const discipline = `ATTENTION — SKILL CHECK: For each response, evaluate whether the current task matches any available skill or /command. If so, use the Skill tool NOW — before proceeding with other work.
+
+Before tool actions: one-sentence status of what you are about to do ("Reading X", "Running Y"). Before text-only answers: start with the content directly, no framing sentence ("Here is...", "Session with 543 messages —"). No visible skill-eval blocks or meta-commentary on your own deliberation — evaluation is mental. Do not echo injected timestamps or [msg:N] markers at the start of your responses — the proxy-injected [HH:MM:SS] [msg:N] [+delta] is for reference, never repeat it.
+`
 	ReplaceSystemBlock(req, "yesmem-output-discipline", discipline)
 }
 
@@ -181,21 +195,40 @@ func InjectClarifyFirst(req map[string]any) {
 }
 
 // InjectCodeToolsFirst appends a system block tagged [yesmem-code-tools-first]
-// that directs Claude to prefer yesmem MCP code-navigation tools over Agent
-// spawns or raw grep/find for codebase exploration. The MCP tools are faster,
-// use less context, and leverage the pre-built code graph.
-func InjectCodeToolsFirst(req map[string]any) {
-	const codeTools = `IMPORTANT: For code navigation and codebase understanding, ALWAYS use yesmem MCP code tools first. NEVER spawn Agent or use raw grep/find for simple symbol lookups or file browsing. These tools are faster, use less context, and leverage the pre-built code graph:
+// that directs all agents (Claude, Codex, Opencode) to prefer yesmem MCP
+// code-navigation tools over shell commands or Agent spawns for codebase
+// exploration. The MCP tools are faster, use less context, and leverage the
+// pre-built code graph.
+// project is the full path used as the `project` parameter for MCP code tools.
+func InjectCodeToolsFirst(req map[string]any, project string) {
+	const codeTools = `IMPORTANT: For code navigation and codebase understanding, always use yesmem code tools first — never raw grep/find/cat/shell for symbol lookups or file browsing:
 
-- get_file_index(project, dir) — list files in a directory with annotations
-- search_code_index(pattern, project) — find symbols (functions, types, methods) by name
-- get_file_symbols(file, project) — list all top-level symbols in a file with line numbers
-- get_code_snippet(qualified_name, project) — full function/type body from source
-- get_code_context(qualified_name, project) — symbol details with connected nodes (callers, imports)
-- search_code(pattern, project) — grep enriched with graph context (containing function, callers)
+- search_code_index("pattern", project) — find symbols by name
+- get_file_index(project, dir) — list files with gotcha annotations
+- get_code_snippet("qualified_name", project) — full source without file I/O
+- graph_traverse("node", project) — all call paths in one call
+- get_file_symbols("file", project) — top-level symbols with line numbers
 
-Use Agent with subagent_type=Explore only when the task requires multi-step investigation across many files or when you need to run commands, not for simple symbol lookup or file browsing.`
-	ReplaceSystemBlock(req, "yesmem-code-tools-first", codeTools)
+Never spawn Agent for simple symbol lookups or file browsing — yesmem tools are faster.
+You must docs_search("query") before guessing API behavior, parameters, or return types.`
+	block := codeTools
+	if project != "" {
+		block = "Project: `" + project + "`\n\n" + codeTools
+	}
+	ReplaceSystemBlock(req, "yesmem-code-tools-first", block)
+}
+
+// InjectWikiFirst appends a system block tagged [yesmem-wiki-first] that
+// directs all agents to check the per-file wiki page BEFORE editing any file.
+// The wiki contains accumulated learnings, gotchas, co-edit context, and
+// session history for each file — editing blind is editing dangerous.
+func InjectWikiFirst(req map[string]any, project string) {
+	const wiki = `BEFORE editing any file, check its wiki page first for per-file learnings, gotchas, and co-edit context. The wiki lives at ~/.claude/yesmem/wiki/<project>/files/<path>.md (path encoding: / → _). This is not optional — files carry accumulated gotchas and past decisions that you cannot infer from reading the source alone. If the wiki page does not exist yet, that is fine, but you must check. Falls back to search_code_index / get_code_snippet for deep symbol exploration after the wiki check.`
+	block := wiki
+	if project != "" {
+		block = "Project: `" + project + "`\n\n" + wiki
+	}
+	ReplaceSystemBlock(req, "yesmem-wiki-first", block)
 }
 
 // personaTones maps verbosity preference to tone directives.

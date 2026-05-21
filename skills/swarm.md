@@ -1,458 +1,463 @@
-# /schwarm — Multi-Agent Orchestrierung
+# /swarm — Multi-Agent Orchestration
 
-> YesMem Skill: Autonome Agent-Schwärme für Recherche, Analyse und Content-Erstellung.
+> YesMem Skill: Autonomous agent swarms for research, analysis, and content creation.
 
-## Aufruf
+## Invocation
 
-### Guided Mode (Anfänger)
+### Guided Mode (Beginners)
 ```
-/schwarm
+/swarm
 ```
-Stellt interaktiv Fragen bevor der Schwarm startet:
-1. **Aufgabe** — Was soll erledigt werden?
-2. **Agents** — Wie viele Sub-Agents, welche Perspektiven/Rollen, du machst sinnvolle Vorschläge!
-3. **Output** — Format (Markdown, JSON, Code, Präsentationen z.b. mit reveal.js oder anderen Officedokumenten, ) UND wo soll das Ergebnis hin?
-4. **Limits** — Token-Budget, Max-Runtime pro Agent?
+Interactively asks questions before the swarm starts:
+1. **Task** — What needs to be done?
+2. **Agents** — How many sub-agents, which perspectives/roles? Make sensible suggestions!
+3. **Output** — Format (Markdown, JSON, Code, presentations e.g. with reveal.js or other office documents) AND where should the result go?
+4. **Limits** — Token budget, max runtime per agent?
 
-### Direct Mode (Erfahrene)
+### Direct Mode (Experienced)
 ```
-/schwarm "3 Agents: Banane wirtschaftlich, gesundheitlich, historisch → Markdown Report"
+/swarm "3 Agents: banana economical, health, historical → Markdown Report"
 ```
-Parsed den Auftrag direkt und spawnt sofort.
+Parses the task directly and spawns immediately.
 
 ---
 
-## Rollen
+## Roles
 
-| Rolle | Kennung | Aufgabe |
-|-------|---------|---------|
-| **Hauptchat** | Agent 1 | User-Interface, startet/monitort den Schwarm |
-| **Orchestrator** | Agent A | Koordiniert Sub-Agents, sammelt Ergebnisse, spawnt Report-Agent |
-| **Sub-Agents** | Agent B, C, D... | Führen Teilaufgaben aus (Recherche, Analyse, etc.) |
-| **Report-Agent** | Letzter Agent | Erstellt finales Artefakt aus allen Teilergebnissen |
+| Role | Identifier | Task |
+|------|-----------|------|
+| **Main Chat** | Agent 1 | User interface, starts/monitors the swarm |
+| **Orchestrator** | Agent A | Coordinates sub-agents, collects results, spawns report agent |
+| **Sub-Agents** | Agent B, C, D... | Execute sub-tasks (research, analysis, etc.) |
+| **Report Agent** | Last Agent | Creates final artifact from all partial results |
 
 ---
 
-## Protokoll
+## Protocol
 
-### 1. Projekt-Setup (Agent 1)
-
-```
-1. Projektname wählen (z.B. "frucht-report")
-2. Arbeitsverzeichnis bestimmen (siehe Arbeitsverzeichnis-Modi)
-3. Auftrag ins Scratchpad schreiben:
-   scratchpad_write(project="{projekt}", section="auftrag", content=...)
-4. Orchestrator spawnen:
-   spawn_agent(project="{projekt}", section="orchestrator",
-               caller_session=MEINE_SESSION, work_dir="{verzeichnis}")
-5. FERTIG — zurück zum User (Fire & Forget)
-```
-
-**Fire & Forget ist der Standard.** Agent 1 (Hauptchat) wartet NICHT auf den Schwarm. Nach dem Spawn geht die Kontrolle sofort zurück an den User. Der Orchestrator arbeitet vollständig autonom. Wenn der Schwarm fertig ist, kommt eine `send_to`-Benachrichtigung an Agent 1 — der User sieht sie beim nächsten Turn.
-
-Optional kann der User jederzeit den Status prüfen:
-- `list_agents(project="{projekt}")` — welche Agents laufen noch?
-- `scratchpad_list(project="{projekt}")` — welche Ergebnisse liegen vor?
-
-- MCP-Permissions werden automatisch konfiguriert
-- Alle Sub-Agents erben das Arbeitsverzeichnis des Orchestrators
-
-### Arbeitsverzeichnis-Modi
-
-| Modus | Wann | work_dir |
-|-------|------|----------|
-| **Neues Projekt** | Recherche, Reports, eigenständige Artefakte | `~/projects/{projekt}/` (auto-erstellt) |
-| **Bestehendes Projekt** | Feature implementieren, API bauen, Code ändern | Aktuelles Projektverzeichnis (z.B. `/home/user/projects/myapp/`) |
-| **Benutzerdefiniert** | Spezialfälle | Beliebiger Pfad via `work_dir` Parameter |
-
-**Im Guided Mode** fragt der Skill:
-```
-Wo soll gearbeitet werden?
-  1. Neues Projektverzeichnis (~/projects/{name}/) — für Reports, Recherche
-  2. Hier (aktuelles Verzeichnis) — für Features, Code-Änderungen (Empfohlen wenn im Projekt)
-  3. Anderer Pfad...
-```
-
-**Im Direct Mode:**
-```
-/schwarm "Feature: REST API für User-Management → Code im aktuellen Projekt"
-/schwarm (dir:~/other/path) "Analyse der Logdateien → JSON Report"
-```
-
-**Wichtig bei Arbeit im bestehenden Projekt:**
-- Agents erstellen Feature-Branches vor Änderungen
-- Code-Agents nutzen die bestehende Projektstruktur (keine neuen Toplevel-Verzeichnisse)
-- Tests werden mitgeschrieben (TDD wenn im CLAUDE.md des Projekts gefordert)
-- Ergebnisse als Commits, nicht als lose Dateien
-
-### 2. Orchestrator-Ablauf (Agent A)
+### 1. Project Setup (Agent 1)
 
 ```
-0. whoami() — eigene Session-ID ermitteln (IMMER als erstes!)
-1. scratchpad_read(project, section="auftrag") — Auftrag lesen
-2. Für jeden Sub-Agent:
-   a. scratchpad_write(project, section="auftrag-{name}", content=...) — Auftrag schreiben
-   b. spawn_agent(project, section="{name}", caller_session=MEINE_SESSION)
-3. Warten auf send_to von allen Sub-Agents
-4. Ergebnisse aus Scratchpad lesen
-5. Fertige Sub-Agents stoppen: stop_agent(project, to="{name}")
-6. Report-Auftrag schreiben + Report-Agent spawnen
-7. Auf finales Ergebnis warten
-8. Report-Agent stoppen
-9. send_to(caller_session) — Hauptchat benachrichtigen, dann **passiv warten auf stop_agent()** — KEIN ACK, keine weitere Aktion
+1. Choose project name (e.g. "fruit-report")
+2. Determine working directory (see working directory modes)
+3. Write task to scratchpad:
+   scratchpad_write(project="{project}", section="task", content=...)
+4. Spawn orchestrator:
+   spawn_agent(project="{project}", section="orchestrator",
+               caller_session=MY_SESSION, work_dir="{directory}")
+5. DONE — return control to user (Fire & Forget)
 ```
 
-### 3. Sub-Agent-Ablauf (Agent B, C, ...)
+**Fire & Forget is the default.** Agent 1 (main chat) does NOT wait for the swarm. After spawning, control returns immediately to the user. The orchestrator works fully autonomously. When the swarm finishes, a `send_to` notification arrives at Agent 1 — the user sees it on the next turn.
+
+Optionally the user can check status at any time:
+- `list_agents(project="{project}")` — which agents are still running?
+- `scratchpad_list(project="{project}")` — what results are available?
+
+- MCP permissions are auto-configured
+- All sub-agents inherit the orchestrator's working directory
+
+### Working Directory Modes
+
+| Mode | When | work_dir |
+|------|------|----------|
+| **New Project** | Research, reports, standalone artifacts | `~/projects/{project}/` (auto-created) |
+| **Existing Project** | Implement feature, build API, change code | Current project directory (e.g. `/home/user/projects/myapp/`) |
+| **Custom** | Special cases | Any path via `work_dir` parameter |
+
+**In Guided Mode** the skill asks:
+```
+Where should the work happen?
+  1. New project directory (~/projects/{name}/) — for reports, research
+  2. Here (current directory) — for features, code changes (Recommended when in project)
+  3. Other path...
+```
+
+**In Direct Mode:**
+```
+/swarm "Feature: REST API for user management → Code in current project"
+/swarm (dir:~/other/path) "Analyze log files → JSON Report"
+```
+
+**Important when working in existing project:**
+- Agents create feature branches before changes
+- Code agents use existing project structure (no new top-level directories)
+- Tests are co-written (TDD if required by project CLAUDE.md)
+- Results as commits, not loose files
+
+### 2. Orchestrator Workflow (Agent A)
 
 ```
-0. whoami() — eigene Session-ID ermitteln (für send_to Callbacks)
-1. scratchpad_read(project, section="auftrag-{mein-name}") — Auftrag lesen
-2. Aufgabe ausführen (WebSearch, Analyse, Code, etc.)
-3. Ergebnis strukturiert ablegen:
-   scratchpad_write(project, section="ergebnis-{mein-name}", content=...)
-4. send_to(caller_session) — Orchestrator benachrichtigen: "Fertig"
-5. Warten (Orchestrator stoppt mich)
+0. whoami() — get own session ID (ALWAYS first!)
+1. scratchpad_read(project, section="task") — read task
+2. For each sub-agent:
+   a. scratchpad_write(project, section="task-{name}", content=...) — write task
+   b. spawn_agent(project, section="{name}", caller_session=MY_SESSION)
+3. Wait for send_to from all sub-agents
+4. Read results from scratchpad
+5. Stop finished sub-agents: stop_agent(project, to="{name}")
+6. Write report task + spawn report agent
+7. Wait for final result
+8. Stop report agent
+9. send_to(caller_session) — notify main chat, then **passively wait for stop_agent()** — NO ACK, no further action
 ```
 
-### 4. Report-Agent-Ablauf (Agent D)
+### 3. Sub-Agent Workflow (Agent B, C, ...)
 
 ```
-1. scratchpad_read(project, section="auftrag-report") — Auftrag + Quellen lesen
-2. Alle ergebnis-Sections lesen
-3. Finales Artefakt erstellen
-4. Als DATEI im Projektverzeichnis speichern:
-   Write(~/projects/{projekt}/{dateiname}.{format})
-5. Zusätzlich ins Scratchpad:
+0. whoami() — get own session ID (for send_to callbacks)
+1. scratchpad_read(project, section="task-{my-name}") — read task
+2. Execute task (WebSearch, analysis, code, etc.)
+3. Store result structured:
+   scratchpad_write(project, section="result-{my-name}", content=...)
+4. send_to(caller_session) — notify orchestrator: "Done"
+5. Wait (orchestrator stops me)
+```
+
+### 4. Report Agent Workflow (Agent D)
+
+```
+1. scratchpad_read(project, section="task-report") — read task + sources
+2. Read all result sections
+3. Create final artifact
+4. Save as FILE in project directory:
+   Write(~/projects/{project}/{filename}.{format})
+5. Additionally to scratchpad:
    scratchpad_write(project, section="final-report", content=...)
-6. send_to(caller_session) — Orchestrator benachrichtigen
+6. send_to(caller_session) — notify orchestrator
 ```
 
 ---
 
-## Ergebnis-Formate
+## Result Formats
 
-| Format | Dateiendung | Wann verwenden |
-|--------|------------|----------------|
-| **Markdown** | `.md` | Reports, Analysen, Dokumentation |
-| **JSON** | `.json` | Strukturierte Daten, API-Responses |
-| **Code** | `.go`, `.py`, etc. | Implementierungen, Scripts |
-| **HTML** | `.html` | Web-Content, Präsentationen |
+| Format | Extension | When to use |
+|--------|-----------|-------------|
+| **Markdown** | `.md` | Reports, analysis, documentation |
+| **JSON** | `.json` | Structured data, API responses |
+| **Code** | `.go`, `.py`, etc. | Implementations, scripts |
+| **HTML** | `.html` | Web content, presentations |
 
-Der User definiert das Format vorab. Der Report-Agent hält sich daran.
+The user defines the format upfront. The report agent adheres to it.
 
 ---
 
-## DAG-Modus (Execution Dependencies)
+## DAG Mode (Execution Dependencies)
 
-Nicht alle Agents können parallel starten. Manchmal braucht Agent C das Ergebnis von A und B bevor er beginnen kann:
+Not all agents can start in parallel. Sometimes agent C needs the results of A and B before starting:
 
 ```
 Planner → Research (parallel) → Implementer → Reviewer
         → Design   (parallel) ↗
 ```
 
-Research und Design starten parallel nach Planner. Implementer wartet bis BEIDE fertig sind. Reviewer wartet auf Implementer.
+Research and Design start in parallel after Planner. Implementer waits until BOTH are done. Reviewer waits on Implementer.
 
-### Realisierung: Emergent über Broker (kein Code nötig)
+### Implementation: Emergent via Broker (no code needed)
 
-Der Orchestrator schreibt den Execution-Plan ins Scratchpad:
+The orchestrator writes the execution plan to scratchpad:
 
 ```
 scratchpad_write(project, section="execution-order", content="""
 ## Execution Order
-1. research + design (parallel, sofort starten)
-2. implement (wartet auf DONE von research UND design)
-3. review (wartet auf DONE von implement)
+1. research + design (parallel, start immediately)
+2. implement (waits for DONE from research AND design)
+3. review (waits for DONE from implement)
 """)
 ```
 
-Jeder Agent liest beim Start den Plan, sieht seine Vorbedingungen, und wartet über send_to auf die entsprechenden DONE-Signals. **Keine Code-Änderung nötig** — rein prompt-basiert.
+Every agent reads the plan on startup, sees its prerequisites, and waits via send_to for the corresponding DONE signals. **No code change needed** — purely prompt-based.
 
-### Warum emergent statt statisch?
+### Why emergent instead of static?
 
-- Nutzt den bestehenden Heartbeat-Broker (Message Delivery)
-- Dynamischer als statischer DAG — Agent kann zur Laufzeit entscheiden ob er wirklich warten muss
-- Kein `depends_on`-Feld in der DB nötig
-- Debugging über `list_agents()` + Scratchpad: man sieht welcher Agent auf wen wartet
+- Uses the existing heartbeat broker (message delivery)
+- More dynamic than a static DAG — agent can decide at runtime whether it really needs to wait
+- No `depends_on` field needed in DB
+- Debugging via `list_agents()` + scratchpad: see which agent is waiting on whom
 
-### Optionaler Fallback: Explizite Dependencies
+### Optional Fallback: Explicit Dependencies
 
-Für deterministische Workflows kann der User Dependencies im Aufruf angeben:
+For deterministic workflows the user can specify dependencies on invocation:
 
 ```
-/schwarm --project yesmem \
+/swarm --project yesmem \
   --tasks "research,design,implement,review" \
   --depends "implement:research+design, review:implement"
 ```
 
-Der Orchestrator parst die Dependencies und schreibt sie als `execution-order` ins Scratchpad. Agents verhalten sich identisch — der einzige Unterschied ist wer den Plan schreibt (User vs. Orchestrator).
+The orchestrator parses the dependencies and writes them as `execution-order` to scratchpad. Agents behave identically — the only difference is who writes the plan (user vs. orchestrator).
 
 ---
 
 ## Reliable Message Delivery (Daemon-Enforced)
 
-Die Zustellung von `send_to`-Nachrichten ist **garantiert** — nicht behavioral, sondern vom Daemon enforced.
+Delivery of `send_to` messages is **guaranteed** — not behavioral, but daemon-enforced.
 
-**Ablauf:**
-1. `send_to()` speichert Nachricht in DB → gibt `message_id` zurück
-2. Heartbeat (alle 10s) holt alle `delivered=0` Messages für laufende Agents
-3. Socket-Inject → bei Erfolg: `delivered=1`, `delivered_at` gesetzt
-4. Bei Fehlschlag: `delivery_retries++`, nächster Heartbeat-Zyklus versucht erneut
-5. Nach **5 Fehlversuchen**: `delivery_failed=1`, Sender wird benachrichtigt:
-   `"DELIVERY_FAILED: Nachricht an {section} konnte nicht zugestellt werden nach 5 Versuchen."`
+**Flow:**
+1. `send_to()` stores message in DB → returns `message_id`
+2. Heartbeat (every 10s) fetches all `delivered=0` messages for running agents
+3. Socket-Inject → on success: `delivered=1`, `delivered_at` set
+4. On failure: `delivery_retries++`, next heartbeat cycle retries
+5. After **5 failures**: `delivery_failed=1`, sender is notified:
+   `"DELIVERY_FAILED: message to {section} could not be delivered after 5 attempts."`
 
-**Für den Orchestrator bedeutet das:**
-- Keine manuelle Retry-Logik nötig — der Daemon kümmert sich
-- Bei `DELIVERY_FAILED`: Agent ist vermutlich tot → Crash-Recovery greift parallel
-- `message_id` aus `send_to` Response kann zur Nachverfolgung genutzt werden
-
----
-
-## Scratchpad — Das geteilte Notizbrett
-
-Das Scratchpad ist der zentrale Kommunikationskanal zwischen allen Agents. Es ist eine persistente Key-Value-Struktur pro Projekt, organisiert in benannten Sections.
-
-**Wie es funktioniert:**
-- Jede Section hat einen Namen (z.B. `auftrag-wirtschaft`), einen Owner (Session-ID des Schreibers) und beliebig langen Text-Content
-- Sections sind für ALLE Agents im selben Projekt lesbar — kein Access-Control
-- `scratchpad_write()` erstellt oder überschreibt eine Section (Upsert)
-- `scratchpad_read()` liest eine oder alle Sections
-- `scratchpad_list()` zeigt alle Sections mit Größe und Timestamp
-- `scratchpad_delete()` löscht eine Section oder das ganze Projekt
-
-**Wann Scratchpad, wann Datei?**
-- **Scratchpad** für Koordination: Aufträge, Status-Updates, Zwischen-Ergebnisse, kurze Texte
-- **Dateien im Projektverzeichnis** für finale Artefakte: Reports, Code, Präsentationen, alles was der User am Ende bekommt
-
-**Wichtig:** Das Scratchpad ist kein Dateisystem. Es ist ein flüchtiges Nachrichtenbrett. Nach Abschluss des Schwarms können die Sections gelöscht werden — die finalen Ergebnisse liegen als Dateien im Projektverzeichnis.
+**For the orchestrator this means:**
+- No manual retry logic needed — daemon handles it
+- On `DELIVERY_FAILED`: agent is likely dead → crash recovery engages in parallel
+- `message_id` from `send_to` response can be used for tracking
 
 ---
 
-## Kommunikation
+## Scratchpad — The Shared Noteboard
 
-### Scratchpad-Sections (Konvention)
+The scratchpad is the central communication channel between all agents. It is a persistent key-value structure per project, organized in named sections.
 
-| Section | Schreiber | Inhalt |
-|---------|-----------|--------|
-| `auftrag` | Agent 1 | Gesamtauftrag für Orchestrator |
-| `auftrag-{name}` | Orchestrator A | Teilauftrag für Sub-Agent |
-| `ergebnis-{name}` | Sub-Agent | Recherche-Ergebnis |
-| `auftrag-report` | Orchestrator A | Auftrag für Report-Agent |
-| `final-report` | Report-Agent | Finaler Report (Kopie) |
-| `{agent-name}` | Jeder Agent | Status-Updates |
+**How it works:**
+- Each section has a name (e.g. `task-economy`), an owner (writer's session ID), and arbitrary text content
+- Sections are readable by ALL agents in the same project — no access control
+- `scratchpad_write()` creates or overwrites a section (upsert)
+- `scratchpad_read()` reads one or all sections
+- `scratchpad_list()` shows all sections with size and timestamp
+- `scratchpad_delete()` deletes a section or the entire project
 
-### Benachrichtigungen (send_to + ACK)
+**When scratchpad, when file?**
+- **Scratchpad** for coordination: tasks, status updates, intermediate results, short texts
+- **Files in project directory** for final artifacts: reports, code, presentations, everything the user ultimately receives
 
-Nachrichten zwischen Agents laufen über `send_to()`. Der Heartbeat relayed sie alle 2 Sekunden an den Empfänger. **Zustellung ist nicht garantiert** — der Empfänger muss bestätigen.
+**Important:** The scratchpad is not a filesystem. It is a transient message board. After swarm completion the sections can be deleted — final results exist as files in the project directory.
 
-**Protokoll:**
-1. Sender: `send_to(target=EMPFÄNGER_SESSION, content="ERGEBNIS: ergebnis-wirtschaft fertig")`
-2. Heartbeat relayed die Nachricht in den Empfänger-Terminal
-3. Empfänger liest, verarbeitet, und bestätigt: `send_to(target=SENDER_SESSION, content="ACK: ergebnis-wirtschaft erhalten")`
+---
 
-**Regeln:**
-- Jede send_to-Nachricht die eine Aktion erwartet MUSS mit ACK beantwortet werden
-- Prefix-Konvention: `ERGEBNIS:`, `STATUS:`, `FEHLER:`, `ACK:`
-- Wenn nach 60s kein ACK kommt: erneut senden (max 2 Retries)
-- Bei Status-Updates (rein informativ) ist kein ACK nötig
-- **`ACK:`-Nachrichten werden NIEMALS bestätigt** — kein ACK auf ein ACK, nie
-- **Nachrichten vom Hauptchat (Agent 1) lösen NIE ein ACK aus** — der Hauptchat sendet kein ACK, und der Orchestrator antwortet nicht darauf; nach dem FERTIG-Signal nur passiv warten auf `stop_agent()`
+## Communication
 
-**Beispiel-Flow:**
+### Scratchpad Sections (Convention)
+
+| Section | Writer | Content |
+|---------|--------|---------|
+| `task` | Agent 1 | Overall task for orchestrator |
+| `task-{name}` | Orchestrator A | Sub-task for sub-agent |
+| `result-{name}` | Sub-Agent | Research result |
+| `task-report` | Orchestrator A | Task for report agent |
+| `final-report` | Report Agent | Final report (copy) |
+| `{agent-name}` | Any Agent | Status updates |
+
+### Notifications (send_to + ACK)
+
+Messages between agents go via `send_to()`. The heartbeat relays them every 2 seconds to the recipient.
+
+**CRITICAL: Every send_to / relay_agent content MUST end with `\n`.** Without trailing newline, the prompt stays in the tmux input line and is never submitted. The agent stops responding to further pushes. Always: `relay_agent(to, "instruction\n")`.
+
+**Protocol:**
+1. Sender: `send_to(target=RECIPIENT_SESSION, content="RESULT: result-economy done\n")`
+2. Heartbeat relays message to recipient terminal
+3. Recipient reads, processes, confirms: `send_to(target=SENDER_SESSION, content="ACK: result-economy received\n")`
+
+**Rules:**
+- Every send_to message that expects an action MUST be answered with ACK
+- Prefix convention: `RESULT:`, `STATUS:`, `ERROR:`, `ACK:`
+- If no ACK after 60s: resend (max 2 retries)
+- Status updates (informational only) do not need ACK
+- **`ACK:` messages are NEVER confirmed** — no ACK on an ACK, never
+- **Messages from main chat (Agent 1) never trigger an ACK** — main chat sends no ACK, and the orchestrator does not respond to it; after the DONE signal the orchestrator passively waits for `stop_agent()`
+
+**Example Flow:**
 ```
-B → A: "ERGEBNIS: ergebnis-wirtschaft fertig, 3.8KB"
-A → B: "ACK: ergebnis-wirtschaft erhalten"
-A ruft stop_agent(B) auf
+B → A: "RESULT: result-economy done, 3.8KB"
+A → B: "ACK: result-economy received"
+A calls stop_agent(B)
 ```
 
 ---
 
-## Geduld — Die wichtigste Eigenschaft des Orchestrators
+## Patience — The Orchestrator's Most Important Trait
 
-Agents brauchen Zeit. WebSearch, Analyse, Report-Erstellung — das dauert Minuten, nicht Sekunden. Der Orchestrator (Agent A) MUSS geduldig sein.
+Agents need time. WebSearch, analysis, report creation — this takes minutes, not seconds. The orchestrator (Agent A) MUST be patient.
 
-**Regeln:**
-- **Keine voreiligen Schlüsse.** Wenn ein Sub-Agent nach 60 Sekunden noch kein Ergebnis geliefert hat, heißt das NICHT dass er hängt. Er arbeitet.
-- **Nicht nachfragen bevor 3 Minuten vergangen sind.** Erst nach 3 Minuten ohne jegliche Scratchpad-Aktivität ODER send_to darf der Orchestrator nachhaken.
-- **Timestamps prüfen, nicht schätzen.** Die `created_at` und `heartbeat_at` Felder in `list_agents()` zeigen die echte Laufzeit. Nicht die eigene Wahrnehmung als Maßstab nehmen.
-- **Kein Abbruch wegen Ungeduld.** Nur bei echten Fehlern (Crash, Freeze, Timeout) eingreifen — nicht weil es "lange dauert".
-- **Parallel weiterarbeiten.** Während B und C recherchieren, kann A den Report-Auftrag schon vorbereiten oder Status-Updates ins Scratchpad schreiben.
+**Rules:**
+- **No premature conclusions.** If a sub-agent hasn't delivered after 60 seconds, that does NOT mean it's stuck. It's working.
+- **Don't check in before 3 minutes have passed.** Only after 3 minutes without any scratchpad activity OR send_to may the orchestrator follow up.
+- **Check timestamps, don't estimate.** The `created_at` and `heartbeat_at` fields in `list_agents()` show real runtime. Don't use your own perception as a measure.
+- **No abort out of impatience.** Only intervene on real errors (crash, freeze, timeout) — not because "it's taking long".
+- **Work in parallel.** While B and C are researching, A can already prepare the report task or write status updates to scratchpad.
 
-**Typische Laufzeiten:**
-| Aufgabe | Erwartete Dauer |
-|---------|----------------|
-| WebSearch + Zusammenfassung | 1–3 Minuten |
-| Code-Analyse | 2–5 Minuten |
-| Report-Erstellung aus Quellen | 1–2 Minuten |
-| Komplexe Multi-Source-Recherche | 3–5 Minuten |
-
----
-
-## Proaktiver Download
-
-Agents dürfen — und sollen — relevante Dokumente, Quellen und Materialien proaktiv in das Projektverzeichnis herunterladen, wenn sie für das Ergebnis nützlich sind.
-
-**Erlaubt:**
-- Webseiten als Referenz speichern (`WebFetch` → Datei)
-- Recherche-Quellen als Quellensammlung ablegen
-- Zwischenergebnisse, Rohdaten, Statistiken als Dateien sichern
-- Bilder, Diagramme, Charts wenn für den Report relevant
-
-**Konvention:**
-```
-~/projects/{projekt}/
-├── sources/          ← Quelldokumente, heruntergeladene Referenzen
-├── data/             ← Rohdaten, Statistiken, JSON
-├── assets/           ← Bilder, Diagramme, Medien
-└── {report}.{format} ← Finales Artefakt
-```
-
-**Regeln:**
-- Unterverzeichnisse selbstständig anlegen wenn nötig
-- Dateinamen beschreibend: `sources/fairtrade-bananen-statistik-2024.md`, nicht `source1.txt`
-- Keine sensiblen Daten oder Credentials herunterladen
-- Im finalen Report auf heruntergeladene Quellen verweisen
+**Typical Runtimes:**
+| Task | Expected Duration |
+|------|-------------------|
+| WebSearch + summary | 1–3 minutes |
+| Code analysis | 2–5 minutes |
+| Report creation from sources | 1–2 minutes |
+| Complex multi-source research | 3–5 minutes |
 
 ---
 
-## Lifecycle-Management
+## Proactive Download
 
-### Cleanup-Pflicht
+Agents may — and should — proactively download relevant documents, sources, and materials to the project directory when useful for the result.
 
-Der Orchestrator ist verantwortlich für das Aufräumen:
+**Allowed:**
+- Save web pages as reference (`WebFetch` → file)
+- Store research sources as a source collection
+- Save intermediate results, raw data, statistics as files
+- Images, diagrams, charts when relevant to the report
 
-1. Sub-Agent meldet "fertig" → Orchestrator ruft `stop_agent(to="{name}")` auf
-2. Report-Agent meldet "fertig" → Orchestrator ruft `stop_agent(to="report-writer")` auf
-3. Orchestrator beendet sich selbst als letztes (oder wird vom Hauptchat gestoppt)
-
-**Keine Zombie-Agents.** Jeder gestartete Agent wird explizit gestoppt.
-
-### Crash-Recovery (automatisch)
-
-Der Daemon überwacht alle laufenden Agents automatisch per Health-Check (alle 30s PID-Prüfung). **Kein Agent muss das anstoßen.**
-
-**Ablauf bei Crash:**
-1. Health-Check erkennt toten Prozess (PID existiert nicht mehr)
-2. **Sofort-Quarantäne**: Alle Learnings der gecrachten Session werden isoliert (`quarantine_session`) — verhindert Kontamination über Briefing und hybrid_search
-3. **Scratchpad-Taint**: Ergebnis-Sections des Agents werden mit `[TAINTED]`-Prefix markiert — andere Agents sehen sofort, dass die Daten unzuverlässig sind
-4. Daemon bereinigt Socket-Dateien, setzt `status=crashed`
-5. **Auto-Retry** mit sauberer Session (neue session_id, kein kontaminiertes Briefing)
-6. Nach **3 gescheiterten Versuchen**: `status=failed`, Caller bekommt Crash-Context:
-   - Laufzeit des Agents
-   - Letzter Scratchpad-Status (falls vorhanden)
-   - Nachricht: `"FAILED: Agent 'X' nach 3 Versuchen abgestürzt. Laufzeit: 2m15s."`
-
-**Warum Quarantäne vor Retry?**
-Agents teilen State über yesmem — Learnings, Briefing, Scratchpad. Ohne Quarantäne:
-- Der Retry bekommt das Briefing mit den Learnings der gecrachten Session → gleicher Fehler → Crash-Loop
-- Andere Agents finden vergiftete Learnings via hybrid_search → Kontamination breitet sich aus
-- Scratchpad-Sections könnten unvollständig sein → Report-Agent arbeitet mit kaputten Daten
-
-**Was der Orchestrator tun muss:**
-- Bei `FAILED`-Nachricht entscheiden: **Skip** (ohne diesen Teil weitermachen) oder **Abort** (`stop_all_agents(project)`)
-- Retries passieren automatisch — der Orchestrator muss sich NICHT um Respawns kümmern
-- Der Orchestrator soll NICHT selbst versuchen einen gecrachten Agent neu zu spawnen
-
-### Notfall-Abbruch
-
-Bei kritischen Fehlern kann der Orchestrator oder Hauptchat den gesamten Schwarm sofort beenden:
-
+**Convention:**
 ```
-stop_all_agents(project="{projekt}")
+~/projects/{project}/
+├── sources/          ← Source documents, downloaded references
+├── data/             ← Raw data, statistics, JSON
+├── assets/           ← Images, diagrams, media
+└── {report}.{format} ← Final artifact
 ```
 
-Stoppt ALLE laufenden, frozen und spawning Agents im Projekt. Sendet `/exit` an jeden, bereinigt Sockets und DB-Einträge. Danach ist das Projekt sauber.
+**Rules:**
+- Create subdirectories independently when needed
+- Descriptive filenames: `sources/fairtrade-banana-statistics-2024.md`, not `source1.txt`
+- Don't download sensitive data or credentials
+- Reference downloaded sources in the final report
 
-### Freeze-Handling
+---
 
-- Agent wird frozen (Budget/Runtime überschritten) → Orchestrator prüft
-- Genug Ergebnis vorhanden → `stop_agent()`, weitermachen
-- Zu wenig Ergebnis → `resume_agent()` mit erhöhtem Budget, oder Skip
+## Lifecycle Management
+
+### Cleanup Obligation
+
+The orchestrator is responsible for cleanup:
+
+1. Sub-agent reports "done" → orchestrator calls `stop_agent(to="{name}")`
+2. Report agent reports "done" → orchestrator calls `stop_agent(to="report-writer")`
+3. Orchestrator terminates itself last (or is stopped by main chat)
+
+**No zombie agents.** Every started agent is explicitly stopped.
+
+### Crash Recovery (Automatic)
+
+The daemon monitors all running agents automatically via health check (every 30s PID check). **No agent needs to trigger this.**
+
+**Flow on crash:**
+1. Health check detects dead process (PID no longer exists)
+2. **Immediate quarantine**: All learnings from the crashed session are isolated (`quarantine_session`) — prevents contamination via briefing and hybrid_search
+3. **Scratchpad taint**: Result sections of the agent are marked with `[TAINTED]` prefix — other agents immediately see the data is unreliable
+4. Daemon cleans up socket files, sets `status=crashed`
+5. **Auto-retry** with clean session (new session_id, no contaminated briefing)
+6. After **3 failed attempts**: `status=failed`, caller receives crash context:
+   - Agent runtime
+   - Last scratchpad status (if available)
+   - Message: `"FAILED: Agent 'X' crashed after 3 attempts. Runtime: 2m15s."`
+
+**Why quarantine before retry?**
+Agents share state via yesmem — learnings, briefing, scratchpad. Without quarantine:
+- The retry gets the briefing with the crashed session's learnings → same error → crash loop
+- Other agents find poisoned learnings via hybrid_search → contamination spreads
+- Scratchpad sections may be incomplete → report agent works with broken data
+
+**What the orchestrator must do:**
+- On `FAILED` message, decide: **Skip** (continue without this part) or **Abort** (`stop_all_agents(project)`)
+- Retries happen automatically — the orchestrator does NOT need to handle respawns
+- The orchestrator should NOT try to respawn a crashed agent itself
+
+### Emergency Abort
+
+On critical errors the orchestrator or main chat can immediately terminate the entire swarm:
+
+```
+stop_all_agents(project="{project}")
+```
+
+Stops ALL running, frozen, and spawning agents in the project. Sends `/exit` to each, cleans up sockets and DB entries. After this the project is clean.
+
+### Freeze Handling
+
+- Agent gets frozen (budget/runtime exceeded) → orchestrator checks
+- Enough results present → `stop_agent()`, continue
+- Too few results → `resume_agent()` with increased budget, or skip
 
 ---
 
 ## Limits (Defaults)
 
-| Parameter | Default | Beschreibung |
+| Parameter | Default | Description |
 |-----------|---------|-------------|
-| `max_runtime` | 30m | Max Laufzeit pro Agent |
-| `max_turns` | 300 | Max Interaktionen pro Agent |
-| `max_depth` | 3 | Max Spawn-Tiefe (A→B→C) |
-| `token_budget` | 500000 | Max Tokens (Input+Output) pro Agent |
-| `model` | (inherit) | Modell pro Agent (siehe Modell-Wahl) |
+| `max_runtime` | 30m | Max runtime per agent |
+| `max_turns` | 300 | Max interactions per agent |
+| `max_depth` | 3 | Max spawn depth (A→B→C) |
+| `token_budget` | 500000 | Max tokens (input+output) per agent |
+| `model` | (inherit) | Model per agent (see model selection) |
 
-Überschreibbar per `spawn_agent(token_budget=..., model=...)` oder Config.
+Overridable via `spawn_agent(token_budget=..., model=...)` or config.
 
-### Backend-Wahl (Claude vs Codex)
+### Backend Selection (Claude vs Codex vs Opencode)
 
-Sub-Agents können verschiedene Backends nutzen:
+Sub-agents can use different backends:
 
 ```
-spawn_agent(project="{projekt}", section="recherche", backend="codex")
+spawn_agent(project="{project}", section="research", backend="opencode", model="deepseek-v4-pro")
 ```
 
-| Backend | CLI | Stärken | Einschränkungen |
-|---------|-----|---------|-----------------|
-| `claude` (default) | Claude Code | YesMem-Proxy-Integration, Prompt-Cache, voller MCP-Zugriff | — |
-| `codex` | OpenAI Codex | Anderes Modell (GPT-5.x), Sandbox-Execution, Second Opinion | Kein Proxy-Channel-Inject, nur MCP-Tools für Kommunikation |
+| Backend | CLI | Strengths | Limitations |
+|---------|-----|-----------|-------------|
+| `claude` (default) | `claude` | YesMem proxy integration, prompt cache, full MCP access | Only Anthropic models (sonnet, opus, haiku). NEVER use with DeepSeek — silent failure (0 turns). |
+| `codex` | `codex` | DeepSeek models, different provider, second opinion | No prompt cache. No proxy channel inject. |
+| `opencode` | `opencode` | Same capabilities as codex, different binary name | No prompt cache. No proxy channel inject. |
 
-**Codex-Agents kommunizieren ausschließlich über MCP-Tools** (scratchpad, send_to, remember) — nicht über Proxy-Injection. Das funktioniert weil YesMem als MCP-Server in Codex registriert ist.
+**Codex/Opencode agents communicate exclusively via MCP tools** (scratchpad, send_to, remember) — not via proxy injection. YesMem is registered as MCP server.
 
-### Modell-Wahl
+**Important with DeepSeek models:** Always `backend: "opencode"` or `backend: "codex"` + `model: "deepseek-v4-pro"`. Never `backend: "claude"` with DeepSeek — the `claude` binary doesn't know the endpoint.
 
-Nicht jeder Agent braucht das teuerste Modell. **Agent A (Orchestrator) entscheidet** welches Modell für jeden Sub-Agent am besten passt — basierend auf der Budget-Strategie die der User vorgibt.
+### Model Selection
 
-**Budget-Strategien:**
+Not every agent needs the most expensive model. **Agent A (orchestrator) decides** which model fits each sub-agent best — based on the budget strategy the user specifies.
 
-| Strategie | Orchestrator A | Sub-Agents | Report-Agent D |
-|-----------|---------------|------------|----------------|
-| **Sparsam** | Sonnet | Haiku | Sonnet |
+**Budget Strategies:**
+
+| Strategy | Orchestrator A | Sub-Agents | Report Agent D |
+|----------|---------------|------------|----------------|
+| **Frugal** | Sonnet | Haiku | Sonnet |
 | **Balanced** (Default) | Opus | Sonnet | Opus |
-| **Qualität** | Opus | Opus | Opus |
+| **Quality** | Opus | Opus | Opus |
 
-Agent A darf von der Strategie abweichen wenn die Aufgabe es erfordert — z.B. einen einzelnen Sub-Agent auf Opus hochstufen wenn die Recherche komplex ist, oder auf Haiku runterstufen wenn es nur eine einfache Datenextraktion ist.
+Agent A may deviate from the strategy if the task requires it — e.g. upgrade a single sub-agent to Opus if research is complex, or downgrade to Haiku if it's just simple data extraction.
 
-**Im Guided Mode** fragt der Skill:
+**In Guided Mode** the skill asks:
 ```
-Budget-Strategie?
-  1. Sparsam — Haiku wo möglich, Sonnet für Kern
-  2. Balanced — Sonnet Standard, Opus für Report (Empfohlen)
-  3. Qualität — Opus überall
+Budget strategy?
+  1. Frugal — Haiku where possible, Sonnet for core
+  2. Balanced — Sonnet default, Opus for report (Recommended)
+  3. Quality — Opus everywhere
 ```
 
-**Im Direct Mode** optional inline:
+**In Direct Mode** optional inline:
 ```
-/schwarm (sparsam) "3 Agents: Banane wirtschaftlich, gesundheitlich, historisch → Markdown"
+/swarm (frugal) "3 Agents: banana economical, health, historical → Markdown"
 ```
-Ohne Angabe gilt "Balanced".
+Without specification, "Balanced" applies.
 
-**Verfügbare Modelle:** `opus`, `sonnet`, `haiku`
+**Available models:** `opus`, `sonnet`, `haiku`
 
 ---
 
-## Beispiele
+## Examples
 
-### Recherche-Schwarm
+### Research Swarm
 ```
-/schwarm "Recherchiere Elektromobilität: Agent B Technik, Agent C Markt, Agent D Politik → Markdown Report"
-```
-
-### Code-Review-Schwarm
-```
-/schwarm "Review des Auth-Moduls: Agent B Security-Audit, Agent C Performance, Agent D Best-Practices → JSON Report"
+/swarm "Research e-mobility: Agent B tech, Agent C market, Agent D policy → Markdown Report"
 ```
 
-### Content-Schwarm
+### Code Review Swarm
 ```
-/schwarm "Blogpost über KI in der Medizin: Agent B Fakten-Recherche, Agent C Experten-Zitate, Agent D Schreibt den Artikel → HTML"
+/swarm "Review auth module: Agent B security audit, Agent C performance, Agent D best practices → JSON Report"
+```
+
+### Content Swarm
+```
+/swarm "Blog post about AI in medicine: Agent B fact research, Agent C expert quotes, Agent D writes article → HTML"
 ```
 
 ---
 
 ## Anti-Patterns
 
-- **Kein Agent spawnt sich selbst neu** — nur der Orchestrator entscheidet über Retries
-- **Keine direkte Agent-zu-Agent-Kommunikation** — immer über Scratchpad + send_to an Orchestrator
-- **Keine Ergebnisse nur im Scratchpad** — finale Artefakte IMMER als Datei im Projektverzeichnis
-- **Kein Schwarm ohne Orchestrator** — auch bei 1 Sub-Agent geht alles über A
-- **Kein Orchestrator der selbst recherchiert** — A koordiniert nur, arbeitet nicht inhaltlich
+- **No agent spawns itself** — only the orchestrator decides on retries
+- **No direct agent-to-agent communication** — always via scratchpad + send_to to orchestrator
+- **No results only in scratchpad** — final artifacts ALWAYS as file in project directory
+- **No swarm without orchestrator** — even with 1 sub-agent everything goes through A
+- **No orchestrator doing research itself** — A only coordinates, never works on content

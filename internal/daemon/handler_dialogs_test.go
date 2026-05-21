@@ -329,6 +329,26 @@ func TestHandleRegisterPID_MissingParams(t *testing.T) {
 	}
 }
 
+func TestHandleRegisterPID_WithSourceAgent(t *testing.T) {
+	h, _ := mustHandler(t)
+	resp := h.Handle(Request{Method: "register_pid", Params: map[string]any{
+		"session_id":   "opencode:ses-x",
+		"pid":          float64(99999),
+		"source_agent": "opencode",
+	}})
+	if resp.Error != "" {
+		t.Fatal(resp.Error)
+	}
+
+	val, err := h.store.GetProxyState("source_agent:opencode:ses-x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val != "opencode" {
+		t.Errorf("source_agent proxy state = %q, want opencode", val)
+	}
+}
+
 // --- handleRegisterWindow ---
 
 func TestHandleRegisterWindow_OK(t *testing.T) {

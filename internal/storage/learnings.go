@@ -12,6 +12,28 @@ import (
 	"github.com/carsteneu/yesmem/internal/textutil"
 )
 
+// resolveCanonicalProject resolves a project name to its canonical form for queries.
+// 1. Full paths with .worktrees/ resolve via models.CanonicalProject directly.
+// 2. Short names resolve via DB lookup: what canonical_project do existing learnings use?
+func (s *Store) resolveCanonicalProject(project string) string {
+	if project == "" {
+		return project
+	}
+	canonical := models.CanonicalProject(project)
+	if canonical != project && canonical != filepath.Base(project) {
+		return canonical
+	}
+	var dbCanonical string
+	err := s.readerDB().QueryRow(
+		`SELECT canonical_project FROM learnings WHERE project = ? AND canonical_project != ? AND canonical_project != '' LIMIT 1`,
+		project, project,
+	).Scan(&dbCanonical)
+	if err == nil && dbCanonical != "" {
+		return dbCanonical
+	}
+	return project
+}
+
 // InsertLearning inserts a learning and returns its ID.
 func (s *Store) InsertLearning(l *models.Learning) (int64, error) {
 	ids, err := s.InsertLearningBatch([]*models.Learning{l})
@@ -36,11 +58,12 @@ func (s *Store) HasPulseForSession(sessionID string) (bool, error) {
 
 // GetPulseLearningsSince returns pulse learnings for a project created after since.
 func (s *Store) GetPulseLearningsSince(project string, since time.Time, limit int) ([]models.Learning, error) {
+	canonical := s.resolveCanonicalProject(project)
 	rows, err := s.readerDB().Query(`SELECT id, session_id, content, created_at FROM learnings
-		WHERE category = 'pulse' AND (project = ? OR project IS NULL OR project = '')
+		WHERE category = 'pulse' AND canonical_project = ?
 		AND created_at > ? AND superseded_by IS NULL
 		ORDER BY created_at ASC LIMIT ?`,
-		project, since.Format(time.RFC3339), limit)
+		canonical, since.Format(time.RFC3339), limit)
 	if err != nil {
 		return nil, fmt.Errorf("get pulse learnings: %w", err)
 	}
@@ -94,8 +117,8 @@ func (s *Store) InsertLearningBatch(learnings []*models.Learning) ([]int64, erro
 	defer tx.Rollback()
 
 	stmt, err := tx.Prepare(`INSERT INTO learnings
-		(session_id, category, content, project, confidence, created_at, expires_at, model_used, source, emotional_intensity, session_flavor, supersedes, importance, context, domain, trigger_rule, embedding_text, embedding_status, embedding_content_hash, embedded_at, source_file, source_hash, doc_chunk_ref, content_hash, task_type, turns_at_creation, source_msg_from, source_msg_to, origin_tool)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		(session_id, category, content, project, confidence, created_at, expires_at, model_used, source, emotional_intensity, session_flavor, supersedes, importance, context, domain, trigger_rule, embedding_text, embedding_status, embedding_content_hash, embedded_at, source_file, source_hash, doc_chunk_ref, content_hash, task_type, turns_at_creation, source_msg_from, source_msg_to, origin_tool, source_agent, target_agent, canonical_project)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return nil, fmt.Errorf("prepare: %w", err)
 	}
@@ -143,6 +166,17 @@ func (s *Store) InsertLearningBatch(learnings []*models.Learning) ([]int64, erro
 			turnKey = "__global__"
 		}
 
+		if l.CanonicalProject == "" && l.Project != "" {
+			l.CanonicalProject = models.CanonicalProject(l.Project)
+		}
+
+		// Resolve source/target agent: use explicit value from learning, fall back to session derivation.
+		srcAgent := models.NormalizeSourceAgent(l.SourceAgent)
+		tgtAgent := l.TargetAgent
+		if srcAgent == "" && l.SessionID != "" {
+			srcAgent = s.sessionSourceAgent(l.SessionID)
+		}
+
 		// Lineage sentinel: Go zero-value (0) means "not set" — normalize to -1
 		// so we can distinguish "no lineage" from "extracted from message 0".
 		sourceMsgFrom, sourceMsgTo := l.SourceMsgFrom, l.SourceMsgTo
@@ -153,7 +187,7 @@ func (s *Store) InsertLearningBatch(learnings []*models.Learning) ([]int64, erro
 		result, err := stmt.Exec(
 			l.SessionID, l.Category, l.Content, l.Project, l.Confidence,
 			fmtTime(l.CreatedAt), expiresAt, l.ModelUsed, source, l.EmotionalIntensity, l.SessionFlavor, l.Supersedes, importance,
-			l.Context, l.Domain, l.TriggerRule, l.EmbeddingText, embeddingStatus, embeddingContentHash, l.SourceFile, l.SourceHash, l.DocChunkRef, l.ContentHash, l.TaskType, turnCounts[turnKey], sourceMsgFrom, sourceMsgTo, l.OriginTool)
+			l.Context, l.Domain, l.TriggerRule, l.EmbeddingText, embeddingStatus, embeddingContentHash, l.SourceFile, l.SourceHash, l.DocChunkRef, l.ContentHash, l.TaskType, turnCounts[turnKey], sourceMsgFrom, sourceMsgTo, l.OriginTool, srcAgent, tgtAgent, l.CanonicalProject)
 		if err != nil {
 			return ids, fmt.Errorf("insert learning: %w", err)
 		}
@@ -314,18 +348,20 @@ func BuildSearchableText(content string, keywords, anticipatedQueries, entities 
 
 // GetLearningsByCategory returns active learnings of a specific category.
 func (s *Store) GetLearningsByCategory(category, project string, limit int) ([]models.Learning, error) {
+	canonical := s.resolveCanonicalProject(project)
 	query := `SELECT id, session_id, category, content, project, confidence,
 		superseded_by, supersede_reason, created_at, expires_at, model_used, source,
 		COALESCE(hit_count, 0), COALESCE(emotional_intensity, 0.0), last_hit_at, COALESCE(session_flavor, ''), valid_until, supersedes, COALESCE(importance, 3), supersede_status, COALESCE(noise_count, 0), COALESCE(fail_count, 0),
 		COALESCE(match_count, 0), COALESCE(inject_count, 0), COALESCE(use_count, 0), COALESCE(save_count, 0), COALESCE(stability, 30.0),
 		COALESCE(context, ''), COALESCE(domain, 'code'), COALESCE(trigger_rule, ''), COALESCE(embedding_text, ''),
-		COALESCE(source_file, ''), COALESCE(source_hash, ''), COALESCE(doc_chunk_ref, 0), COALESCE(task_type, ''), COALESCE(turns_at_creation, 0), COALESCE(origin_tool, ''), COALESCE(source_msg_from, -1), COALESCE(source_msg_to, -1)
+		COALESCE(source_file, ''), COALESCE(source_hash, ''), COALESCE(doc_chunk_ref, 0), COALESCE(task_type, ''), COALESCE(turns_at_creation, 0), COALESCE(origin_tool, ''), COALESCE(source_msg_from, -1), COALESCE(source_msg_to, -1),
+		COALESCE(canonical_project, '')
 		FROM learnings WHERE superseded_by IS NULL
 		AND category = ?
-		AND (project = ? OR project IS NULL OR project = '')
+		AND (canonical_project = ? OR canonical_project = '')
 		ORDER BY created_at DESC
 		LIMIT ?`
-	rows, err := s.readerDB().Query(query, category, project, limit)
+	rows, err := s.readerDB().Query(query, category, canonical, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -336,22 +372,23 @@ func (s *Store) GetLearningsByCategory(category, project string, limit int) ([]m
 // GetLearningsSince returns active learnings created after the given time.
 // Filters to decision, pattern, gotcha, pivot_moment categories (most useful for metamemory).
 func (s *Store) GetLearningsSince(project string, since time.Time, limit int) ([]models.Learning, error) {
-	short := filepath.Base(project)
 	query := `SELECT id, session_id, category, content, project, confidence,
 		superseded_by, supersede_reason, created_at, expires_at, model_used, source,
 		COALESCE(hit_count, 0), COALESCE(emotional_intensity, 0.0), last_hit_at, COALESCE(session_flavor, ''), valid_until, supersedes, COALESCE(importance, 3), supersede_status, COALESCE(noise_count, 0), COALESCE(fail_count, 0),
 		COALESCE(match_count, 0), COALESCE(inject_count, 0), COALESCE(use_count, 0), COALESCE(save_count, 0), COALESCE(stability, 30.0),
 		COALESCE(context, ''), COALESCE(domain, 'code'), COALESCE(trigger_rule, ''), COALESCE(embedding_text, ''),
-		COALESCE(source_file, ''), COALESCE(source_hash, ''), COALESCE(doc_chunk_ref, 0), COALESCE(task_type, ''), COALESCE(turns_at_creation, 0), COALESCE(origin_tool, ''), COALESCE(source_msg_from, -1), COALESCE(source_msg_to, -1)
+		COALESCE(source_file, ''), COALESCE(source_hash, ''), COALESCE(doc_chunk_ref, 0), COALESCE(task_type, ''), COALESCE(turns_at_creation, 0), COALESCE(origin_tool, ''), COALESCE(source_msg_from, -1), COALESCE(source_msg_to, -1),
+		COALESCE(canonical_project, '')
 		FROM learnings WHERE superseded_by IS NULL
 		AND (expires_at IS NULL OR expires_at > ?)
 		AND created_at > ?
 		AND category IN ('decision', 'pattern', 'gotcha', 'pivot_moment', 'unfinished', 'explicit_teaching')
-		AND (project = ? OR project = ? OR project IS NULL)
+		AND canonical_project = ?
 		ORDER BY created_at DESC
 		LIMIT ?`
 
-	rows, err := s.readerDB().Query(query, fmtTime(time.Now()), fmtTime(since), project, short, limit)
+	canonical := s.resolveCanonicalProject(project)
+	rows, err := s.readerDB().Query(query, fmtTime(time.Now()), fmtTime(since), canonical, limit)
 	if err != nil {
 		return nil, fmt.Errorf("get learnings since: %w", err)
 	}
@@ -361,21 +398,19 @@ func (s *Store) GetLearningsSince(project string, since time.Time, limit int) ([
 
 // GetSessionFlavorsSince returns distinct session flavors grouped by session_id since the given time.
 func (s *Store) GetSessionFlavorsSince(project string, since time.Time, limit int) ([]map[string]any, error) {
-	// Learnings store short project names (e.g. "memory"), but proxy passes full paths
-	// (e.g. "/home/user/projects/myproject"). Match both formats.
-	short := filepath.Base(project)
+	canonical := s.resolveCanonicalProject(project)
 	query := `SELECT session_flavor, MIN(created_at) as first_seen, session_id
 		FROM learnings
 		WHERE superseded_by IS NULL
 		AND (expires_at IS NULL OR expires_at > ?)
 		AND created_at > ?
 		AND length(session_flavor) > 0
-		AND (project = ? OR project = ? OR project IS NULL)
+		AND canonical_project = ?
 		GROUP BY session_id
 		ORDER BY first_seen ASC
 		LIMIT ?`
 
-	rows, err := s.readerDB().Query(query, fmtTime(time.Now()), fmtTime(since), project, short, limit)
+	rows, err := s.readerDB().Query(query, fmtTime(time.Now()), fmtTime(since), canonical, limit)
 	if err != nil {
 		return nil, fmt.Errorf("get session flavors since: %w", err)
 	}
@@ -444,13 +479,14 @@ func (s *Store) GetActiveCategories() ([]string, error) {
 
 // GetActiveLearnings returns all non-superseded, non-expired learnings.
 // Filter by category and/or project (empty string = no filter).
-func (s *Store) GetActiveLearnings(category, project, since, before string) ([]models.Learning, error) {
+func (s *Store) GetActiveLearnings(category, project, since, before string, limit int) ([]models.Learning, error) {
 	query := `SELECT id, session_id, category, content, project, confidence,
 		superseded_by, supersede_reason, created_at, expires_at, model_used, source,
 		COALESCE(hit_count, 0), COALESCE(emotional_intensity, 0.0), last_hit_at, COALESCE(session_flavor, ''), valid_until, supersedes, COALESCE(importance, 3), supersede_status, COALESCE(noise_count, 0), COALESCE(fail_count, 0),
 		COALESCE(match_count, 0), COALESCE(inject_count, 0), COALESCE(use_count, 0), COALESCE(save_count, 0), COALESCE(stability, 30.0),
 		COALESCE(context, ''), COALESCE(domain, 'code'), COALESCE(trigger_rule, ''), COALESCE(embedding_text, ''),
-		COALESCE(source_file, ''), COALESCE(source_hash, ''), COALESCE(doc_chunk_ref, 0), COALESCE(task_type, ''), COALESCE(turns_at_creation, 0), COALESCE(origin_tool, ''), COALESCE(source_msg_from, -1), COALESCE(source_msg_to, -1)
+		COALESCE(source_file, ''), COALESCE(source_hash, ''), COALESCE(doc_chunk_ref, 0), COALESCE(task_type, ''), COALESCE(turns_at_creation, 0), COALESCE(origin_tool, ''), COALESCE(source_msg_from, -1), COALESCE(source_msg_to, -1),
+		COALESCE(canonical_project, '')
 		FROM learnings WHERE superseded_by IS NULL
 		AND (expires_at IS NULL OR expires_at > ?)`
 	args := []any{fmtTime(time.Now())}
@@ -460,8 +496,9 @@ func (s *Store) GetActiveLearnings(category, project, since, before string) ([]m
 		args = append(args, category)
 	}
 	if project != "" {
-		query += ` AND (project = ? OR project IS NULL OR project = '')`
-		args = append(args, project)
+		canonical := s.resolveCanonicalProject(project)
+		query += ` AND (canonical_project = ? OR canonical_project = '')`
+		args = append(args, canonical)
 	}
 	if since != "" {
 		query += ` AND created_at >= ?`
@@ -472,6 +509,10 @@ func (s *Store) GetActiveLearnings(category, project, since, before string) ([]m
 		args = append(args, before)
 	}
 	query += ` ORDER BY category, created_at DESC`
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
 
 	rows, err := s.readerDB().Query(query, args...)
 	if err != nil {
@@ -501,7 +542,8 @@ func (s *Store) GetActiveLearningsBySessionIDs(sessionIDs []string) ([]models.Le
 		COALESCE(hit_count, 0), COALESCE(emotional_intensity, 0.0), last_hit_at, COALESCE(session_flavor, ''), valid_until, supersedes, COALESCE(importance, 3), supersede_status, COALESCE(noise_count, 0), COALESCE(fail_count, 0),
 		COALESCE(match_count, 0), COALESCE(inject_count, 0), COALESCE(use_count, 0), COALESCE(save_count, 0), COALESCE(stability, 30.0),
 		COALESCE(context, ''), COALESCE(domain, 'code'), COALESCE(trigger_rule, ''), COALESCE(embedding_text, ''),
-		COALESCE(source_file, ''), COALESCE(source_hash, ''), COALESCE(doc_chunk_ref, 0), COALESCE(task_type, ''), COALESCE(turns_at_creation, 0), COALESCE(origin_tool, ''), COALESCE(source_msg_from, -1), COALESCE(source_msg_to, -1)
+		COALESCE(source_file, ''), COALESCE(source_hash, ''), COALESCE(doc_chunk_ref, 0), COALESCE(task_type, ''), COALESCE(turns_at_creation, 0), COALESCE(origin_tool, ''), COALESCE(source_msg_from, -1), COALESCE(source_msg_to, -1),
+		COALESCE(canonical_project, '')
 		FROM learnings
 		WHERE superseded_by IS NULL
 		AND (expires_at IS NULL OR expires_at > ?)
@@ -519,7 +561,7 @@ func (s *Store) GetActiveLearningsBySessionIDs(sessionIDs []string) ([]models.Le
 
 // GetLearningsForClaudeMd returns active learnings for a project with per-category caps.
 func (s *Store) GetLearningsForClaudeMd(project string, maxPerCategory map[string]int) ([]models.Learning, error) {
-	all, err := s.GetActiveLearnings("", project, "", "")
+	all, err := s.GetActiveLearnings("", project, "", "", 0)
 	if err != nil {
 		return nil, err
 	}
@@ -602,6 +644,62 @@ func (s *Store) GetLearning(id int64) (*models.Learning, error) {
 	return l, nil
 }
 
+// GetLearningChain returns the full version history of a learning by traversing
+// the supersedes chain in both directions. The result is ordered oldest-first.
+func (s *Store) GetLearningChain(id int64) ([]models.Learning, error) {
+	// Walk backward from id to root, collecting all ancestors.
+	// supersedes points to older version.
+	backIDs := []int64{id}
+	cur := id
+	for {
+		var supersedes *int64
+		err := s.readerDB().QueryRow(`SELECT supersedes FROM learnings WHERE id=?`, cur).Scan(&supersedes)
+		if err != nil {
+			return nil, fmt.Errorf("get learning chain: traverse backward from %d: %w", id, err)
+		}
+		if supersedes == nil {
+			break
+		}
+		backIDs = append(backIDs, *supersedes)
+		cur = *supersedes
+	}
+	// Walker forward from id to newest, collecting all descendants.
+	// superseded_by points to newer version.
+	forwardIDs := []int64{}
+	cur = id
+	for {
+		var supersededBy *int64
+		err := s.readerDB().QueryRow(`SELECT superseded_by FROM learnings WHERE id=?`, cur).Scan(&supersededBy)
+		if err != nil {
+			return nil, fmt.Errorf("get learning chain: traverse forward from %d: %w", id, err)
+		}
+		if supersededBy == nil {
+			break
+		}
+		forwardIDs = append(forwardIDs, *supersededBy)
+		cur = *supersededBy
+	}
+
+	var results []models.Learning
+	// backIDs: [id, parent, ..., root] — reverse for oldest-first
+	for i := len(backIDs) - 1; i >= 0; i-- {
+		l, err := s.GetLearning(backIDs[i])
+		if err != nil {
+			return nil, fmt.Errorf("get learning chain: get %d: %w", backIDs[i], err)
+		}
+		results = append(results, *l)
+	}
+	// forwardIDs: [child, grandchild, ..., leaf] — already oldest-first after root
+	for _, fid := range forwardIDs {
+		l, err := s.GetLearning(fid)
+		if err != nil {
+			return nil, fmt.Errorf("get learning chain: get %d: %w", fid, err)
+		}
+		results = append(results, *l)
+	}
+	return results, nil
+}
+
 const (
 	SupersededByResolved  int64 = -2
 	SupersededByReextract int64 = -3
@@ -626,6 +724,7 @@ func (s *Store) ResolveLearning(id int64, reason string) error {
 // GetTriggeredLearnings returns active learnings with non-empty trigger_rule
 // that haven't been triggered recently (12h cooldown via last_hit_at).
 func (s *Store) GetTriggeredLearnings(project string) ([]models.Learning, error) {
+	canonical := s.resolveCanonicalProject(project)
 	now := time.Now()
 	cooldown := now.Add(-12 * time.Hour)
 	query := `SELECT id, session_id, category, content, project, confidence,
@@ -633,15 +732,16 @@ func (s *Store) GetTriggeredLearnings(project string) ([]models.Learning, error)
 		COALESCE(hit_count, 0), COALESCE(emotional_intensity, 0.0), last_hit_at, COALESCE(session_flavor, ''), valid_until, supersedes, COALESCE(importance, 3), supersede_status, COALESCE(noise_count, 0), COALESCE(fail_count, 0),
 		COALESCE(match_count, 0), COALESCE(inject_count, 0), COALESCE(use_count, 0), COALESCE(save_count, 0), COALESCE(stability, 30.0),
 		COALESCE(context, ''), COALESCE(domain, 'code'), COALESCE(trigger_rule, ''), COALESCE(embedding_text, ''),
-		COALESCE(source_file, ''), COALESCE(source_hash, ''), COALESCE(doc_chunk_ref, 0), COALESCE(task_type, ''), COALESCE(turns_at_creation, 0), COALESCE(origin_tool, ''), COALESCE(source_msg_from, -1), COALESCE(source_msg_to, -1)
+		COALESCE(source_file, ''), COALESCE(source_hash, ''), COALESCE(doc_chunk_ref, 0), COALESCE(task_type, ''), COALESCE(turns_at_creation, 0), COALESCE(origin_tool, ''), COALESCE(source_msg_from, -1), COALESCE(source_msg_to, -1),
+		COALESCE(canonical_project, '')
 		FROM learnings
 		WHERE superseded_by IS NULL
 		AND trigger_rule != '' AND trigger_rule IS NOT NULL
 		AND (expires_at IS NULL OR expires_at > ?)
 		AND (last_hit_at IS NULL OR last_hit_at < ?)
-		AND (project = ? OR project IS NULL OR project = '')
+		AND (canonical_project = ? OR canonical_project = '')
 		LIMIT 10`
-	rows, err := s.readerDB().Query(query, fmtTime(now), fmtTime(cooldown), project)
+	rows, err := s.readerDB().Query(query, fmtTime(now), fmtTime(cooldown), canonical)
 	if err != nil {
 		return nil, fmt.Errorf("get triggered learnings: %w", err)
 	}
@@ -832,10 +932,11 @@ func (s *Store) GetRecentNarratives(project string, limit int) ([]models.Learnin
 		COALESCE(l.hit_count, 0), COALESCE(l.emotional_intensity, 0.0), l.last_hit_at, COALESCE(l.session_flavor, ''), l.valid_until, l.supersedes, COALESCE(l.importance, 3), l.supersede_status, COALESCE(l.noise_count, 0), COALESCE(l.fail_count, 0),
 		COALESCE(l.match_count, 0), COALESCE(l.inject_count, 0), COALESCE(l.use_count, 0), COALESCE(l.save_count, 0), COALESCE(l.stability, 30.0),
 		COALESCE(l.context, ''), COALESCE(l.domain, 'code'), COALESCE(l.trigger_rule, ''), COALESCE(l.embedding_text, ''),
-		COALESCE(l.source_file, ''), COALESCE(l.source_hash, ''), COALESCE(l.doc_chunk_ref, 0), COALESCE(l.task_type, ''), COALESCE(l.turns_at_creation, 0), COALESCE(l.origin_tool, ''), COALESCE(l.source_msg_from, -1), COALESCE(l.source_msg_to, -1)
+		COALESCE(l.source_file, ''), COALESCE(l.source_hash, ''), COALESCE(l.doc_chunk_ref, 0), COALESCE(l.task_type, ''), COALESCE(l.turns_at_creation, 0), COALESCE(l.origin_tool, ''), COALESCE(l.source_msg_from, -1), COALESCE(l.source_msg_to, -1),
+		COALESCE(l.canonical_project, '')
 		FROM learnings l
 		LEFT JOIN sessions s ON l.session_id = s.id
-		WHERE l.category = 'narrative' AND l.project = ? AND l.superseded_by IS NULL
+		WHERE l.category = 'narrative' AND l.canonical_project = ? AND l.superseded_by IS NULL
 		AND (s.message_count IS NULL OR s.message_count = 0 OR s.message_count >= 10)
 		ORDER BY l.created_at DESC LIMIT ?`, project, limit)
 	if err != nil {
@@ -860,7 +961,8 @@ func scanLearnings(rows interface {
 			&supersededBy, &supersedeReason, &createdAt, &expiresAt, &l.ModelUsed, &source, &l.HitCount, &l.EmotionalIntensity, &lastHitAt, &l.SessionFlavor, &validUntil, &supersedes, &l.Importance, &supersedeStatus, &l.NoiseCount, &l.FailCount,
 			&l.MatchCount, &l.InjectCount, &l.UseCount, &l.SaveCount, &l.Stability,
 			&l.Context, &l.Domain, &l.TriggerRule, &l.EmbeddingText,
-			&l.SourceFile, &l.SourceHash, &l.DocChunkRef, &l.TaskType, &l.TurnsAtCreation, &l.OriginTool, &l.SourceMsgFrom, &l.SourceMsgTo); err != nil {
+			&l.SourceFile, &l.SourceHash, &l.DocChunkRef, &l.TaskType, &l.TurnsAtCreation, &l.OriginTool, &l.SourceMsgFrom, &l.SourceMsgTo,
+			&l.CanonicalProject); err != nil {
 			return nil, err
 		}
 		l.CreatedAt = parseTime(createdAt)
@@ -1048,11 +1150,12 @@ func (s *Store) InsertContradiction(learningIDs string, description, project, th
 // GetLearningCounts returns category → active learning count for a project.
 // Excludes: unfinished (has own section), preference/relationship (in Persona section), narrative (not knowledge).
 func (s *Store) GetLearningCounts(project string) (map[string]int, error) {
+	canonical := s.resolveCanonicalProject(project)
 	projectFilter := "1=1"
 	args := []any{fmtTime(time.Now())}
 	if project != "" {
-		projectFilter = "(project = ? OR project IS NULL OR project = '')"
-		args = append(args, project)
+		projectFilter = "(canonical_project = ? OR canonical_project = '')"
+		args = append(args, canonical)
 	}
 	query := `SELECT category, COUNT(*) FROM learnings
 		WHERE superseded_by IS NULL
@@ -1241,4 +1344,13 @@ func (s *Store) IsCoveredByFork(sessionID string, fromIdx, toIdx int) bool {
 	var count int
 	s.db.QueryRow(`SELECT COUNT(*) FROM fork_coverage WHERE session_id = ? AND from_msg_idx <= ? AND to_msg_idx >= ?`, sessionID, fromIdx, toIdx).Scan(&count)
 	return count > 0
+}
+
+// sessionSourceAgent returns the source_agent for a session, or "claude" if unknown.
+func (s *Store) sessionSourceAgent(sessionID string) string {
+	var sa string
+	if err := s.db.QueryRow(`SELECT source_agent FROM sessions WHERE id = ?`, sessionID).Scan(&sa); err != nil || sa == "" {
+		return models.SourceAgentClaude
+	}
+	return models.NormalizeSourceAgent(sa)
 }

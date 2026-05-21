@@ -105,11 +105,18 @@ func runMigrateCmd() {
 		fmt.Printf("  Skills: %d updated\n", n)
 	}
 
-	// 6. Bundled capabilities
+	// 5b. Bundled capabilities
 	if n, err := setup.InstallBundledCaps(home); err != nil {
 		fmt.Fprintf(os.Stderr, "  Caps warning: %v\n", err)
 	} else {
 		fmt.Printf("  Caps: %d updated\n", n)
+	}
+
+	// 5c. Opencode plugin (rule_guard, code_nav, auto_resolve)
+	if n, err := setup.InstallOpencodePlugin(home); err != nil {
+		fmt.Fprintf(os.Stderr, "  Plugin warning: %v\n", err)
+	} else {
+		fmt.Printf("  Plugin: %d files updated\n", n)
 	}
 
 	fmt.Printf("Migration complete (version: %s)\n", buildinfo.Version)

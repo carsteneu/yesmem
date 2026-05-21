@@ -5,7 +5,7 @@ description: Use when orchestrating multi-agent work, spawning parallel agents, 
 
 # Agent Orchestration
 
-Spawn, manage, and communicate with parallel Claude Code agents.
+Spawn, manage, and communicate with parallel agents via Claude Code or opencode.
 
 ## Workflow
 1. `spawn_agent(project, section)` — create agent for a task section
@@ -19,11 +19,23 @@ Spawn, manage, and communicate with parallel Claude Code agents.
 |-----------|---------|---------|
 | `project` | Project name | required |
 | `section` | Task section name | required |
-| `model` | sonnet, opus, haiku | inherited |
+| `model` | Model override (sonnet, opus, haiku, deepseek-chat, deepseek-v4-pro) | inherited |
 | `max_turns` | Turn limit (0=unlimited) | 0 |
 | `token_budget` | Max tokens (0=config default) | 0 |
 | `caller_session` | Parent session for callbacks | optional |
-| `backend` | "claude" or "codex" | "claude" |
+| `backend` | "claude", "codex", or "opencode" | "claude" |
+
+**Backend choice:**
+
+| Backend | Binary | Models | Notes |
+|---------|--------|--------|-------|
+| `claude` | `claude` | sonnet, opus, haiku | Anthropic only. Proxy-integrated prompt cache. Full MCP access. |
+| `codex` | `codex` | deepseek-chat, deepseek-v4-pro, GPT models | OpenAI-compatible endpoint. Uses opencode.json provider config. |
+| `opencode` | `opencode` | deepseek-chat, deepseek-v4-pro, GPT models | Same as codex but uses `opencode` binary name. |
+
+**Gotchas:**
+- `backend: "claude"` + `model: "deepseek-v4-pro"` → **silent failure** (0 turns, no output). The claude binary has no DeepSeek endpoint. Always pair DeepSeek models with `backend: "codex"` or `backend: "opencode"`.
+- Resume is only supported for `backend: "claude"`.
 
 ## Communication
 
@@ -35,6 +47,8 @@ Spawn, manage, and communicate with parallel Claude Code agents.
 | Check agent status | `get_agent(to)` |
 | Resume stopped agent | `resume_agent(to)` |
 | Stop all agents | `stop_all_agents(project)` |
+
+**CRITICAL: relay_agent / send_to content MUST end with `\n`** — without trailing newline the prompt stays in the tmux input line and is never submitted. The agent appears unresponsive despite receiving multiple pushes. Always: `relay_agent(to, "instruction text\n")`.
 
 ## Tips
 - `to` accepts agent ID or section name

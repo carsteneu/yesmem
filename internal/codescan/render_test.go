@@ -675,11 +675,89 @@ func TestRenderLarge_IncludesWikiLink(t *testing.T) {
 	for _, expect := range []string{
 		"Full code map:",
 		"~/.claude/yesmem/wiki/yesmem/",
-		"Browse `packages.md`",
+		"BEFORE",
+		"check its wiki page",
 		"search_code_index",
+		"`/tmp/yesmem`",
 	} {
 		if !strings.Contains(out, expect) {
 			t.Errorf("missing %q in renderLarge output:\n%s", expect, out)
+		}
+	}
+}
+
+func TestRenderMedium_IncludesWikiLink(t *testing.T) {
+	result := &ScanResult{
+		Tier:    TierMedium,
+		RootDir: "/tmp/yesmem",
+		Stats:   ProjectStats{FileCount: 150},
+		Packages: []PackageInfo{
+			{Name: "internal/proxy", FileCount: 60, Description: "HTTP proxy",
+				Files: make([]FileInfo, 60)},
+			{Name: "internal/daemon", FileCount: 40, Description: "Daemon",
+				Files: make([]FileInfo, 40)},
+		},
+	}
+	out := RenderCodeMap(result, nil)
+	for _, expect := range []string{
+		"Full code map:",
+		"~/.claude/yesmem/wiki/yesmem/",
+		"BEFORE",
+		"check its wiki page",
+	} {
+		if !strings.Contains(out, expect) {
+			t.Errorf("missing %q in renderMedium output:\n%s", expect, out)
+		}
+	}
+}
+
+func TestRenderSmall_IncludesWikiLink(t *testing.T) {
+	result := &ScanResult{
+		Tier:    TierSmall,
+		RootDir: "/tmp/yessmall",
+		Stats:   ProjectStats{FileCount: 30},
+		Packages: []PackageInfo{
+			{Name: "internal/app", FileCount: 15, Description: "App",
+				Files: make([]FileInfo, 15)},
+			{Name: "internal/util", FileCount: 10, Description: "Utils",
+				Files: make([]FileInfo, 10)},
+		},
+	}
+	out := RenderCodeMap(result, nil)
+	for _, expect := range []string{
+		"Full code map:",
+		"~/.claude/yesmem/wiki/yessmall/",
+		"BEFORE",
+	} {
+		if !strings.Contains(out, expect) {
+			t.Errorf("missing %q in renderSmall output:\n%s", expect, out)
+		}
+	}
+}
+
+func TestRenderTiny_IncludesWikiLink(t *testing.T) {
+	result := &ScanResult{
+		Tier:    TierTiny,
+		RootDir: "/tmp/yestiny",
+		Stats:   ProjectStats{FileCount: 3},
+		Packages: []PackageInfo{
+			{Name: "yestiny", FileCount: 1, Description: "Tiny project",
+				Files: []FileInfo{
+					{Path: "main.go", Language: "go", LOC: 50, Content: "package main\nfunc main() {}"},
+				}},
+		},
+		Files: []FileInfo{
+			{Path: "main.go", Language: "go", LOC: 50, Content: "package main\nfunc main() {}"},
+		},
+	}
+	out := RenderCodeMap(result, nil)
+	for _, expect := range []string{
+		"Full code map:",
+		"~/.claude/yesmem/wiki/yestiny/",
+		"BEFORE",
+	} {
+		if !strings.Contains(out, expect) {
+			t.Errorf("missing %q in renderTiny output:\n%s", expect, out)
 		}
 	}
 }

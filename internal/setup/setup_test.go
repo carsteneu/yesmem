@@ -1,6 +1,8 @@
 package setup
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -44,12 +46,14 @@ func TestGenerateConfigOpenAICompatibleProvider(t *testing.T) {
 func TestGenerateConfigContainsCommentedFields(t *testing.T) {
 	cfg := generateConfig("sonnet", true, "sk-test", "api", "ghostty")
 	checks := []string{
+		"#   opencode_db:",
 		"# openai_target:",
 		"# max_budget_per_call_usd:",
 		"# remind_open_work:",
 		"# max_runtime:",
 		"# max_turns:",
 		"# max_depth:",
+		"# viewer_terminal:",
 		"# token_budget:",
 	}
 	for _, check := range checks {
@@ -73,3 +77,66 @@ func TestGenerateConfigCLIProvider(t *testing.T) {
 		t.Fatalf("CLI config should not contain openai_api_key: %s", cfg)
 	}
 }
+
+func TestGenerateConfigOpencodeProvider(t *testing.T) {
+	cfg := generateConfig("deepseek-v4-pro", true, "", "opencode", "ghostty")
+	if !strings.Contains(cfg, "provider: opencode") {
+		t.Fatalf("config missing opencode provider: %s", cfg)
+	}
+	if !strings.Contains(cfg, "deepseek: \"https://api.deepseek.com\"") {
+		t.Fatalf("config missing provider_targets.deepseek: %s", cfg)
+	}
+	if !strings.Contains(cfg, "auto_configure_providers: true") {
+		t.Fatalf("config missing auto_configure_providers: %s", cfg)
+	}
+	// Opencode has no API key field
+	if strings.Contains(cfg, "openai_api_key:") {
+		t.Fatalf("opencode config should not contain openai_api_key: %s", cfg)
+	}
+}
+
+func TestMergeOpencodeJSON_AddsPlugin(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, ".config", "opencode")
+	os.MkdirAll(cfgDir, 0755)
+	cfgPath := filepath.Join(cfgDir, "opencode.json")
+	os.WriteFile(cfgPath, []byte(`{"$schema": "https://opencode.ai/config.json"}`), 0644)
+
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", dir)
+	defer os.Setenv("HOME", origHome)
+
+	err := mergeOpencodeJSON(dir, "/test/plugin/index.ts")
+	if err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+
+	data, _ := os.ReadFile(cfgPath)
+	if !strings.Contains(string(data), "/test/plugin/index.ts") {
+		t.Errorf("plugin entry missing: %s", string(data))
+	}
+}
+
+func TestMergeOpencodeJSON_Idempotent(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, ".config", "opencode")
+	os.MkdirAll(cfgDir, 0755)
+	cfgPath := filepath.Join(cfgDir, "opencode.json")
+	os.WriteFile(cfgPath, []byte(`{"$schema":"https://opencode.ai/config.json","plugin":["/test/plugin/index.ts"]}`), 0644)
+
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", dir)
+	defer os.Setenv("HOME", origHome)
+
+	err := mergeOpencodeJSON(dir, "/test/plugin/index.ts")
+	if err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+
+	data, _ := os.ReadFile(cfgPath)
+	count := strings.Count(string(data), "/test/plugin/index.ts")
+	if count != 1 {
+		t.Errorf("expected 1 plugin entry, got %d: %s", count, string(data))
+	}
+}
+

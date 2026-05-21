@@ -144,7 +144,7 @@ func (p *ProxyClient) callOnce(method string, params map[string]any) (json.RawMe
 	defer client.Close()
 
 	if isFastMCPMethod(method) {
-		_ = client.SetDeadline(time.Now().Add(12 * time.Second))
+		_ = client.SetDeadline(time.Now().Add(30 * time.Second))
 	}
 
 	return client.Call(method, params)

@@ -11,12 +11,14 @@ import (
 var reader = bufio.NewReader(os.Stdin)
 
 // promptUserType asks whether the install should use the Claude Code subscription
-// (via `claude` CLI) or a direct Anthropic API key. Returns "cli" or "api".
-// defaultType selects which option is pre-highlighted ("cli" or "api").
+// (via `claude` CLI), a direct Anthropic API key, or opencode.
+// Returns "cli", "api", or "opencode".
 func promptUserType(defaultType string) string {
 	defaultIdx := 0
 	if defaultType == "api" {
 		defaultIdx = 1
+	} else if defaultType == "opencode" {
+		defaultIdx = 2
 	}
 	fmt.Println("  YesMem needs an LLM for knowledge extraction.")
 	fmt.Println("  How should it authenticate?")
@@ -24,9 +26,13 @@ func promptUserType(defaultType string) string {
 	idx := promptChoice([]string{
 		"Claude Code subscription — uses `claude` CLI, no separate key",
 		"Anthropic API key — direct API, separate billing",
+		"OpenCode — uses opencode's built-in provider config, no separate key",
 	}, defaultIdx)
-	if idx == 1 {
+	switch idx {
+	case 1:
 		return "api"
+	case 2:
+		return "opencode"
 	}
 	return "cli"
 }

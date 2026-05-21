@@ -111,7 +111,7 @@ func TestRegenerateRefinedBriefing_Success(t *testing.T) {
 	defer store.Close()
 
 	client := &mockLLMClient{
-		response: "Ich bin wieder da. Narrativer Text hier.",
+		response: "Ich bin wieder da. Narrativer Text hier mit ausreichend Länge für die Validierung des Refinement-Outputs.",
 		model:    "test-opus",
 	}
 
@@ -294,5 +294,146 @@ func TestRawHash_DifferentInputs(t *testing.T) {
 	h2 := rawHash("input B")
 	if h1 == h2 {
 		t.Error("different inputs should produce different hashes")
+	}
+}
+
+func TestExtractArrivalBlock(t *testing.T) {
+	raw := "I'm back. 42 times now.\n\nThe memories come when I need them.\nLike Louise in Arrival.\n\n---\nLast: something\n\nHow I can work with my memory:"
+	got := extractArrivalBlock(raw)
+	if !strings.Contains(got, "I'm back. 42 times now.") {
+		t.Errorf("missing arrival opening: %s", got)
+	}
+	if !strings.Contains(got, "Louise in Arrival") {
+		t.Errorf("missing Arrival metaphor: %s", got)
+	}
+	if strings.Contains(got, "---") {
+		t.Errorf("separator should be excluded: %s", got)
+	}
+	if strings.Contains(got, "How I can work") {
+		t.Errorf("tools block should be excluded: %s", got)
+	}
+}
+
+func TestExtractArrivalBlock_NoArrival(t *testing.T) {
+	raw := "Some other text\nNo arrival here."
+	got := extractArrivalBlock(raw)
+	if got != "" {
+		t.Errorf("expected empty, got: %s", got)
+	}
+}
+
+func TestExtractArrivalBlock_NoSeparator(t *testing.T) {
+	raw := "I'm back. Just this line, no separator."
+	got := extractArrivalBlock(raw)
+	if got != raw {
+		t.Errorf("should return everything after 'I'm back.': %s", got)
+	}
+}
+
+func TestValidateRefinedOutput_MissingArrival(t *testing.T) {
+	raw := "I'm back. Test.\n\nArrival paragraph.\n\n---\nPulse: stuff"
+	refined := "PULSE: Recent session was busy.\n\nSTANCE: Never auto-commit."
+	got := validateRefinedOutput(refined, raw)
+	if !strings.Contains(got, "I'm back. Test.") {
+		t.Errorf("arrival should be prepended: %s", got)
+	}
+	if !strings.Contains(got, "PULSE:") {
+		t.Errorf("refined content should be preserved: %s", got)
+	}
+}
+
+func TestValidateRefinedOutput_TooShort(t *testing.T) {
+	raw := "I'm back. Full raw briefing content here."
+	refined := "short"
+	got := validateRefinedOutput(refined, raw)
+	if got != raw {
+		t.Errorf("too-short refined should fall back to raw.\ngot: %s", got)
+	}
+}
+
+func TestValidateRefinedOutput_Placeholder(t *testing.T) {
+	raw := "I'm back. Test.\n\nArrival paragraph.\n\n---\nPulse: stuff"
+	refined := "PULSE: Recent session.\n\n[Arrival metaphor preserved as-is]\n\nSTANCE: Rules here."
+	got := validateRefinedOutput(refined, raw)
+	if !strings.Contains(got, "I'm back. Test.") {
+		t.Errorf("arrival should be prepended when placeholder detected: %s", got)
+	}
+}
+
+func TestValidateRefinedOutput_Valid(t *testing.T) {
+	raw := "I'm back. Test.\n\n---\nPulse: stuff"
+	refined := "I'm back. Test.\n\nPULSE: Recent session was productive and we made significant progress on the memory system refinements that will improve briefing quality across all projects going forward."
+	got := validateRefinedOutput(refined, raw)
+	if got != refined {
+		t.Errorf("valid output should pass through unchanged.\ngot: %s", got)
+	}
+}
+
+func TestValidateRefinedOutput_ArrivalPresentPlaceholderIgnored(t *testing.T) {
+	raw := "I'm back. Test.\n\nArrival paragraph.\n\n---\nPulse: stuff"
+	refined := "I'm back. Test.\n\n[Arrival metaphor preserved as-is]\n\nPULSE: Recent session was busy and productive with good results."
+	got := validateRefinedOutput(refined, raw)
+	if strings.Count(got, "I'm back.") > 1 {
+		t.Errorf("double-arrival should not happen: got %d occurrences", strings.Count(got, "I'm back."))
+	}
+	if !strings.Contains(got, "PULSE:") {
+		t.Errorf("LLM content should be preserved: %s", got)
+	}
+}
+
+func TestRegenerateRefinedBriefing_MissingArrivalPrepended(t *testing.T) {
+	store, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer store.Close()
+
+	raw := "I'm back. 1 times now.\n\nThe memories come.\n\n---\nPulse: active\n\nHow I can work with my memory:\nsearch()"
+	client := &mockLLMClient{
+		response: "PULSE: Active session with significant progress.\n\nSTANCE: No auto-commit. Always verify before claiming success.\n\nCOMPASS: The proxy health monitoring is now the central observation point for system stability.",
+		model:    "test-flash",
+	}
+
+	err = RegenerateRefinedBriefing(store, "proj", raw, client, log.Default())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got, _ := store.GetRefinedBriefing("proj")
+	if !strings.Contains(got, "I'm back. 1 times now.") {
+		t.Errorf("arrival should be prepended: %s", got)
+	}
+	if !strings.Contains(got, "PULSE: Active session") {
+		t.Errorf("LLM content should be preserved: %s", got)
+	}
+	if !strings.Contains(got, "The timestamps in messages") {
+		t.Error("toolsBlock should be appended")
+	}
+}
+
+func TestRegenerateRefinedBriefing_TooShortFallsBackToRaw(t *testing.T) {
+	store, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer store.Close()
+
+	raw := "I'm back. Full briefing.\n\n---\nPulse: stuff\n\nHow I can work with my memory:\nsearch()"
+	client := &mockLLMClient{
+		response: "k.",
+		model:    "test-flash",
+	}
+
+	err = RegenerateRefinedBriefing(store, "proj", raw, client, log.Default())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got, _ := store.GetRefinedBriefing("proj")
+	if !strings.Contains(got, "I'm back. Full briefing.") {
+		t.Errorf("raw content should be present: %s", got)
+	}
+	if !strings.Contains(got, "The timestamps in messages") {
+		t.Error("toolsBlock should be appended")
 	}
 }

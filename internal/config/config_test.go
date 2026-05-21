@@ -3,7 +3,10 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/carsteneu/yesmem/internal/models"
 )
 
 func TestDefault(t *testing.T) {
@@ -566,5 +569,146 @@ proxy:
 	}
 	if cfg.Proxy.PromptClarifyFirst {
 		t.Error("PromptClarifyFirst should be overridable to false via YAML")
+	}
+}
+
+func TestEffectivePromptFlags_LegacyFlatMapping(t *testing.T) {
+	cfg := Default()
+	// Legacy flat fields map to claude profile
+	cfg.Proxy.PromptToolPrefs = true
+	cfg.Proxy.PromptOutputDiscipline = true
+	cfg.Proxy.PromptBeweislast = true
+	cfg.Proxy.PromptScopeDiscipline = true
+	cfg.Proxy.PromptDelegationContract = true
+
+	flags := cfg.Proxy.EffectivePromptFlags(models.ProfileClaude)
+	if !flags.ToolPrefs {
+		t.Error("claude: ToolPrefs should be true from legacy flat field")
+	}
+	if !flags.OutputDiscipline {
+		t.Error("claude: OutputDiscipline should be true from legacy flat field")
+	}
+	if !flags.Beweislast {
+		t.Error("claude: Beweislast should be true from legacy flat field")
+	}
+	if !flags.ScopeDiscipline {
+		t.Error("claude: ScopeDiscipline should be true from legacy flat field")
+	}
+	if !flags.DelegationContract {
+		t.Error("claude: DelegationContract should be true from legacy flat field")
+	}
+}
+
+func TestEffectivePromptFlags_ClaudeProfileTakesPrecedence(t *testing.T) {
+	cfg := Default()
+	// Legacy flat says false, claude_prompt says true
+	cfg.Proxy.PromptToolPrefs = false
+	cfg.Proxy.ClaudePrompt = &PromptFlags{ToolPrefs: true}
+
+	flags := cfg.Proxy.EffectivePromptFlags(models.ProfileClaude)
+	if !flags.ToolPrefs {
+		t.Error("claude: ToolPrefs should be true from claude_prompt override")
+	}
+}
+
+func TestEffectivePromptFlags_CodexProfileIgnoresLegacy(t *testing.T) {
+	cfg := Default()
+	// Override Default's SharedPrompt to nil for this test — we want to verify
+	// that legacy flat fields (claude-only) are NOT inherited by codex.
+	cfg.Proxy.SharedPrompt = nil
+	cfg.Proxy.PromptToolPrefs = true
+	cfg.Proxy.PromptBeweislast = true
+
+	flags := cfg.Proxy.EffectivePromptFlags(models.ProfileCodex)
+	if flags.ToolPrefs {
+		t.Error("codex: ToolPrefs should be false (legacy claude flags not inherited)")
+	}
+	if flags.Beweislast {
+		t.Error("codex: Beweislast should be false (legacy claude flags not inherited)")
+	}
+}
+
+func TestEffectivePromptFlags_SharedPromptMerges(t *testing.T) {
+	cfg := Default()
+	cfg.Proxy.SharedPrompt = &PromptFlags{ToolPrefs: true, OutputDiscipline: true}
+	cfg.Proxy.CodexPrompt = &PromptFlags{OutputDiscipline: true} // codex overrides
+
+	flags := cfg.Proxy.EffectivePromptFlags(models.ProfileCodex)
+	if !flags.ToolPrefs {
+		t.Error("codex: ToolPrefs should be true from shared_prompt")
+	}
+	if !flags.OutputDiscipline {
+		t.Error("codex: OutputDiscipline should be true from codex_prompt overlay")
+	}
+	if flags.Beweislast {
+		t.Error("codex: Beweislast should be false (not in shared or codex)")
+	}
+}
+
+func TestEffectivePromptFlags_OpencodeProfileBaseline(t *testing.T) {
+	cfg := Default()
+	// Override Default's SharedPrompt to nil for baseline test.
+	cfg.Proxy.SharedPrompt = nil
+	flags := cfg.Proxy.EffectivePromptFlags(models.ProfileOpencode)
+	if flags.ToolPrefs || flags.Beweislast || flags.ScopeDiscipline {
+		t.Error("opencode: all flags should be false when nothing configured")
+	}
+
+	// With shared_prompt, opencode inherits.
+	cfg.Proxy.SharedPrompt = &PromptFlags{OutputDiscipline: true}
+	flags = cfg.Proxy.EffectivePromptFlags(models.ProfileOpencode)
+	if !flags.OutputDiscipline {
+		t.Error("opencode: OutputDiscipline should be true from shared_prompt")
+	}
+
+	// With Default's SharedPrompt (Beweislast, ScopeDiscipline etc.), opencode inherits them.
+	cfg2 := Default()
+	flags2 := cfg2.Proxy.EffectivePromptFlags(models.ProfileOpencode)
+	if !flags2.Beweislast {
+		t.Error("opencode: Beweislast should be true from Default's SharedPrompt")
+	}
+	if !flags2.OutputDiscipline {
+		t.Error("opencode: OutputDiscipline should be true from Default's SharedPrompt")
+	}
+}
+
+func TestEffectivePromptFlags_GenericFallback(t *testing.T) {
+	cfg := Default()
+	cfg.Proxy.SharedPrompt = &PromptFlags{CodingDiscipline: true}
+
+	flags := cfg.Proxy.EffectivePromptFlags(models.ProfileGeneric)
+	if !flags.CodingDiscipline {
+		t.Error("generic: CodingDiscipline should be true from shared_prompt")
+	}
+	// Generic profile has no legacy or profile-specific layer
+	if flags.Beweislast {
+		t.Error("generic: Beweislast should be false")
+	}
+}
+
+func TestDefaultPathsOpencodeDB(t *testing.T) {
+	cfg := Default()
+	if cfg.Paths.OpencodeDB == "" {
+		t.Fatal("Paths.OpencodeDB should not be empty")
+	}
+	if !strings.HasSuffix(cfg.Paths.OpencodeDB, "opencode.db") {
+		t.Errorf("Paths.OpencodeDB should end with opencode.db, got %q", cfg.Paths.OpencodeDB)
+	}
+}
+
+func TestLoadPathsOpencodeDBFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "config.yaml")
+	os.WriteFile(cfgFile, []byte(`
+paths:
+  opencode_db: /custom/path/opencode.db
+`), 0644)
+
+	cfg, err := Load(cfgFile)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Paths.OpencodeDB != "/custom/path/opencode.db" {
+		t.Errorf("Paths.OpencodeDB = %q, want /custom/path/opencode.db", cfg.Paths.OpencodeDB)
 	}
 }

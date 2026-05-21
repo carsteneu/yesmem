@@ -276,7 +276,7 @@ func runRuleBasedEvolution(store *storage.Store, onSupersede func(int64)) (int, 
 		if cat == "narrative" || cat == "cap" {
 			continue
 		}
-		learnings, err := store.GetActiveLearnings(cat, "", "", "")
+		learnings, err := store.GetActiveLearnings(cat, "", "", "", 0)
 		if err != nil || len(learnings) < 2 {
 			continue
 		}

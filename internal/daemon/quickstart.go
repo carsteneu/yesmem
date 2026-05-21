@@ -46,7 +46,7 @@ func RunQuickstart(store *storage.Store, cfg *config.Config, client extraction.L
 
 	// Check which sessions already have learnings
 	extracted := map[string]bool{}
-	learnings, _ := store.GetActiveLearnings("", "", "", "")
+	learnings, _ := store.GetActiveLearnings("", "", "", "", 0)
 	for _, l := range learnings {
 		if l.SessionID != "" {
 			extracted[l.SessionID] = true

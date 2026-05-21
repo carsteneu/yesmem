@@ -39,7 +39,7 @@ func TestHandleForkExtractLearnings(t *testing.T) {
 	}
 
 	// Verify learnings actually exist in DB
-	all, err := s.GetActiveLearnings("gotcha", "", "", "")
+	all, err := s.GetActiveLearnings("gotcha", "", "", "", 0)
 	if err != nil {
 		t.Fatalf("get learnings: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestHandleForkExtractLearnings_PreservesTaskType(t *testing.T) {
 		t.Fatalf("unexpected error: %s", resp.Error)
 	}
 
-	all, err := s.GetActiveLearnings("unfinished", "", "", "")
+	all, err := s.GetActiveLearnings("unfinished", "", "", "", 0)
 	if err != nil {
 		t.Fatalf("get learnings: %v", err)
 	}
@@ -546,7 +546,7 @@ func TestHandleForkExtractLearnings_WritesEntityOverlapEdges(t *testing.T) {
 	})
 
 	// Find the newly created learning
-	all, _ := s.GetActiveLearnings("gotcha", "", "", "")
+	all, _ := s.GetActiveLearnings("gotcha", "", "", "", 0)
 	var newID int64
 	for _, l := range all {
 		if l.Content == "proxy.go needs cache reset after config change" {
@@ -911,7 +911,7 @@ func TestForkExtractLearnings_WithLineage(t *testing.T) {
 		t.Fatal(resp.Error)
 	}
 	// Verify the learning was saved with lineage
-	all, err := s.GetActiveLearnings("decision", "yesmem", "", "")
+	all, err := s.GetActiveLearnings("decision", "yesmem", "", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

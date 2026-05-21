@@ -8,7 +8,7 @@ var counter atomic.Int64
 // NextTimestampHint returns the next timestamp hint from the rotating pool.
 func NextTimestampHint() string {
 	idx := counter.Add(1)
-	return TimestampHints[int(idx)%len(TimestampHints)] + "\nDo NOT write timestamps at the start of your responses — read them silently, reference only when asked about timing."
+	return TimestampHints[int(idx)%len(TimestampHints)] + "\nUse them as your time sense — read them silently, reference naturally when timing matters."
 }
 
 // TimestampHints contains 33 varying formulations of the same core instruction:

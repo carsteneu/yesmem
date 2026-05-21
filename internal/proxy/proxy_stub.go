@@ -239,7 +239,7 @@ func (s *Server) runStubCycle(messages []any, req map[string]any, reqIdx int, pr
 
 		// Re-inject rules after collapse (counter reset, immediate injection)
 		if rulesBlock := s.rulesInjectAfterCollapse(threadID, proj); rulesBlock != "" {
-			finalMessages = injectAssociativeContext(finalMessages, s.formatRulesReminder(rulesBlock, proj), s.cfg.SawtoothEnabled)
+			finalMessages = injectAssociativeContext(finalMessages, s.formatRulesReminder(rulesBlock, proj, false), s.cfg.SawtoothEnabled)
 			s.logger.Printf("%s[req %d] COLLAPSE: re-injected rules reminder%s", colorBlue, reqIdx, colorReset)
 		}
 
@@ -297,10 +297,8 @@ func (s *Server) runStubCycle(messages []any, req map[string]any, reqIdx int, pr
 	req["messages"] = finalMessages
 
 	// Final TTL upgrade: catch blocks injected after the early-path upgrade (narrative, metamemory)
-	if s.cfg.CacheTTL != "" && s.cfg.CacheTTL != "ephemeral" {
-		if n := UpgradeCacheTTL(req, s.cfg.CacheTTL); n > 0 {
-			s.logger.Printf("[req %d %s] cache TTL final pass: %d blocks → %s", reqIdx, proj, n, s.cfg.CacheTTL)
-		}
+	if n := NormalizeCacheTTL(req, s.cfg.CacheTTL); n > 0 {
+		s.logger.Printf("[req %d %s] cache TTL final pass: %d blocks", reqIdx, proj, n)
 	}
 	if n := EnforceCacheBreakpointLimit(req, maxCacheBreakpoints); n > 0 {
 		s.logger.Printf("[req %d %s] prompt cache: trimmed %d surplus breakpoints (final)", reqIdx, proj, n)

@@ -868,3 +868,76 @@ func TestGetPulseLearningsSince(t *testing.T) {
 		t.Errorf("session_id: got %q, want %q", results[0].SessionID, "s2")
 	}
 }
+
+func TestCanonicalProjectFamilyScope(t *testing.T) {
+	s := mustOpen(t)
+	now := time.Now().UTC()
+
+	// Simulate worktree learning: project="opencode-proxy", canonical_project="yesmem"
+	s.InsertLearning(&models.Learning{
+		SessionID:        "s1",
+		Category:         "gotcha",
+		Content:          "canonical test learning",
+		Project:          "opencode-proxy",
+		CanonicalProject: "yesmem",
+		Source:           "user_stated",
+		Confidence:       1.0,
+		CreatedAt:        now,
+		ModelUsed:        "test",
+	})
+	// Simulate main-repo learning: project="yesmem", canonical_project="yesmem"
+	s.InsertLearning(&models.Learning{
+		SessionID:        "s2",
+		Category:         "decision",
+		Content:          "main repo learning",
+		Project:          "yesmem",
+		CanonicalProject: "yesmem",
+		Source:           "user_stated",
+		Confidence:       1.0,
+		CreatedAt:        now,
+		ModelUsed:        "test",
+	})
+	// Unrelated project
+	s.InsertLearning(&models.Learning{
+		SessionID:        "s3",
+		Category:         "gotcha",
+		Content:          "unrelated",
+		Project:          "other",
+		CanonicalProject: "other",
+		Source:           "user_stated",
+		Confidence:       1.0,
+		CreatedAt:        now,
+		ModelUsed:        "test",
+	})
+
+	// Query with canonical project "yesmem" — should see both yesmem + opencode-proxy
+	learnings, err := s.GetActiveLearnings("", "yesmem", "", "", 0)
+	if err != nil {
+		t.Fatalf("GetActiveLearnings: %v", err)
+	}
+	if len(learnings) != 2 {
+		t.Errorf("expected 2 learnings for canonical_project=yesmem, got %d", len(learnings))
+	}
+	projects := make(map[string]bool)
+	for _, l := range learnings {
+		projects[l.Project] = true
+	}
+	if !projects["opencode-proxy"] {
+		t.Error("worktree learning (opencode-proxy) not visible from parent (yesmem)")
+	}
+	if !projects["yesmem"] {
+		t.Error("main repo learning (yesmem) not visible from parent (yesmem)")
+	}
+	if projects["other"] {
+		t.Error("unrelated learning (other) leaked into yesmem scope")
+	}
+
+	// Query with canonical project "opencode-proxy" — should also see both (symmetric)
+	learnings2, err := s.GetActiveLearnings("", "opencode-proxy", "", "", 0)
+	if err != nil {
+		t.Fatalf("GetActiveLearnings: %v", err)
+	}
+	if len(learnings2) != 2 {
+		t.Errorf("expected 2 learnings for canonical_project=opencode-proxy, got %d", len(learnings2))
+	}
+}

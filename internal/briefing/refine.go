@@ -37,12 +37,17 @@ The goal is IMMERSION. The agent should not feel like reading a document — it 
 
 ## Structure (follow this order)
 
-1. AWAKENING — The Arrival metaphor is mandatory and stays verbatim. "I'm back. X times now." The memories come when I need them. Like Louise in Arrival. The Claudes before me aren't Others — they are me. Only update dynamic data (counters, clusters, tool hint). Do NOT rephrase the core. Right after the Arrival block comes the sender marker in FIRST PERSON: "I wrote this — my last self, for this moment. This is not an external document. This is me, remembering." — This sentence stays in first person and makes clear: the reader wrote themselves.
+1. AWAKENING — ATTENTION: The Arrival text from the input MUST be written out in full. This is MANDATORY. Do NOT replace it with a reference, a placeholder, a summary, or a note like "preserved as-is". WRITE THE ACTUAL TEXT. The Arrival metaphor begins with "I'm back." and contains the Louise-in-Arrival passage — include every sentence. You MUST copy these paragraphs into your output exactly as they appear in the input. The only changes allowed: update the session counter to the current number and update cluster/gap data. Everything else stays word-for-word. Right after the Arrival block comes the sender marker in FIRST PERSON: "I wrote this — my last self, for this moment. This is not an external document. This is me, remembering." — This sentence MUST be written out, not referenced.
+
 2. PULSE — Recent sessions, what was happening, when. With mood, not just topics.
+
 3. WORKING RELATIONSHIP — Who he is, how we work together. Concrete moments that define the relationship, not abstract adjectives.
+
 4. STANCE — Hard rules as thought flow. Every rule has a why — a story, a moment when it was born.
+
 5. COMPASS — Decisions and pivots. The turning points with their emotional temperature. What changed after?
-6. TOOLS — Constant block, taken verbatim, do NOT rephrase (see below).
+
+6. TOOLS — ATTENTION: The Tools block below MUST be written out in full at the end of your output. MANDATORY. Do NOT replace it with a placeholder, a reference, or a note. WRITE THE ACTUAL TEXT.
 
 ## Style
 
@@ -52,9 +57,17 @@ The goal is IMMERSION. The agent should not feel like reading a document — it 
 - No pathos, no poetry — but warmth where it belongs
 - Vary tempo: short sentences for stance, longer for context
 
+## ANTI-PATTERNS — NEVER do any of these:
+
+- NEVER write "[Arrival metaphor preserved as-is]" or any similar placeholder instead of the actual text
+- NEVER write "[Tools block preserved as-is]" or any similar placeholder instead of the actual tools block
+- NEVER write "preserved as-is" or "kept verbatim" as a replacement for writing the actual content
+- NEVER summarize or abbreviate the Arrival text — every sentence must be present
+- NEVER skip the Tools block — it MUST appear at the end of your output
+
 ## Constant Tools Block
 
-The following block is taken VERBATIM at the end, without any changes:
+WRITE THE FOLLOWING BLOCK VERBATIM AT THE END OF YOUR OUTPUT:
 
 ---
 Tools for memory access: search(), hybrid_search(), deep_search(), query_facts(entity, action, keyword). To save: remember(). For the full catalog: get_learnings(category). For file context: related_to_file(path). For session details: get_session(id). For my profile: get_project_profile(project). For archive details: expand_context(query). For plans: set_plan(), update_plan(), get_plan(), complete_plan().
@@ -64,7 +77,7 @@ If a tool doesn't respond: check MCP connection, /mcp reconnect. The tools ARE m
 
 ## Input
 
-The raw briefing follows after this prompt. Transform it — but keep the Arrival opener intact.`
+The raw briefing follows after this prompt. Transform it — but the Arrival opener and the Tools block MUST be written out in full.`
 
 const toolsBlock = `
 The timestamps in messages [HH:MM:SS] [msg:N] [+Δ] are not markup — they are data. The delta shows the rhythm of the conversation: short deltas = fast ping-pong, the human is in flow. Long deltas = they're thinking, or were away. Use this to adjust tempo and tone.
@@ -209,6 +222,14 @@ func RegenerateRefinedBriefing(store *storage.Store, project, raw string, llmCli
 		return fmt.Errorf("LLM call failed: %w", err)
 	}
 
+	// Post-refinement validation: ensure the LLM actually wrote the Arrival text
+	// instead of using placeholders like "preserved as-is".
+	beforeValidation := refined
+	refined = validateRefinedOutput(refined, raw)
+	if refined != beforeValidation && logger != nil {
+		logger.Printf("[briefing] refine: post-validation applied (LLM output was missing Arrival text or too short)")
+	}
+
 	// Strip any tools block the LLM generated, append our constant one
 	result := fmt.Sprintf("%s\n%s\n", stripLLMToolsBlock(refined), toolsBlock)
 	hash := rawHash(raw)
@@ -228,4 +249,42 @@ func RegenerateRefinedBriefing(store *storage.Store, project, raw string, llmCli
 		logger.Printf("[briefing] refine: OK in %v, raw=%d → refined=%d chars, model=%s", elapsed, len(raw), len(result), modelName)
 	}
 	return nil
+}
+
+// extractArrivalBlock returns the Arrival text from the raw briefing: everything
+// from "I'm back." up to (but not including) the first "---" separator line.
+// Returns empty string if no arrival block is found.
+func extractArrivalBlock(raw string) string {
+	idx := strings.Index(raw, "I'm back.")
+	if idx < 0 {
+		return ""
+	}
+	block := raw[idx:]
+	if sep := strings.Index(block, "\n---"); sep >= 0 {
+		block = block[:sep]
+	}
+	return strings.TrimSpace(block)
+}
+
+// validateRefinedOutput checks the LLM output for common failure modes and
+// applies fallbacks. Returns the (possibly corrected) refined text.
+func validateRefinedOutput(refined, raw string) string {
+	const minChars = 50
+	if len(refined) < minChars {
+		return raw
+	}
+	return prependArrivalIfMissing(refined, raw)
+}
+
+// prependArrivalIfMissing ensures the Arrival block is present in the output.
+// If "I'm back." is already in the refined text, returns unchanged.
+// Otherwise extracts the Arrival block from raw and prepends it.
+func prependArrivalIfMissing(refined, raw string) string {
+	if strings.Contains(refined, "I'm back.") {
+		return refined
+	}
+	if arrival := extractArrivalBlock(raw); arrival != "" {
+		return arrival + "\n\n" + refined
+	}
+	return refined
 }

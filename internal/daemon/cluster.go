@@ -62,7 +62,7 @@ func ClusterLearnings(store *storage.Store, client extraction.LLMClient, vecStor
 
 func clusterProjectLearnings(store *storage.Store, client extraction.LLMClient, vecStore *embedding.VectorStore, project string) error {
 	// Get all active learnings for project (excluding narrative, unfinished)
-	learnings, err := store.GetActiveLearnings("", project, "", "")
+	learnings, err := store.GetActiveLearnings("", project, "", "", 0)
 	if err != nil || len(learnings) < 5 {
 		return nil // Not enough to cluster
 	}

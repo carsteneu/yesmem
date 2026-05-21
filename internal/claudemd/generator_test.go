@@ -67,7 +67,7 @@ func TestGeneratorWritesFile(t *testing.T) {
 	gen := NewGenerator(mustOpenStore(t), &mockLLMClient{response: "## Bekannte Fallen\n- test gotcha"}, cfg)
 
 	dir := t.TempDir()
-	outPath, err := gen.write(dir, "testproj", "## Bekannte Fallen\n- test gotcha")
+	outPath, err := gen.writeTo(dir, ".claude", "yesmem-ops.md", "testproj", "## Bekannte Fallen\n- test gotcha", claudeHeader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestGeneratorNeedsRefreshNoState(t *testing.T) {
 func TestGeneratorWriteMissingDir(t *testing.T) {
 	cfg := &config.ClaudeMdConfig{OutputFileName: "yesmem-ops.md"}
 	gen := NewGenerator(mustOpenStore(t), nil, cfg)
-	_, err := gen.write("/nonexistent/path", "proj", "content")
+	_, err := gen.writeTo("/nonexistent/path", ".claude", "yesmem-ops.md", "proj", "content", claudeHeader)
 	if err == nil {
 		t.Error("expected error for non-existent project dir")
 	}

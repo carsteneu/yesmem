@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/carsteneu/yesmem/caps"
+	yesmemPlugins "github.com/carsteneu/yesmem/plugins"
 	"github.com/carsteneu/yesmem/skills"
 	"gopkg.in/yaml.v3"
 
@@ -82,6 +83,9 @@ func runDefaults(home, dataDir, binaryPath string) error {
 			provider = "cli"
 			apiKey, _ = findClaudeCodeKey(home)
 		}
+	case "opencode":
+		provider = "openai_compatible"
+		apiKey = ""
 	default:
 		provider = "cli"
 		apiKey, _ = findClaudeCodeKey(home)
@@ -95,7 +99,9 @@ func runDefaults(home, dataDir, binaryPath string) error {
 	fmt.Println()
 
 	binaryPath = ensurePermanentLocation(home, binaryPath)
-	return executeSetup(home, dataDir, binaryPath, chosenModel, apiKey, provider, chosenTerminal, autoExtract, autoStart)
+	primaryModel := "deepseek/deepseek-reasoner"
+	smallModel := "deepseek/deepseek-chat"
+	return executeSetup(home, dataDir, binaryPath, chosenModel, apiKey, provider, chosenTerminal, autoExtract, autoStart, primaryModel, smallModel)
 }
 
 func runInteractive(home, dataDir, binaryPath string) error {
@@ -107,41 +113,80 @@ func runInteractive(home, dataDir, binaryPath string) error {
 	projectsDir := filepath.Join(home, ".claude", "projects")
 	costs, sessions, _ := daemon.EstimateMonthlyFromDir(projectsDir)
 
-	tierLabels := []string{"haiku", "sonnet", "opus"}
-
 	var options []string
 	if len(costs) > 0 && sessions > 0 {
 		fmt.Printf("  (estimated from %d sessions/month)\n\n", sessions)
 		options = []string{
-			fmt.Sprintf("%s  — fast, ~$%.0f/month", tierLabels[0], costs[0].CostUSD),
-			fmt.Sprintf("%s — balanced, ~$%.0f/month", tierLabels[1], costs[1].CostUSD),
-			fmt.Sprintf("%s   — best quality, ~$%.0f/month", tierLabels[2], costs[2].CostUSD),
+			fmt.Sprintf("Claude Haiku  — fast, ~$%.0f/month", costs[0].CostUSD),
+			fmt.Sprintf("Claude Sonnet — balanced, ~$%.0f/month", costs[1].CostUSD),
+			fmt.Sprintf("Claude Opus   — best quality, ~$%.0f/month", costs[2].CostUSD),
+			"DeepSeek V4 Pro  — best via YesMem Proxy (opencode)",
+			"DeepSeek V4 Flash — faster via YesMem Proxy (opencode)",
+			"GPT-5 Mini       — cheapest via YesMem Proxy (opencode)",
+			"GPT-5.2          — balanced via YesMem Proxy (opencode)",
 		}
 	} else {
 		options = []string{
-			tierLabels[0] + "  — fast",
-			tierLabels[1] + " — balanced",
-			tierLabels[2] + "   — best quality",
+			"Claude Haiku  — fast",
+			"Claude Sonnet — balanced",
+			"Claude Opus   — best quality",
+			"DeepSeek V4 Pro  — best via YesMem Proxy (opencode)",
+			"DeepSeek V4 Flash — faster via YesMem Proxy (opencode)",
+			"GPT-5 Mini       — cheapest via YesMem Proxy (opencode)",
+			"GPT-5.2          — balanced via YesMem Proxy (opencode)",
 		}
 	}
 	modelIdx := promptChoice(options, 1)
-	models := []string{"haiku", "sonnet", "opus"}
-	chosenModel := models[modelIdx]
+	type extractModel struct {
+		model    string
+		provider string
+	}
+	extractOpts := []extractModel{
+		{"haiku", ""},
+		{"sonnet", ""},
+		{"opus", ""},
+		{"deepseek-reasoner", "opencode"},
+		{"deepseek-chat", "opencode"},
+		{"gpt-5-mini", "opencode"},
+		{"gpt-5.2", "opencode"},
+	}
+	chosen := extractOpts[modelIdx]
+	chosenModel := chosen.model
+	forceProvider := chosen.provider
 	fmt.Println()
 
-	// Step 2: Access method (filtered by model)
+	// Step 2: Access method
+	provider := forceProvider
+	if provider == "" {
+		provider = "cli"
+	}
+	apiKey := ""
 	fmt.Println("[2/3] LLM Access:")
 	fmt.Println()
 
-	providerIdx := promptChoice([]string{
+	providerChoices := []string{
 		"Claude Code CLI (recommended) — uses your subscription, no API key",
 		"Anthropic API — requires key from platform.claude.com",
 		"OpenAI-compatible API — any OpenAI-compatible endpoint",
-	}, 0)
+	}
+	opencodeFound := false
+	if _, err := exec.LookPath("opencode"); err == nil {
+		opencodeFound = true
+	}
+	if !opencodeFound {
+		if _, err := exec.LookPath("codex"); err == nil {
+			opencodeFound = true
+		}
+	}
+	if opencodeFound {
+		providerChoices = append(providerChoices, "Opencode CLI — uses your local opencode/codex binary, no API key")
+	}
+	hasOpencode := opencodeFound
+	providerIdx := promptChoice(providerChoices, 0)
 	fmt.Println()
 
-	provider := "cli"
-	apiKey := ""
+	opencodeIdx := 3 // index of opencode option when present
+
 	switch providerIdx {
 	case 1:
 		provider = "api"
@@ -182,19 +227,38 @@ func runInteractive(home, dataDir, binaryPath string) error {
 			}
 		}
 	default:
-		ccKey, _ := findClaudeCodeKey(home)
-		if ccKey != "" {
-			apiKey = ccKey
+		if hasOpencode && providerIdx == opencodeIdx {
+			provider = "opencode"
+		} else {
+			ccKey, _ := findClaudeCodeKey(home)
+			if ccKey != "" {
+				apiKey = ccKey
+			}
 		}
 	}
 
-	// Remap model labels for OpenAI providers
-	if config.IsOpenAIProvider(provider) {
-		tierLabels = []string{"gpt-5-mini", "gpt-5.2", "gpt-5.4"}
-		fmt.Printf("  ℹ Using %s (OpenAI equivalent of %s)\n", tierLabels[modelIdx], chosenModel)
-	}
-
 	fmt.Println()
+
+	// Step 2b: Choose primary model for conversations
+	fmt.Println("[2.5/3] Which model should OpenCode use for conversations?")
+	fmt.Println()
+
+	modelChoices := []string{
+		"DeepSeek V4 Pro (via YesMem Proxy) — recommended, 1M context",
+		"DeepSeek V4 Flash (via YesMem Proxy) — faster, lighter",
+		"GPT-5.5 (via YesMem Proxy) — OpenAI-compatible",
+	}
+	type modelSel struct{ model, small string }
+	modelOpts := []modelSel{
+		{"deepseek/deepseek-reasoner", "deepseek/deepseek-chat"},
+		{"deepseek/deepseek-chat", "deepseek/deepseek-chat"},
+		{"openai/gpt-5.5", "openai/gpt-5.5"},
+	}
+	mIdx := promptChoice(modelChoices, 0)
+	fmt.Println()
+
+	primaryModel := modelOpts[mIdx].model
+	smallModel := modelOpts[mIdx].small
 
 	// Step 3: Confirm
 	fmt.Println("[3/3] Install now?")
@@ -213,10 +277,10 @@ func runInteractive(home, dataDir, binaryPath string) error {
 	// Binary copy (before executeSetup so binaryPath is correct)
 	binaryPath = ensurePermanentLocation(home, binaryPath)
 
-	return executeSetup(home, dataDir, binaryPath, chosenModel, apiKey, provider, chosenTerminal, autoExtract, autoStart)
+	return executeSetup(home, dataDir, binaryPath, chosenModel, apiKey, provider, chosenTerminal, autoExtract, autoStart, primaryModel, smallModel)
 }
 
-func executeSetup(home, dataDir, binaryPath, model, apiKey, provider, terminal string, autoExtract, autoStart bool) error {
+func executeSetup(home, dataDir, binaryPath, model, apiKey, provider, terminal string, autoExtract, autoStart bool, primaryModel, smallModel string) error {
 	hookDir := filepath.Join(home, ".claude", "hooks")
 	lang := detectSystemLanguage()
 
@@ -235,6 +299,18 @@ func executeSetup(home, dataDir, binaryPath, model, apiKey, provider, terminal s
 	withSpinner("Writing config.yaml", func() (string, error) {
 		cfgContent := generateConfig(model, autoExtract, apiKey, provider, terminal)
 		return model, os.WriteFile(filepath.Join(dataDir, "config.yaml"), []byte(cfgContent), 0644)
+	})
+
+	// 2b. Bootstrap SYSTEM.md (if not present)
+	withSpinner("Writing system prompt template", func() (string, error) {
+		created, err := daemon.EnsureSystemPromptTemplate(dataDir)
+		if err != nil {
+			return "", err
+		}
+		if created {
+			return "created", nil
+		}
+		return "already exists", nil
 	})
 
 	// 3. Translate UI strings (best-effort, 10s timeout)
@@ -325,6 +401,37 @@ func executeSetup(home, dataDir, binaryPath, model, apiKey, provider, terminal s
 		}
 		return "up to date", nil
 	})
+
+	// 7d. Install opencode plugin (only if opencode is installed)
+	if detectOpencodeBinary() != "" {
+		withSpinner("Installing opencode plugin", func() (string, error) {
+			return "", installOpencodePlugin(home, binaryPath)
+		})
+	}
+
+	// 7d2. Set model preference (from wizard or default)
+	if primaryModel != "" {
+		withSpinner("Setting model preference", func() (string, error) {
+			if err := mergeOpencodeSettingsWith(home, primaryModel, smallModel); err != nil {
+				return "", err
+			}
+			return primaryModel, nil
+		})
+	}
+
+	// 7e. Generate project RULES.md (for rule_guard plugin)
+	if cwd, err := os.Getwd(); err == nil {
+		withSpinner("Generating RULES.md", func() (string, error) {
+			path, err := GenerateRULESmd(home, cwd)
+			if err != nil {
+				return "", err
+			}
+			if path != "" {
+				return filepath.Base(path), nil
+			}
+			return "already exists", nil
+		})
+	}
 
 	// 8. Write .mcp.json
 	withSpinner("Writing .mcp.json", func() (string, error) {
@@ -591,8 +698,8 @@ llm:
   # Daily spending limits per model tier (USD). Prevents cost explosion
   # with many parallel sessions or large backlogs. 0 = no limit.
   # Only applies to provider: "api" — CLI usage is covered by your subscription.
-  daily_budget_extract_usd: 5.0    # Budget for Pass 1 (extraction) + evolution
-  daily_budget_quality_usd: 2.0    # Budget for narrative + Pass 2 (quality)
+  daily_budget_extract_usd: 20.0   # Budget for Pass 1 (extraction) + evolution
+  daily_budget_quality_usd: 10.0   # Budget for narrative + Pass 2 (quality)
 
   # Max cost per single LLM call (USD). Safety net against runaway prompts.
   # max_budget_per_call_usd: 0.50
@@ -679,6 +786,17 @@ proxy:
   # Upstream API for OpenAI-format requests (used when provider is openai/openai_compatible).
   # openai_target: "https://api.openai.com"
 
+  # Per-provider target URLs for OpenAI-compatible providers.
+  # Keys are matched as case-insensitive prefixes against the model name.
+  # e.g., "deepseek" matches "deepseek-v4-pro" → routes to api.deepseek.com
+  provider_targets:
+    deepseek: "https://api.deepseek.com"
+
+  # Automatically discover and configure provider routing from opencode config.
+  # When true, yesmem reads opencode.json and models.json to auto-populate
+  # provider_targets and set baseURL for new providers. Set to false to disable.
+  auto_configure_providers: true
+
   # Compress when conversation context exceeds this token count.
   # Lower = more frequent compression (saves cost, loses more detail).
   # Higher = less frequent compression (better context, higher cost).
@@ -762,6 +880,98 @@ proxy:
   # "false"  = disable skill-eval injection entirely
   skill_eval_inject: "silent"
 
+  # Code navigation mode when Claude Code opens files in the IDE.
+  # "block" = block code-nav tool calls (default, prevents file-vs-shell mode switches)
+  # "nudge" = allow but inject file content into the prompt
+  # "off"   = no code-nav intervention
+  # code_nav_mode: "block"
+
+  # Permanently disable code-nav after N user dismissals per session.
+  # code_nav_dismiss_count: 5
+
+  # --- Prompt Profile Flags ---
+  # Profile-aware prompt injection layers. shared_prompt is the base for ALL
+  # profiles (Claude, Codex, Opencode). Each profile only needs to set the flags
+  # it enables — a missing or false flag means "inherit from shared_prompt".
+  #
+  # Field guide:
+  #   prompt_beweislast        = "Burden of proof" — verify before claiming, cite evidence
+  #   prompt_output_discipline = No meta-commentary, no visible deliberation, no framing sentences
+  #   prompt_scope_discipline  = Execute what was asked, don't bundle unrelated changes
+  #   prompt_delegation_contract = Fire-and-forget execution when user says "do it"
+  #   prompt_clarify_first     = Ask before implementing ambiguous requests
+  #   prompt_coding_discipline = TDD, read-before-propose, no half-finished implementations
+  #   prompt_tool_prefs        = Inject tool-use preference directives (system-reminders)
+  #   prompt_tool_prefs        = Inject tool-use preference directives (system-reminders)
+  shared_prompt:
+    prompt_beweislast: true
+    prompt_output_discipline: true
+    prompt_scope_discipline: true
+    prompt_delegation_contract: true
+    prompt_clarify_first: true
+    prompt_code_tools_first: true
+
+  # claude_prompt: {}    # empty = inherit from shared_prompt + legacy flat fields
+
+  # codex_prompt: {}
+
+  # opencode_prompt: {}
+
+  # --- Per-Model Feature Gates ---
+  # Control which yesmem behavioral features are active per model/provider.
+  # Keys are model name prefixes matched case-insensitively (longest wins).
+  # Models not listed fall back to feature_defaults.
+  #
+  # Gate reference:
+  #   skill_eval      = Inject [skill-eval] block — checks which skills apply to the task
+  #   briefing        = Inject yesmem briefing at session start (learnings, recent sessions)
+  #   rules_reminder  = Periodic reminder of project rules/guidelines from CLAUDE.md/OPENCODE.md
+  #   plan_checkpoint = Inject plan checkpoint reminders during long implementation sessions
+  #   think_reminder  = Inject hybrid_search() hint (check memory before assuming)
+  model_features:
+    claude:
+      skill_eval: true
+      briefing: true
+      rules_reminder: true
+      plan_checkpoint: true
+      think_reminder: true
+      deepseek:
+        skill_eval: true
+        briefing: true
+        think_reminder: true
+        rules_reminder: true
+        timestamps: true
+        plan_checkpoint: false
+    gpt:
+      skill_eval: true
+      briefing: true
+      think_reminder: false
+      rules_reminder: true
+    openai:
+      skill_eval: true
+      briefing: true
+      think_reminder: false
+      rules_reminder: true
+
+    feature_defaults:
+      # Fallback for models not listed above.
+      # Defaults: all on — new models get full features until proven otherwise.
+      skill_eval: true
+      briefing: true
+      rules_reminder: true
+      plan_checkpoint: true
+      think_reminder: true
+      timestamps: true
+
+  # --- Custom System Prompt ---
+  # Replaces the default system prompt with SYSTEM.md for supported pipelines.
+  # OpenCode and Claude Code pipelines each independently toggleable.
+  custom_system_prompt:
+    enabled_opencode: true
+    enabled_claude_code: true
+    enabled_codex: true
+    template_path: ~/.claude/yesmem/SYSTEM.md
+
 # --- Forked Agents (Background Learning Extraction) ---
 # Spawns async API calls after each assistant response to extract learnings,
 # evaluate injected memories, and detect contradictions — without blocking
@@ -821,12 +1031,14 @@ api:
 # Override here when prices change — no rebuild needed.
 # Keys are matched by substring (e.g. "sonnet" matches "claude-sonnet-4-6").
 pricing:
-  haiku:      { input: 1.0, output: 5.0 }
-  sonnet:     { input: 3.0, output: 15.0 }
-  opus:       { input: 5.0, output: 25.0 }
-  gpt-5-mini: { input: 0.25, output: 2.0 }
-  gpt-5.2:    { input: 1.75, output: 14.0 }
-  gpt-5.4:    { input: 2.5, output: 15.0 }
+  haiku:             { input: 1.0, output: 5.0 }
+  sonnet:            { input: 3.0, output: 15.0 }
+  opus:              { input: 5.0, output: 25.0 }
+  gpt-5-mini:        { input: 0.25, output: 2.0 }
+  gpt-5.2:           { input: 1.75, output: 14.0 }
+  gpt-5.4:           { input: 2.5, output: 15.0 }
+  deepseek-v4-flash: { input: 0.14, output: 0.56 }
+  deepseek-v4-pro:   { input: 0.28, output: 1.12 }
 
 # --- Cognitive Signals ---
 # The signal bus captures Claude's self-reflection during conversations.
@@ -882,6 +1094,18 @@ claudemd:
   # Model for operative reference generation. Empty = use narrative_model.
   # model: ""
 
+# --- Sandbox (Agent Security) ---
+# Default sandbox profile for spawned agents.
+# Options: "none" (no sandbox), "standard" (network-restricted), "strict" (filesystem + network restricted)
+# default_sandbox_profile: ""
+
+# --- Secrets Sanitization ---
+# Redact secrets (API keys, tokens, passwords) from extraction content.
+# secrets_sanitization:
+#   enabled: false
+#   allowed_exceptions:
+#     - user@example.com
+
 # --- Paths (optional) ---
 # All paths have sensible defaults under ~/.claude/yesmem/.
 # Only set these if you need a custom location.
@@ -890,6 +1114,7 @@ claudemd:
 #   bleve_index: ~/.claude/yesmem/bleve-index
 #   archive: ~/.claude/yesmem/archive
 #   claude_projects: ~/.claude/projects
+#   opencode_db: ~/.local/share/opencode/opencode.db
 
 # --- Agents ---
 # Controls how agent terminals are spawned.
@@ -899,12 +1124,24 @@ agents:
   # Empty = auto-detect (uses x-terminal-emulator fallback)
   terminal: %s
 
+  # Terminal for showing yesmem-agents session output (viewer).
+  # Falls back to terminal if empty.
+  # viewer_terminal: ""
+
   # Safety limits for spawned agents.
-  # max_runtime: 30m       # Max wall-clock time per agent
-  # max_turns: 50          # Max conversation turns per agent
-  # max_depth: 3           # Max agent nesting depth (agents spawning agents)
-  # token_budget: 0        # Max tokens (input+output) per agent. 0 = no limit.
-`, model, autoExtract, provider, langs, apiBlock, terminal)
+    # max_runtime: 30m       # Max wall-clock time per agent
+    # max_turns: 50          # Max conversation turns per agent
+    # max_depth: 3           # Max agent nesting depth (agents spawning agents)
+    # token_budget: 0        # Max tokens (input+output) per agent. 0 = no limit.
+
+  # --- Indexer ---
+  # Directories excluded from session indexing.
+  # Use to prevent home directory, temp directory, or other non-project
+  # directories from accumulating sessions in the knowledge base.
+  exclude_projects:
+    - /home/%s
+    - /tmp
+  `, model, autoExtract, provider, langs, apiBlock, terminal, os.Getenv("USER"))
 }
 
 // detectSystemLanguage reads the system locale and returns ISO 639-1 code.
@@ -1414,4 +1651,148 @@ func ensureCBMBinary(dataDir string) (string, error) {
 	}
 
 	return strings.TrimSpace(string(version)), nil
+}
+
+// ━━━ Opencode Plugin Setup ━━━
+
+// detectOpencodeBinary returns the opencode binary path if installed, or "".
+func detectOpencodeBinary() string {
+	if path, err := exec.LookPath("opencode"); err == nil {
+		return path
+	}
+	home, _ := os.UserHomeDir()
+	fb := filepath.Join(home, ".opencode", "bin", "opencode")
+	if _, err := os.Stat(fb); err == nil {
+		return fb
+	}
+	return ""
+}
+
+// detectOpencodeConfigDir returns the opencode config directory.
+func detectOpencodeConfigDir() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "opencode")
+}
+
+// installOpencodePlugin symlinks the yesmem plugin into opencode's plugins directory
+// and registers it in opencode.json. Even if the plugin source files aren't available,
+// the provider/mcp/compaction settings are still merged.
+func installOpencodePlugin(home, binaryPath string) error {
+	if err := installOpencodePluginSource(home); err != nil {
+		return err
+	}
+
+	pluginSource := resolvePluginSource(home, binaryPath)
+
+	if pluginSource != "" {
+		pluginsDir := filepath.Join(detectOpencodeConfigDir(), "plugins")
+		os.MkdirAll(pluginsDir, 0755)
+
+		symlinkPath := filepath.Join(pluginsDir, "yesmem.ts")
+		os.Remove(symlinkPath) // remove old symlink if exists
+		if err := os.Symlink(pluginSource, symlinkPath); err != nil {
+			return fmt.Errorf("symlink plugin: %w", err)
+		}
+	}
+
+	return mergeOpencodeJSON(home, pluginSource)
+}
+
+// installOpencodePluginSource copies the bundled opencode plugin source files
+// from the embedded FS into ~/.local/share/yesmem/plugins/opencode-yesmem/.
+// The symlink target (resolvePluginSource) points to this directory.
+func installOpencodePluginSource(home string) error {
+	_, err := InstallOpencodePlugin(home)
+	return err
+}
+
+// InstallOpencodePlugin extracts bundled plugin source files to
+// ~/.local/share/yesmem/plugins/opencode-yesmem/ if they are missing
+// or outdated (SHA256 comparison). Returns the number of files updated.
+func InstallOpencodePlugin(home string) (int, error) {
+	dstDir := filepath.Join(home, ".local", "share", "yesmem", "plugins", "opencode-yesmem")
+	os.MkdirAll(dstDir, 0755)
+
+	entries, err := yesmemPlugins.BundledOpencodePlugin.ReadDir("opencode-yesmem")
+	if err != nil {
+		return 0, fmt.Errorf("read embedded plugin: %w", err)
+	}
+
+	installed := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		data, err := yesmemPlugins.BundledOpencodePlugin.ReadFile("opencode-yesmem/" + e.Name())
+		if err != nil {
+			continue
+		}
+		dstPath := filepath.Join(dstDir, e.Name())
+		if existing, err := os.ReadFile(dstPath); err == nil {
+			if fmt.Sprintf("%x", sha256.Sum256(existing)) == fmt.Sprintf("%x", sha256.Sum256(data)) {
+				continue
+			}
+		}
+		if err := os.WriteFile(dstPath, data, 0644); err != nil {
+			return installed, fmt.Errorf("write plugin %s: %w", e.Name(), err)
+		}
+		installed++
+	}
+	return installed, nil
+}
+
+// resolvePluginSource returns the path to the plugin index.ts for symlinking.
+// Priority: ~/.local/share/yesmem/plugins/ > ../plugins/ relative to binary.
+func resolvePluginSource(home, binaryPath string) string {
+	// Check persistent install location first
+	persistent := filepath.Join(home, ".local", "share", "yesmem", "plugins", "opencode-yesmem", "index.ts")
+	if _, err := os.Stat(persistent); err == nil {
+		return persistent
+	}
+
+	// Fallback: relative to binary (development)
+	dev := filepath.Join(filepath.Dir(binaryPath), "..", "plugins", "opencode-yesmem", "index.ts")
+	if _, err := os.Stat(dev); err == nil {
+		return dev
+	}
+
+	return ""
+}
+
+// mergeOpencodeJSON adds both the plugin entry and the provider/MCP/compaction
+// settings to opencode.json. Preserves existing configuration. Idempotent.
+func mergeOpencodeJSON(home, pluginPath string) error {
+	if err := mergeOpencodeSettings(home); err != nil {
+		return err
+	}
+
+	cfgPath := filepath.Join(detectOpencodeConfigDir(), "opencode.json")
+	os.MkdirAll(filepath.Dir(cfgPath), 0755)
+
+	var cfg map[string]any
+	data, err := os.ReadFile(cfgPath)
+	if err == nil {
+		json.Unmarshal(data, &cfg)
+	}
+	if cfg == nil {
+		cfg = map[string]any{}
+	}
+
+	plugins, _ := cfg["plugin"].([]any)
+	for _, p := range plugins {
+		if s, ok := p.(string); ok && s == pluginPath {
+			return nil
+		}
+	}
+
+	if pluginPath != "" {
+		cfg["plugin"] = append(plugins, pluginPath)
+	}
+	cfg["$schema"] = "https://opencode.ai/config.json"
+
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(cfgPath, append(out, '\n'), 0644)
 }

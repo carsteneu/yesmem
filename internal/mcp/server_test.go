@@ -98,3 +98,124 @@ func TestFormatPersonaDirectiveOnly(t *testing.T) {
 		t.Errorf("missing directive in output: %s", result)
 	}
 }
+
+// resolveClientSessionID picks up the calling agent's session ID from env vars.
+// Claude Code 2.1.131 does NOT export CLAUDE_SESSION_ID; Claude Code 2.1.132+
+// exports CLAUDE_CODE_SESSION_ID. Both must resolve to source_agent="claude".
+func TestResolveClientSessionID_AllUnset(t *testing.T) {
+	for _, k := range []string{"YESMEM_SOURCE_AGENT", "YESMEM_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "OPENCODE"} {
+		t.Setenv(k, "")
+	}
+	sid, sa := resolveClientSessionID()
+	if sid != "" {
+		t.Errorf("sid: want empty, got %q", sid)
+	}
+	if sa != "claude" {
+		t.Errorf("sa: want claude (default), got %q", sa)
+	}
+}
+
+func TestResolveClientSessionID_LegacyClaudeVar(t *testing.T) {
+	for _, k := range []string{"YESMEM_SOURCE_AGENT", "YESMEM_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_CODE_SESSION_ID"} {
+		t.Setenv(k, "")
+	}
+	t.Setenv("CLAUDE_SESSION_ID", "legacy-sid-1")
+
+	sid, sa := resolveClientSessionID()
+	if sid != "legacy-sid-1" {
+		t.Errorf("sid: want legacy-sid-1, got %q", sid)
+	}
+	if sa != "claude" {
+		t.Errorf("sa: want claude, got %q", sa)
+	}
+}
+
+func TestResolveClientSessionID_NewClaudeCodeVar(t *testing.T) {
+	for _, k := range []string{"YESMEM_SOURCE_AGENT", "YESMEM_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID"} {
+		t.Setenv(k, "")
+	}
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "cc-new-sid-2")
+
+	sid, sa := resolveClientSessionID()
+	if sid != "cc-new-sid-2" {
+		t.Errorf("sid: want cc-new-sid-2, got %q", sid)
+	}
+	if sa != "claude" {
+		t.Errorf("sa: want claude, got %q", sa)
+	}
+}
+
+func TestResolveClientSessionID_LegacyTakesPrecedence(t *testing.T) {
+	for _, k := range []string{"YESMEM_SOURCE_AGENT", "YESMEM_SESSION_ID", "CODEX_THREAD_ID"} {
+		t.Setenv(k, "")
+	}
+	t.Setenv("CLAUDE_SESSION_ID", "legacy-sid-3")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "code-sid-3")
+
+	sid, _ := resolveClientSessionID()
+	if sid != "legacy-sid-3" {
+		t.Errorf("sid: want legacy-sid-3 (CLAUDE_SESSION_ID precedes CLAUDE_CODE_SESSION_ID), got %q", sid)
+	}
+}
+
+func TestResolveClientSessionID_OpenCodeUnaffected(t *testing.T) {
+	t.Setenv("YESMEM_SOURCE_AGENT", "opencode")
+	t.Setenv("YESMEM_SESSION_ID", "oc-sid-4")
+	t.Setenv("CODEX_THREAD_ID", "")
+	t.Setenv("CLAUDE_SESSION_ID", "")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "should-be-ignored")
+
+	sid, sa := resolveClientSessionID()
+	if sid != "opencode:oc-sid-4" {
+		t.Errorf("sid: want opencode:oc-sid-4, got %q", sid)
+	}
+	if sa != "opencode" {
+		t.Errorf("sa: want opencode, got %q", sa)
+	}
+}
+
+func TestResolveClientSessionID_OpenCodeAutoDetect(t *testing.T) {
+	for _, k := range []string{"YESMEM_SOURCE_AGENT", "YESMEM_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "OPENCODE"} {
+		t.Setenv(k, "")
+	}
+	t.Setenv("OPENCODE", "1")
+
+	sid, sa := resolveClientSessionID()
+	if sid != "" {
+		t.Errorf("sid: want empty (auto-detect), got %q", sid)
+	}
+	if sa != "opencode" {
+		t.Errorf("sa: want opencode (auto-detected via OPENCODE=1), got %q", sa)
+	}
+}
+
+func TestResolveClientSessionID_CodexUnaffected(t *testing.T) {
+	t.Setenv("YESMEM_SOURCE_AGENT", "codex")
+	t.Setenv("YESMEM_SESSION_ID", "")
+	t.Setenv("CODEX_THREAD_ID", "cx-sid-5")
+	t.Setenv("CLAUDE_SESSION_ID", "")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "should-be-ignored")
+
+	sid, sa := resolveClientSessionID()
+	if sid != "codex:cx-sid-5" {
+		t.Errorf("sid: want codex:cx-sid-5, got %q", sid)
+	}
+	if sa != "codex" {
+		t.Errorf("sa: want codex, got %q", sa)
+	}
+}
+
+func TestResolveClientSessionID_OpenCodeNoSessionID(t *testing.T) {
+	for _, k := range []string{"YESMEM_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "OPENCODE"} {
+		t.Setenv(k, "")
+	}
+	t.Setenv("YESMEM_SOURCE_AGENT", "opencode")
+
+	sid, sa := resolveClientSessionID()
+	if sid != "" {
+		t.Errorf("sid: want empty (no session ID env var), got %q", sid)
+	}
+	if sa != "opencode" {
+		t.Errorf("sa: want opencode, got %q", sa)
+	}
+}

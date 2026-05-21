@@ -45,6 +45,14 @@ func runInitialExtraction(ext extraction.SessionExtractor, evoExt *extraction.Ex
 		log.Printf("  Cleaned %d learnings from short sessions (<6 messages)", len(cleanedIDs))
 	}
 
+	// Mark daemon-internal extraction sessions (cluster labeling etc.) as extracted
+	// so they don't clutter the pending count or trigger self-referential re-extraction.
+	// Must run BEFORE MarkShortSessionsExtracted — otherwise all short sessions are
+	// already marked and this targeted pass finds nothing.
+	if marked, err := store.MarkExtractionSessionsExtracted(); err == nil && marked > 0 {
+		log.Printf("  Marked %d extraction-internal sessions as extracted", marked)
+	}
+
 	// Mark short sessions as extracted so they don't show as pending
 	if marked, err := store.MarkShortSessionsExtracted(5); err == nil && marked > 0 {
 		log.Printf("  Marked %d short sessions (≤5 messages) as extracted", marked)
@@ -738,7 +746,11 @@ func runBatchExtraction(ext extraction.SessionExtractor, evoExt *extraction.Extr
 		return
 	}
 
-	// Cleanup: mark short sessions
+	// Cleanup: mark daemon-internal extraction sessions first (targeted),
+	// then mark remaining short sessions (generic catch-all).
+	if marked, err := store.MarkExtractionSessionsExtracted(); err == nil && marked > 0 {
+		log.Printf("  Marked %d extraction-internal sessions as extracted", marked)
+	}
 	if marked, err := store.MarkShortSessionsExtracted(5); err == nil && marked > 0 {
 		log.Printf("  Marked %d short sessions (≤5 messages) as extracted", marked)
 	}

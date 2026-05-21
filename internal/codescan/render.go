@@ -38,6 +38,11 @@ func RenderCodeMap(result *ScanResult, priority map[string]int) string {
 // renderTiny: full file content for each source file.
 func renderTiny(result *ScanResult) string {
 	var b strings.Builder
+	projectName := projectKey(result.RootDir)
+	if projectName == "" || projectName == "." {
+		projectName = "project"
+	}
+	b.WriteString(renderWikiLink(projectName))
 	b.WriteString(fmt.Sprintf("## Code Map\nProject structure with %d files. Use this for navigation and to understand which packages exist.\n\n", result.Stats.FileCount))
 
 	for _, f := range result.Files {
@@ -68,6 +73,11 @@ func renderTiny(result *ScanResult) string {
 // renderSmall: all signatures for each file, grouped by directory.
 func renderSmall(result *ScanResult, importedBy map[string][]string) string {
 	var b strings.Builder
+	projectName := projectKey(result.RootDir)
+	if projectName == "" || projectName == "." {
+		projectName = "project"
+	}
+	b.WriteString(renderWikiLink(projectName))
 	b.WriteString(fmt.Sprintf("## Code Map\nProject structure with %d files. Use this for navigation and to understand which packages exist.\n\n", result.Stats.FileCount))
 
 	for _, pkg := range result.Packages {
@@ -106,6 +116,11 @@ func renderSmall(result *ScanResult, importedBy map[string][]string) string {
 // renderMedium: packages with top signatures.
 func renderMedium(result *ScanResult, importedBy map[string][]string) string {
 	var b strings.Builder
+	projectName := projectKey(result.RootDir)
+	if projectName == "" || projectName == "." {
+		projectName = "project"
+	}
+	b.WriteString(renderWikiLink(projectName))
 	b.WriteString(fmt.Sprintf("## Code Map\nProject structure with %d files. Use this for navigation and to understand which packages exist.\n\n", result.Stats.FileCount))
 
 	for _, pkg := range result.Packages {
@@ -185,8 +200,8 @@ func renderLarge(result *ScanResult, priority map[string]int, importedBy map[str
 	var b strings.Builder
 
 	// Project header
-	b.WriteString(fmt.Sprintf("## Code Map\n**%s** (%d files, %d packages)\n\n",
-		projectName, result.Stats.FileCount, len(result.Packages)))
+	b.WriteString(fmt.Sprintf("## Code Map\n**%s** `%s` (%d files, %d packages)\n\n",
+		projectName, result.RootDir, result.Stats.FileCount, len(result.Packages)))
 
 	// Wiki-link block FIRST — top of codemap, before the package table.
 	// Position here ensures agents see it before diving into the table rows.

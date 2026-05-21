@@ -27,7 +27,7 @@ func setupIndexer(t *testing.T) (*Indexer, *storage.Store) {
 	t.Cleanup(func() { os.RemoveAll(archiveDir) })
 	arch := archive.New(archiveDir)
 
-	return New(store, bloomMgr, arch), store
+	return New(store, bloomMgr, arch, nil), store
 }
 
 func TestIndexSession(t *testing.T) {
@@ -253,5 +253,68 @@ func TestProjectDirName(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("projectDirName(%q) = %q, want %q", tt.path, got, tt.want)
 		}
+	}
+}
+
+func TestIndexSession_ExcludeProject(t *testing.T) {
+	store, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	bloomMgr := bloom.New()
+	arch := archive.New(t.TempDir())
+
+	idx := New(store, bloomMgr, arch, []string{"/home/chief"})
+
+	// Use the test fixture but we need a session with CWD=/home/chief
+	// The sample fixture has CWD=/var/www/html/test-project, so it won't match.
+	// Verify that a normal session still gets indexed.
+	fixture := filepath.Join("..", "parser", "testdata", "sample-session.jsonl")
+	if _, err := os.Stat(fixture); err != nil {
+		t.Skipf("fixture not found: %v", err)
+	}
+
+	err = idx.IndexSession(fixture)
+	if err != nil {
+		t.Fatalf("non-excluded session should index: %v", err)
+	}
+
+	sess, err := store.GetSession("test-session-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess == nil {
+		t.Fatal("non-excluded session should be stored")
+	}
+}
+
+func TestIndexSession_ExcludeProjectByShortName(t *testing.T) {
+	store, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	bloomMgr := bloom.New()
+	arch := archive.New(t.TempDir())
+
+	// "test-project" is the short name from sample-session.jsonl
+	idx := New(store, bloomMgr, arch, []string{"test-project"})
+
+	fixture := filepath.Join("..", "parser", "testdata", "sample-session.jsonl")
+	if _, err := os.Stat(fixture); err != nil {
+		t.Skipf("fixture not found: %v", err)
+	}
+
+	err = idx.IndexSession(fixture)
+	if err != nil {
+		t.Fatal("excluded project should not error:", err)
+	}
+
+	sess, err := store.GetSession("test-session-001")
+	if err == nil && sess != nil {
+		t.Fatal("excluded project session should not be stored")
 	}
 }

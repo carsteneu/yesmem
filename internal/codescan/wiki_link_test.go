@@ -17,8 +17,11 @@ func TestRenderWikiLink_FileMissing(t *testing.T) {
 	if !strings.Contains(out, "not yet rendered") {
 		t.Errorf("missing 'not yet rendered' fallback in: %q", out)
 	}
-	if !strings.Contains(out, "Browse `packages.md`") {
-		t.Errorf("missing packages.md mention in: %q", out)
+	if !strings.Contains(out, "BEFORE") {
+		t.Errorf("missing BEFORE mandate in: %q", out)
+	}
+	if !strings.Contains(out, "check its wiki page") {
+		t.Errorf("missing 'check its wiki page' in: %q", out)
 	}
 }
 
@@ -47,5 +50,8 @@ func TestRenderWikiLink_FilePresent(t *testing.T) {
 	}
 	if !strings.Contains(out, "search_code_index") {
 		t.Errorf("missing fallback hierarchy mention (MCP code tools) in: %q", out)
+	}
+	if !strings.Contains(out, "BEFORE") {
+		t.Errorf("missing BEFORE mandate in: %q", out)
 	}
 }

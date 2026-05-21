@@ -68,7 +68,7 @@ func RunLearn(dataDir string) {
 	defer store.Close()
 
 	// Dedup: check similarity against existing gotchas
-	existing, _ := store.GetActiveLearnings("gotcha", "", "", "")
+	existing, _ := store.GetActiveLearnings("gotcha", "", "", "", 0)
 	newTokens := textutil.Tokenize(content)
 
 	for _, g := range existing {

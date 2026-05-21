@@ -5,6 +5,323 @@ All notable changes to YesMem are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Add opencode as third provider option in setup wizard
+- Shared SYSTEM.md template for OpenCode + Claude Code pipelines
+- Add SYSTEM.md with memory depth layers to repo
+- Hybrid_search nudge on first user message
+
+### Changed
+
+- Update CHANGELOG
+- Add auto_configure_providers field (default: true)
+- Update .gitignore, timestamp hint wording
+
+### Fixed
+
+- Restore max_context.png to docs/images/ (lost in yesdocs split)
+- Restore missing YesMemRPC import in index.ts
+- Per-model token threshold override + DeepSeek 500k default
+- Add deepseek pricing entries, raise quality budget to 0
+- Per-session gotcha cap — suppress after 3 injections
+- Use mcp__yesmem__* wildcard instead of 65 individual tool permissions
+- Sync user edits — re-read directive positioning, wording refinements
+- Single nudge line, no rotation
+- Rotate 3 nudge variants based on system reminder text (DE+EN)
+- Use experimental.chat.messages.transform to prepend nudge to user messages
+- Use input.sessionID not input.session.id in chat.params hook
+- Switch to chat.params hook, message.updated never fired
+- ...ir spread overwrote composed message.updated hook
+- Fix fork SSE: accumulate delta content from all chunks, not just last
+- Fix fork SSE parsing: try plain JSON first, fall back to SSE extraction
+- Skip instead of hint for doc targets, DeepSeek ignored the hint
+- Fix fork cache: remove stream:false for DeepSeek prefix cache sharing
+- Doc-target hint via context note, no more false code-nav skill suggestions
+- Grep/glob nicht mehr blocken, nur read per get_file_symbols
+
+### Performance
+
+- Add 5 missing indices + 3 PRAGMA optimizations (cache_size, mmap_size, temp_store)
+
+### Documentation
+
+- Fix README — correct counts (70/64/130), 10k plan interval, remove unverifiable 70% claims, 3 scheduler modes
+- April 21-May 4 commit audit — add cap category + cap_<name> origin to memory.md
+- Add 7 missing features from commit audit — excludeProjects, claim_and_read, staus/uninstall, guard git context, opencode merge/update, caps_dir
+- Commit audit May 5-21 — 7 missing features found, 4 removed, 18 documented
+- Update Features.md overview counts (70 tools, 64 commands, 130 rpc, 48 tables)
+- Rewrite reference docs — mcp (70 tools), cli (64 commands), rpc (130 methods), db (48 tables + 4 FTS5)
+- Fix 58 audit discrepancies across all feature docs + config-reference
+- Document opencode plugin update issue (provider-resolution not loading)
+- Doc audit findings (58 discrepancies) + rule_guard provider resolution plan
+- Renumber feature doc sections consistently per file (1..N)
+- Split Features.md into target-group docs (7 feature files + 4 reference docs)
+- README model-agnostic language — replace DeepSeek with the model in functional descriptions
+- Update README — LLM backend, SYSTEM.md, autoconf, opencode plugin, RULES.md
+- Git history 120 commits — May 15-21: fork-cache, SYSTEM.md, provider autoconf
+- Expand search exceptions — reflexive, self-contained, trivial
+- Sync runtime SYSTEM.md to repo — reflexive-search exception, formatting alignment
+- Add SYSTEM.md — canonical system prompt template
+- Auto-extracted superpowers plan/spec documents
+
+### Testing
+
+- Replace hardcoded  path with generic path for public sync
+
+## [2.1.0] - 2026-05-18
+
+### Added
+
+- Add timestamps:true for deepseek in default config and setup, fix think_test for MANDATORY
+- Add exclude_projects to setup config template and migration
+- Add excludeProjects filter to OpencodeScanner
+- Add ExcludeProjects config to prevent indexing of noise directories
+- Set YESMEM_DAEMON_CHILD=1 in runClaude headless path
+- 1h TTL for fileAttempts 2-strike counter
+- Add version and unix timestamp to fork log lines
+- 2-strike rule — first block with yesmem hint, second allows
+- Add code-tools-first rule (31) + skill catalog entry (50) with grep/glob/read triggers
+- Wire JobDone into scheduler executor callback
+- Gate dueJobs with running check to prevent concurrent execution
+- Add running map to Scheduler struct
+- Filter daemon-internal LLM sessions from scanner backlog
+- Inject YESMEM_SOURCE_AGENT=opencode into MCP environment by default
+- Add git branch context to prevent false feature-branch suggestions
+- Add session.created hook for opencode session identification
+- Expand extraction model choices to include DeepSeek + GPT via opencode
+- Interactive wizard now asks which model to use for conversations
+- Add anthropic provider + model/small_model keys to opencode template
+- Show session_id + supersede_reason in formatted output
+- Inject briefing as system message with MANDATORY_BRIEFING wrapper
+- Install opencode plugin files on update if missing/outdated
+- Increase opencode MCP timeout 10s → 30s with auto-upgrade from old default
+- Bash SUGGEST-only, MANDATORY CHECK prefix
+- RULES.md with guard rules + skill catalog
+- Mandatory memory search enforcement in rules 23 + 31
+- Authoritative skill injection via chat.message + system.transform
+- Make SUGGEST mandatory with directive wording
+- TUI toast for guard BLOCK/SUGGEST events
+- Visual markers for BLOCK/SUGGEST in output
+- Buffer last 5 user messages for guard context
+- Add chat.message context to guard evaluation
+- Fire guard on all tools, always suggest skills
+- Add missing CLAUDE.md rules 25-30
+- Add Skills section with activation triggers
+- Load rules from DECISIONS.md in project root
+- Add rule_guard tool.execute.before hook
+- Add skill-check instruction to DeepSeek output discipline
+- Shorten think-reminder and skill-eval injects for OpenAI path
+- Inject think-reminder, skill-eval, rules via timestamp store
+- Add prune=false to opencode compaction settings
+- Session-resume support for llm_complete RPC
+- Model-aware handleLLMComplete + LLMProvider config
+- Llm() polyfill for bash caps + llm-complete CLI + llm_complete RPC
+- Bash polyfills (store + llm) + llm_complete RPC
+- Unix socket MCP transport (replaces HTTP TCP)
+- Configurable caps_dir for runtime-agnostic CAP.md storage
+- MCP polyfill layer in bun wrapper for cross-compatible caps
+- Inject opencode CAP catalog into OpenAI parity pipeline
+- Register execute_cap tool
+- Execute_cap handler — sandboxed bun/bash CAP execution
+- Embed opencode plugin source in binary, install to ~/.local/share/yesmem/plugins/ during setup
+- Merge opencode provider/mcp/compaction settings without overwriting existing config; add opencode uninstall + status
+- Preload code graph at session start
+- Opencode plugin install — symlink + opencode.json registration + make deploy copy
+- Opencode-yesmem hook-plugin — code-nav, failure-learn, auto-resolve, idle-reminder
+- [yesmem-code-explore] directive — yesmem tools before shell for code exploration
+- Set feature_defaults to all-true — new models get full features by default
+- Opencode first-class config, migration, and setup wizard
+- Agent-aware footer in rules reminder (CLAUDE.md vs OPENCODE.md)
+- Concise think_reminder wording for non-Claude agents
+- Full timestamp injection (InjectTimestamps) for opencode parity path
+- Associative context diagnostic logging for opencode parity path
+- Opencode extraction adaption — schema-injection, prompt-neutralization, extractJSON fix
+- GenerateAgentsMd() for opencode project reference
+- Multi-agent CLIClient with stdin-pipe for codex/opencode
+- Profile-aware wording via Generator.SetSourceAgent()
+- Multi-agent session identity via resolveClientSessionID()
+- Set SharedPrompt in Default() with agent-neutral injector defaults
+- Learnings.source_agent + target_agent provenance columns
+- Config-split PromptFlags + EffectivePromptFlags(profile) + review fixes
+- Golden test framework + PromptProfile type for multi-agent prompt isolation
+
+### Changed
+
+- Ignore .claude lock files; untrack scheduled_tasks.lock
+- Bump index V=5, add ensureIndexed log to code_nav
+- Rephrase error — yesmem tools first, retry as fallback
+- Remove redundant ts= from [req N ver] format
+- Self-identifying format [req N ver ts] for pipeline lines
+- Bump index.ts cache key for 1h TTL code_nav reload
+- Self-identifying log format [req N v2.0.1-nn ts=U]
+- Add .opencode/ to gitignore
+- Remove debug eval log, verified convMsgs=6 ctxLen~750-1200
+- Consolidate extraction pipeline and storage layer
+- Use yesmem daemon RPC for last user message, remove broken hooks
+- Address code review — dead code removal, caps.db test, parser fix, benchmark deadline, guard cache
+- Remove dead code (guard_tui.ts, synthesizeProjectRules)
+- Rename DECISIONS.md → RULES.md
+- Remove chat.message/system.transform injection — revert to simple tool.execute.after
+- Remove debug logging
+- Accumulated changes — sandbox, scheduler, capfile adapter, cmd_worker, json commands
+- Remove 124MB dbstats binary from tracking
+- Sync remaining working tree changes (learnings search, storage schema, project model, opencode cap exec plan)
+- Comment out verbose OPENAI-OUT per-message log lines
+- Cap version tracking changes from concurrent session
+- Commit leftover changes from concurrent session
+- Merge CodeExploration into unified CodeToolsFirst, remove CodeExplore flag
+- Regenerate for v2.0.6 release
+- Ignore node_modules
+- Rename InjectToolPrefs → InjectClaudeToolPrefs
+
+### Fixed
+
+- Exclude research/ directory from public sync
+- Add test fixtures with  paths to scan allowlist
+- Detect extraction pipeline sessions regardless of message count
+- Blacklist dangerous scan paths and fix worktree .git detection
+- Balanced-bracket JSON parser + extraction session filter
+- Session mapped line also with [req N ver] format
+- Restore opencode grep/glob/read section lost in TTL edit
+- Restore throw after debug logs
+- Compose tool.execute.before/after hooks (spread overwritten)
+- Sync dbgLog + extend to grep/glob/read tools, add RULES.md to embed
+- Raw-byte body construction + flex-int JSON parsing
+- Increase max_tokens 1024→4096, complex tool reasoning overflow
+- Byte-prefix cache + min-tokens gate + RecordFailure reset
+- Increase max_tokens 256→1024, reasoning consumed budget
+- Rules in system msg for prefix-cache, sync dbgLog, json_object format
+- Add narrative and gap-review daemon prompts to filter
+- Split telegram poll/reply into separate single-responsibility handlers
+- Use future-proof model name deepseek-v4-flash instead of deprecated deepseek-chat
+- Fix suggestions Map type, add _test.go TDD-compliance note
+- Auto-detect OpenCode via OPENCODE=1 env var fallback
+- Also skip rule_guard.ts self-evaluation
+- Narrow file skip to RULES.md only, evaluate yesmem/worktree files normally
+- Remove anthropic provider from template + wizard — proxy-only providers
+- Correct reversed api-key condition + add anthropic to uninstall cleanup
+- Add convMsgs summary log for guard visibility
+- Register_pid persists source_agent, remove premature briefing generation
+- RecentConversation context, rulesHash cache, retry, robust parsing
+- Always show provider selection, remove forced skip for non-claude models
+- Correct get_learnings API params in briefing — task_type → category suffix
+- Briefing refinement fallback — dedup validateRefinedOutput + prevent double-arrival
+- Fork auth + prompt cleanup + keepalive guards
+- Bun.write truncate bug in code_nav + auto_resolve — use read+append like rule_guard
+- Use chat.params to capture user message (fires before LLM call)
+- Chat.message reads from output.message, not input.message
+- Cache ResolveProjectPath once to avoid sub-query deadlock inside row loops
+- Remove dead code with latent data races, protect learnings map reads
+- Remove orphaned code block blocking plugin load
+- Address code review — GetCachedGraph tests, handler reuse, TplMs timing, ReadFile guard
+- Use message.updated hook name, remove stale plugin file
+- Move session_active_caps to caps.db to avoid SQLITE_BUSY contention
+- Normalize fork effort to 'high' to prevent DeepSeek 400 on xhigh
+- Increase search deadline 12s→30s, fix telegram-poll 1s→15s
+- Allow user-requested commits in Rule 1
+- Normalize cache_control TTL to prevent ordering violation on resume
+- Append-mode logging + debug tracing for chat.message parts injection
+- SUGGEST format includes exact skill name with call-to-action
+- LoadRules now includes YAML Skill Catalog section
+- Console.* replaced with dbgLog — root cause of overlay
+- Replace all console.* with dbgLog file logging
+- BLOCK silent inline, toast-only
+- Show BLOCK reason in title not body
+- Remove JSX pragma from TUI plugin (not needed)
+- Add JSX pragma to TUI plugin
+- Move TUI plugin to tui.json config
+- Defer BLOCK to tool.execute.after instead of throwing
+- Throw descriptive BLOCKED reason instead of space
+- Lowercase tool names in Sets, add FIRED debug log
+- Renumber Session Discipline rules to avoid collision with Skill Catalog
+- Revert to throw — output.args mutation ineffective for Write
+- Use tool.execute.after for clean BLOCKED output
+- Remove appendPrompt, keep space-only throw
+- Throw with space, prepend warning via appendPrompt
+- Try neutralize Write/Edit via output.args mutation
+- Revert to throw with single-line error format
+- Neutralize tool instead of throwing on rule violation
+- Add toast notification for rule_guard blocks
+- Exclude bash, DECISIONS.md edits, internal files from rule_guard
+- Prevent MCP recursion deadlock when spawning opencode
+- Increase bash executor timeout for llm commands from 120s to 600s
+- Isolate opencode subagents in separate DeepSeek cache namespace
+- Comment out all DeepSeek/OpenAI proxy injections for cache baseline
+- Disable associative/doc context injection for DeepSeek
+- Prepend stable injections to all user messages for DeepSeek cache consistency
+- Restore all DeepSeek injections via prependToFirstSystem
+- Cap daemon GOMAXPROCS=4 to prevent CPU saturation
+- DeepSeek cache fragmentation — move stable injections to system[0], remove variable blocks
+- Rate-limiter queue time excluded from LLM call timeout
+- Rate-limiter, wiki-tick skip, 300s timeout, circuit breaker for timeouts
+- Provider routing for fork, keepalive, and message forwarding
+- Fork uses quality model, keepalive skips small sessions
+- Unwrap RPC envelope in _mcpCall polyfill
+- Polyfill cap_blob_put/cap_blob_get via cap_store RPC
+- Unify session ID prefix from oa: to opencode:
+- Pass cache_control through OpenAI reverse translation for DeepSeek caching
+- Get_compacted_stubs and expand_context range mode read from frozen stubs + messages.db full-text lookup
+- Case-insensitive command detection (Grep == grep)
+- Keep i and role for re-enableable log lines
+- Extract only real file paths, convert absolute to relative for RPC
+- Also block directory-level grep when dir has indexed files
+- Block only when target file is in CBM code graph, not entire project
+- Remove debug logging, clean throw-based blocking
+- Pass plugin directory to code_nav hook, fix property access
+- Try output.block first, throw Error as fallback for grep blocking
+- Increase RPC timeout to 20s for slow CBM code scan
+- RPC unwrap daemon result wrapper, code_nav retries on index miss
+- Remove broken @opencode-ai/sdk Plugin import, use plain function types
+- Code_nav checks project index existence once, not per-file symbol lookup
+- Detect opencode source agent from path, fix daemon resolveProjectDir for full paths
+- ResolveProjectDir accepts absolute paths directly, bypassing project_short lookup
+- Parse daemon raw JSON, fix symlink to persistent path
+- Correct daemon socket path + plan for setup integration
+- Move CodeExplore from shared_prompt to opencode/codex prompt — Claude already has CodeToolsFirst
+- Sync migration model_features comments with setup template
+- Place model_features under proxy:, add sandbox+secrets to template
+- Activate_cap thread_id resolution before first hook fires
+- Restore error handling in proxyCallWithThreadID + fall-through prevention
+- Wire EffectivePromptFlags into proxy + openai_parity pipelines
+- Gate Claude-specific injectors out of OpenAI parity path
+
+### Performance
+
+- Disable DeepSeek thinking mode via thinking:{type:disabled}
+- Shorter system prompt to reduce reasoning overhead
+- Adaptive deep_search routing — global BM25 for sparse queries
+- Decouple FTS5 content fetch + bm25 candidate pool
+- Parallelize loadAll queries after learnings phase
+- Add phase timing, content-hash write skip, and CodeGraph caching
+- Skip pipeline for non-interactive (CLI/extraction) requests
+
+### Reverted
+
+- Remove :sub isolation for opencode requests
+- Go back to appendToLastUserMessage pattern
+- Remove prependToFirstSystem, restore injectAssociativeContext for all DeepSeek injections
+
+### Documentation
+
+- Implementation plan for internal-session-isolation
+- Add Claude Code v2.1.128-140 catchup plan
+- Add scheduler running-map implementation plan
+- Add AGENTS.md, bash polyfills, code-nav expansion, cap consolidation pattern
+- Proxy pipeline plugin migration feasibility
+- Root cause analysis for reddit cap cross-compatibility (MCP polyfill needed)
+- Execute_cap E2E results and cap architecture notes
+- Opencode hook-plugin — code-nav enforcement, failure-learning, auto-resolve, idle-reminder
+- Add per-field comments for shared_prompt, model_features gates and viewer_terminal
+- Translate CapFeatures.md and caps-vs-skills-rationale.md to English
+- Opencode plugin implementation plan (Phase 2)
+
+### Testing
+
+- Add running-gate tests for scheduler dueJobs
+
 ## [2.0.6] - 2026-05-05
 
 ### Testing
@@ -635,10 +952,283 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Address pre-merge code review findings for Capability Memory
 - Exclude capabilities from evolution pipeline, clean embedding text
 
-## [pre-sanitization-2026-04-29] - 2026-04-29
+## [backup-opencode-proxy-20260518-1104] - 2026-05-18
 
 ### Added
 
+- 1h TTL for fileAttempts 2-strike counter
+- Add version and unix timestamp to fork log lines
+- 2-strike rule — first block with yesmem hint, second allows
+- Add code-tools-first rule (31) + skill catalog entry (50) with grep/glob/read triggers
+- Wire JobDone into scheduler executor callback
+- Gate dueJobs with running check to prevent concurrent execution
+- Add running map to Scheduler struct
+- Filter daemon-internal LLM sessions from scanner backlog
+- Inject YESMEM_SOURCE_AGENT=opencode into MCP environment by default
+- Add git branch context to prevent false feature-branch suggestions
+- Add session.created hook for opencode session identification
+- Expand extraction model choices to include DeepSeek + GPT via opencode
+- Interactive wizard now asks which model to use for conversations
+- Add anthropic provider + model/small_model keys to opencode template
+- Show session_id + supersede_reason in formatted output
+- Inject briefing as system message with MANDATORY_BRIEFING wrapper
+- Install opencode plugin files on update if missing/outdated
+- Increase opencode MCP timeout 10s → 30s with auto-upgrade from old default
+- Bash SUGGEST-only, MANDATORY CHECK prefix
+- RULES.md with guard rules + skill catalog
+- Mandatory memory search enforcement in rules 23 + 31
+- Authoritative skill injection via chat.message + system.transform
+- Make SUGGEST mandatory with directive wording
+- TUI toast for guard BLOCK/SUGGEST events
+- Visual markers for BLOCK/SUGGEST in output
+- Buffer last 5 user messages for guard context
+- Add chat.message context to guard evaluation
+- Fire guard on all tools, always suggest skills
+- Add missing CLAUDE.md rules 25-30
+- Add Skills section with activation triggers
+- Load rules from DECISIONS.md in project root
+- Add rule_guard tool.execute.before hook
+- Add skill-check instruction to DeepSeek output discipline
+- Shorten think-reminder and skill-eval injects for OpenAI path
+- Inject think-reminder, skill-eval, rules via timestamp store
+- Add prune=false to opencode compaction settings
+- Session-resume support for llm_complete RPC
+- Model-aware handleLLMComplete + LLMProvider config
+- Llm() polyfill for bash caps + llm-complete CLI + llm_complete RPC
+- Bash polyfills (store + llm) + llm_complete RPC
+- Unix socket MCP transport (replaces HTTP TCP)
+- Configurable caps_dir for runtime-agnostic CAP.md storage
+- MCP polyfill layer in bun wrapper for cross-compatible caps
+- Inject opencode CAP catalog into OpenAI parity pipeline
+- Register execute_cap tool
+- Execute_cap handler — sandboxed bun/bash CAP execution
+- Embed opencode plugin source in binary, install to ~/.local/share/yesmem/plugins/ during setup
+- Merge opencode provider/mcp/compaction settings without overwriting existing config; add opencode uninstall + status
+- Preload code graph at session start
+- Opencode plugin install — symlink + opencode.json registration + make deploy copy
+- Opencode-yesmem hook-plugin — code-nav, failure-learn, auto-resolve, idle-reminder
+- [yesmem-code-explore] directive — yesmem tools before shell for code exploration
+- Set feature_defaults to all-true — new models get full features by default
+- Opencode first-class config, migration, and setup wizard
+- Agent-aware footer in rules reminder (CLAUDE.md vs OPENCODE.md)
+- Concise think_reminder wording for non-Claude agents
+- Full timestamp injection (InjectTimestamps) for opencode parity path
+- Associative context diagnostic logging for opencode parity path
+- Opencode extraction adaption — schema-injection, prompt-neutralization, extractJSON fix
+- GenerateAgentsMd() for opencode project reference
+- Multi-agent CLIClient with stdin-pipe for codex/opencode
+- Profile-aware wording via Generator.SetSourceAgent()
+- Multi-agent session identity via resolveClientSessionID()
+- Set SharedPrompt in Default() with agent-neutral injector defaults
+- Learnings.source_agent + target_agent provenance columns
+- Config-split PromptFlags + EffectivePromptFlags(profile) + review fixes
+- Golden test framework + PromptProfile type for multi-agent prompt isolation
+
+### Changed
+
+- Bump index V=5, add ensureIndexed log to code_nav
+- Rephrase error — yesmem tools first, retry as fallback
+- Remove redundant ts= from [req N ver] format
+- Self-identifying format [req N ver ts] for pipeline lines
+- Bump index.ts cache key for 1h TTL code_nav reload
+- Self-identifying log format [req N v2.0.1-nn ts=U]
+- Add .opencode/ to gitignore
+- Remove debug eval log, verified convMsgs=6 ctxLen~750-1200
+- Consolidate extraction pipeline and storage layer
+- Use yesmem daemon RPC for last user message, remove broken hooks
+- Address code review — dead code removal, caps.db test, parser fix, benchmark deadline, guard cache
+- Remove dead code (guard_tui.ts, synthesizeProjectRules)
+- Rename DECISIONS.md → RULES.md
+- Remove chat.message/system.transform injection — revert to simple tool.execute.after
+- Remove debug logging
+- Accumulated changes — sandbox, scheduler, capfile adapter, cmd_worker, json commands
+- Remove 124MB dbstats binary from tracking
+- Sync remaining working tree changes (learnings search, storage schema, project model, opencode cap exec plan)
+- Comment out verbose OPENAI-OUT per-message log lines
+- Cap version tracking changes from concurrent session
+- Commit leftover changes from concurrent session
+- Merge CodeExploration into unified CodeToolsFirst, remove CodeExplore flag
+- Ignore node_modules
+- Rename InjectToolPrefs → InjectClaudeToolPrefs
+
+### Fixed
+
+- Balanced-bracket JSON parser + extraction session filter
+- Session mapped line also with [req N ver] format
+- Restore opencode grep/glob/read section lost in TTL edit
+- Restore throw after debug logs
+- Compose tool.execute.before/after hooks (spread overwritten)
+- Sync dbgLog + extend to grep/glob/read tools, add RULES.md to embed
+- Raw-byte body construction + flex-int JSON parsing
+- Increase max_tokens 1024→4096, complex tool reasoning overflow
+- Byte-prefix cache + min-tokens gate + RecordFailure reset
+- Increase max_tokens 256→1024, reasoning consumed budget
+- Rules in system msg for prefix-cache, sync dbgLog, json_object format
+- Add narrative and gap-review daemon prompts to filter
+- Split telegram poll/reply into separate single-responsibility handlers
+- Use future-proof model name deepseek-v4-flash instead of deprecated deepseek-chat
+- Fix suggestions Map type, add _test.go TDD-compliance note
+- Auto-detect OpenCode via OPENCODE=1 env var fallback
+- Also skip rule_guard.ts self-evaluation
+- Narrow file skip to RULES.md only, evaluate yesmem/worktree files normally
+- Remove anthropic provider from template + wizard — proxy-only providers
+- Correct reversed api-key condition + add anthropic to uninstall cleanup
+- Add convMsgs summary log for guard visibility
+- Register_pid persists source_agent, remove premature briefing generation
+- RecentConversation context, rulesHash cache, retry, robust parsing
+- Always show provider selection, remove forced skip for non-claude models
+- Correct get_learnings API params in briefing — task_type → category suffix
+- Briefing refinement fallback — dedup validateRefinedOutput + prevent double-arrival
+- Fork auth + prompt cleanup + keepalive guards
+- Bun.write truncate bug in code_nav + auto_resolve — use read+append like rule_guard
+- Use chat.params to capture user message (fires before LLM call)
+- Chat.message reads from output.message, not input.message
+- Cache ResolveProjectPath once to avoid sub-query deadlock inside row loops
+- Remove dead code with latent data races, protect learnings map reads
+- Remove orphaned code block blocking plugin load
+- Address code review — GetCachedGraph tests, handler reuse, TplMs timing, ReadFile guard
+- Use message.updated hook name, remove stale plugin file
+- Move session_active_caps to caps.db to avoid SQLITE_BUSY contention
+- Normalize fork effort to 'high' to prevent DeepSeek 400 on xhigh
+- Increase search deadline 12s→30s, fix telegram-poll 1s→15s
+- Allow user-requested commits in Rule 1
+- Normalize cache_control TTL to prevent ordering violation on resume
+- Append-mode logging + debug tracing for chat.message parts injection
+- SUGGEST format includes exact skill name with call-to-action
+- LoadRules now includes YAML Skill Catalog section
+- Console.* replaced with dbgLog — root cause of overlay
+- Replace all console.* with dbgLog file logging
+- BLOCK silent inline, toast-only
+- Show BLOCK reason in title not body
+- Remove JSX pragma from TUI plugin (not needed)
+- Add JSX pragma to TUI plugin
+- Move TUI plugin to tui.json config
+- Defer BLOCK to tool.execute.after instead of throwing
+- Throw descriptive BLOCKED reason instead of space
+- Lowercase tool names in Sets, add FIRED debug log
+- Renumber Session Discipline rules to avoid collision with Skill Catalog
+- Revert to throw — output.args mutation ineffective for Write
+- Use tool.execute.after for clean BLOCKED output
+- Remove appendPrompt, keep space-only throw
+- Throw with space, prepend warning via appendPrompt
+- Try neutralize Write/Edit via output.args mutation
+- Revert to throw with single-line error format
+- Neutralize tool instead of throwing on rule violation
+- Add toast notification for rule_guard blocks
+- Exclude bash, DECISIONS.md edits, internal files from rule_guard
+- Prevent MCP recursion deadlock when spawning opencode
+- Increase bash executor timeout for llm commands from 120s to 600s
+- Isolate opencode subagents in separate DeepSeek cache namespace
+- Comment out all DeepSeek/OpenAI proxy injections for cache baseline
+- Disable associative/doc context injection for DeepSeek
+- Prepend stable injections to all user messages for DeepSeek cache consistency
+- Restore all DeepSeek injections via prependToFirstSystem
+- Cap daemon GOMAXPROCS=4 to prevent CPU saturation
+- DeepSeek cache fragmentation — move stable injections to system[0], remove variable blocks
+- Rate-limiter queue time excluded from LLM call timeout
+- Rate-limiter, wiki-tick skip, 300s timeout, circuit breaker for timeouts
+- Provider routing for fork, keepalive, and message forwarding
+- Fork uses quality model, keepalive skips small sessions
+- Unwrap RPC envelope in _mcpCall polyfill
+- Polyfill cap_blob_put/cap_blob_get via cap_store RPC
+- Unify session ID prefix from oa: to opencode:
+- Pass cache_control through OpenAI reverse translation for DeepSeek caching
+- Get_compacted_stubs and expand_context range mode read from frozen stubs + messages.db full-text lookup
+- Case-insensitive command detection (Grep == grep)
+- Keep i and role for re-enableable log lines
+- Extract only real file paths, convert absolute to relative for RPC
+- Also block directory-level grep when dir has indexed files
+- Block only when target file is in CBM code graph, not entire project
+- Remove debug logging, clean throw-based blocking
+- Pass plugin directory to code_nav hook, fix property access
+- Try output.block first, throw Error as fallback for grep blocking
+- Increase RPC timeout to 20s for slow CBM code scan
+- RPC unwrap daemon result wrapper, code_nav retries on index miss
+- Remove broken @opencode-ai/sdk Plugin import, use plain function types
+- Code_nav checks project index existence once, not per-file symbol lookup
+- Detect opencode source agent from path, fix daemon resolveProjectDir for full paths
+- ResolveProjectDir accepts absolute paths directly, bypassing project_short lookup
+- Parse daemon raw JSON, fix symlink to persistent path
+- Correct daemon socket path + plan for setup integration
+- Move CodeExplore from shared_prompt to opencode/codex prompt — Claude already has CodeToolsFirst
+- Sync migration model_features comments with setup template
+- Place model_features under proxy:, add sandbox+secrets to template
+- Activate_cap thread_id resolution before first hook fires
+- Restore error handling in proxyCallWithThreadID + fall-through prevention
+- Wire EffectivePromptFlags into proxy + openai_parity pipelines
+- Gate Claude-specific injectors out of OpenAI parity path
+
+### Performance
+
+- Disable DeepSeek thinking mode via thinking:{type:disabled}
+- Shorter system prompt to reduce reasoning overhead
+- Adaptive deep_search routing — global BM25 for sparse queries
+- Decouple FTS5 content fetch + bm25 candidate pool
+- Parallelize loadAll queries after learnings phase
+- Add phase timing, content-hash write skip, and CodeGraph caching
+- Skip pipeline for non-interactive (CLI/extraction) requests
+
+### Reverted
+
+- Remove :sub isolation for opencode requests
+- Go back to appendToLastUserMessage pattern
+- Remove prependToFirstSystem, restore injectAssociativeContext for all DeepSeek injections
+
+### Documentation
+
+- Add scheduler running-map implementation plan
+- Add AGENTS.md, bash polyfills, code-nav expansion, cap consolidation pattern
+- Proxy pipeline plugin migration feasibility
+- Root cause analysis for reddit cap cross-compatibility (MCP polyfill needed)
+- Execute_cap E2E results and cap architecture notes
+- Opencode hook-plugin — code-nav enforcement, failure-learning, auto-resolve, idle-reminder
+- Add per-field comments for shared_prompt, model_features gates and viewer_terminal
+- Opencode plugin implementation plan (Phase 2)
+
+### Testing
+
+- Add running-gate tests for scheduler dueJobs
+
+## [backup-main-20260518-1104] - 2026-05-05
+
+### Added
+
+- Inject CLAUDE.md Key Packages descriptions as package page intents
+- Link file Package to package page, mention packages.md in codemap
+- Add packages.md index + packages/ link in README
+- Add package-level aggregation pages (packages/<pkg>.md)
+- Name-drop top-5 collapsed packages in codemap footer
+- Merge CBM scan files into file index for complete coverage
+- Add OpenCode TUI sidebar plugin for yesmem cache status display
+- Shrink briefing codemap — activity-sort, top-10, wiki-link
+- Per-project worktree support + scan caching
+- CBM live-scanner + --scan CLI flag for code graph imports
+- Add code-graph integration — package, imports, imported-by per file
+- Migrate wiki_export cap to native Go subcommand
+- Wiki_export file sessions via learnings join path
+- Wiki_export session pages with full learning text, file snippets 140→600 chars
+- Enable gojq input(s)/0 via WithInputIter
+- Wiki_export v65 → v66 — topic co-occurrence + per-file enrichment
+- Interval_seconds without cron + script_name targeting (T7+T8)
+- Yesmem json now supports full jq-compat flags (-n, -R, -s, -e, --arg, --argjson) via gojq
+- Add yesmem query and json subcommands for read-only DB access
+- Refactor yesmem-cap-builder for cap-spec v1.1\n\nReplaces the previous 430-line single-file SKILL.md whose save_cap shape\nwas wrong (handler_repl/handler_bash separate fields) with a 336-line\nquick-start index plus three side-files: recipes.md (six working cap\npatterns including yesmem query/json/cap-blob-put pipes), api-reference.md\n(authoritative shapes for save_cap, get_caps, activate_cap, cap_store\nactions, cap_proposal_decide, plus the yesmem CLI surface), gotchas.md\n(28 entries spanning REPL VM allowlist, sh 30KB wall, sanitize_where,\nschema rules, bundled-cap DB-write-back lifecycle including pre-commit\nversion-sync, jq label/apostrophe quirks, and a 9-item spec-feedback\nsection for the cap-spec repo).\n\nSource distilled from two 4116- and 1068-message sessions via verbatim\nstage-1 extraction; audit trail lives under yesdocs/plans/2026-05-01-\ncap-builder-stage1/.\n\nSide-files are picked up natively by InstallBundledSkills which\niterates every file in the skill directory.
+- Reject sandbox=none on scope=project caps
+- Per-script sandbox overrides scheduled-job profile
+- Add Sandbox field to ScriptMeta with enum validation
+- Add per-script sandbox metadata field
+- Origin-aware multiplier for trust-weighted scoring
+- Tag origin_tool=llm_extracted_session on extracted learnings
+- HandleRemember accepts origin param, defaults to user
+- Persist and read origin_tool in learnings
+- Add OriginTool field to Learning struct
+- Add origin_tool column to learnings table
+- Add openai, ssh, gpg, ipv4_public, hex_secret pattern kinds
+- Wrap LLMClient with SanitizingClient when SecretsSanitization enabled
+- SanitizingClient wraps LLMClient with Sanitize-before-after
+- Redact bash-job output before persist when SecretsSanitization enabled
+- Wire SecretRedactor onto Handler when enabled
+- Introduce Sanitizer interface and SecretRedactor with 10 kinds
 - FREEZE/RESTORE symmetry + eager-stub memory layer
 - Re-enable matched-cap inject via Sawtooth-tail
 - T3 decide tool, T4/T5 rate-limits, review fixes, multi-bash filter
@@ -664,6 +1254,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Schema for bash-mode scheduler (cap_name, auto_correct, bash_job_runs)
 - Ai-jail sandbox integration with download-on-first-use
 - Inject [yesmem-code-tools-first] directive block
+- Inject code-tools-first directive via InjectAntDirectives
 - Bundled caps deployment in setup + update + hook matchers to .*
 - Code-nav hook detects rg/grep/cat in REPL code, not just Bash
 - Subagent caps propagation + seen-map dedup fix + conditional adapter JS
@@ -711,6 +1302,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add briefing capability hints, /build-tool skill, review fixes
 - Add Capability Memory handlers, MCP tools, and tests
 - Add 'capability' as valid learning category
+- Gotcha injection decay + tiered output (top-1 only)
+- Config migration for setup and update
 - Add skill_eval_inject config toggle
 - Install wizard picks CLI vs API key, default model sonnet
 - Follow parent process CWD for worktree routing
@@ -1201,12 +1794,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Regenerate for v2.0.6 release
+- Split index.md into file-tree + learnings.md category index
+- Copy loop var in save_cap, clarify legacy-handler merge comment
+- Merge GenerateSharedAdapterJS into GenerateAdapterJS with skipStore param, add UsesStoreAdapter
+- Remove yesmem-build-tool, refresh yesmem-planning
+- Rewrite wiki_export as native runtime:bash (v62)
+- Silence sandbox-override log when profiles match
+- Enumerate valid sandbox values in error
+- Tidy sandbox validation per code review
 - Exclude .ai-jail sandbox configs
 - Drop dead guard in WriteCapToDisk DDL path
 - Retire reddit standalones, stage bundle CAP.md exports + idempotent adapter rename
 - Pivot REPL-pattern detection to fork-driven model
 - Resync cap_search bundle template
 - Replace private paths in test fixtures with generic placeholders
+- Remove   .last-sync-hash, require --branch flag in sync-public.sh
 - Remove Notes section from parser and writer
 - Merge 4 schedule_* tools into single schedule tool with action param
 - Update catalog format and auto_active default
@@ -1325,6 +1928,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Cache project path to avoid SQLite single-conn deadlock
+- Add all public docs to allowlist, remove stale claude-code-repl exclude
+- Harden security scanner
+- Add WithStringItems to update_plan array params for codex JSON schema compliance
+- Resolve job work_dir via project resolver instead of hardcoded dev path
+- Add file-specific entity matching to gotcha filter — old info gotchas with matching file entities are preserved (per code review)
+- Session metadata from learning IDs, exclude non-package dirs
+- Remove unreliable LOC from package pages
+- Go-only package filter, LOC aggregation, deduped health counts
+- Filter non-code paths from file index — vendor, PDFs, erledigt
+- Point codemap footer to index.md instead of files/
+- Normalize absolute file paths to relative in file index
+- Filter foreign worktrees, dot-files, absolute paths from file index
+- Move wiki-link to top of codemap block — before package table
+- Clarify wiki path encoding in imperative block
+- CLI --scan also saves to project_scan cache
+- Derive file imports from CALLS edges when IMPORTS is empty
+- Save_cap field-merge preserves scripts on metadata-only updates
+- Per-cap store() wrapper with capability injection and args stringify
+- Align wiki_export source with disk v65
+- Version-Guard in WriteCapToDisk — skip overwrite when disk version >= DB version
+- Blank first user message content on collapse
+- Cap WAL size at 10MB via journal_size_limit pragma
+- Expose origin parameter in remember tool schema
+- Guard startDaemon under go test to prevent fork bomb
+- Emit origin_tool in hybrid_search response so proxy multiplier sees it
+- Tighten phone regex to reject ipv4-like dotted strings
+- Widen generic_api_key charset to ./+= for base64 tokens
+- Broaden bearer_token regex beyond Authorization header
+- Wrap SummarizeClient at assignment instead of post-replacement
+- Wrap quickstart client+qualityClient for all 6 LLM paths
+- Wrap briefingClient with SanitizingClient when enabled
+- Redact Command/ErrorMsg, headless output and stderr
+- Sanitize SanitizingClient output even on inner error
 - Respect since/before in search and deep_search
 - Always shift cache breakpoint, including tool_result messages
 - Fail closed when sandbox unavailable
@@ -1335,6 +1972,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hydrate DatabaseSQL via GetCapTableDDL in WriteCapToDisk
 - Spec-compliant CAP.md render and parse
 - Parse UNIQUE/PK/NotNull constraints from MCP cap_store create_table params
+- API key fallback chain for re-setup
 - Code review fixes for bash-mode scheduler
 - Inject adapter JS (store/web/file aliases) in proxy caps re-injection
 - Set dataDir in test helper to prevent CAP.md artifacts in source tree
@@ -1725,11 +2363,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Translate CapFeatures.md and caps-vs-skills-rationale.md to English
+- Add config.yaml and settings.json references, move internal docs to yesdocs
+- Merged context redundancy analysis with implementation decisions and provenance table
+- Drop sandbox prose section from 1.0-copy
+- Opencode proxy and injection integration plan
+- Verify and correct opencode-integration implementation plan
+- Briefing codemap shrink follow-up to wiki-render
+- Swap wiki-export-level1-enrichment for wiki-render-go-rewrite
+- Cap consolidation pattern + sandbox field spec note
+- Sync against main + add capabilities/sanitize/sandbox sections
+- Add opencode source integration + wiki-export L1 enrichment plans
+- Add DiD-roadmap, learnings-wiki-export, per-cap-sandbox; refresh sanitize-followups
+- Update capability-memory design notes
+- Add database schema reference for the four SQLite stores
+- Document set_plan trigger conditions in MCP and coding-discipline injection
+- Add cap-system hardening roadmap (T1, T3, T8)
+- Add cap-builder knowledge audit trail\n\nTwo-stage workflow for distilling cap-building knowledge from past\nsessions into the yesmem-cap-builder skill.\n\nStage 1 (verbatim extraction) under cap-builder-stage1/:\n  session-bb37bd60.md (517 lines, full coverage 0..1067)\n  session-cc0ba29d.md (733 lines, coverage 0..1599)\n  session-cc0ba29d-part2.md (1003 lines, coverage 1600..4115)\n  README.md as index and hand-off\n\nStage 2 (synthesised proposal) under cap-builder-stage1/stage2/:\n  SKILL.md, recipes.md, api-reference.md, gotchas.md\n  Snapshot of the proposal before patches and live take-over.\n\nKept under yesdocs/plans/ rather than discarded so the chain from\nsession quote to skill paragraph stays auditable; future revisions\ncan re-run stage 1 against new sessions and diff against this\nbaseline.
+- Note why project-scope guard includes script name directly
+- Note B8 skip per audit grep result
+- Audit trust-multiplier locations and remember touch-points
+- Document SanitizingClient decorator-order contract
+- Clarify AllowedExceptions full-match semantics + add config example
+- Add Plan B+F implementation plan for source integrity and sanitize followups
+- Post-review hardening section for sanitization integration
+- Mark Defense-in-Depth status (verified 2026-04-29)
 - CC 2.1.119-2.1.123 feature adoption plan
 - Add system/cache-cycle.md — vollstaendige Cache-Zyklus-Architektur
 - Bash-mode-scheduler audit + auto-correct-hardening plan
+- Add plans and analyses from 2026-04-24 (private, excluded from public sync)
 - Dead-target-detection + cap-suggestion-v2 plans
 - Remove obsolete telegram adapter plan and spec
+- Update Features.md and README.md for recent development
 - Add JobsFeature.md with full scheduler documentation
 - Bash-mode scheduler implementation plan
 - Minor updates to CHANGELOG, reddit_fetch CAP, build-tool SKILL
@@ -1881,6 +2546,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Testing
 
+- Align stale assertions with current render text and sandbox auto-install
+- Use non-pattern fixture value for generic api-key redaction
+- Drop TestInstallBundledCaps_IncludesWikiExport
+- Verify wiki_export bundled cap installs into ~/.claude/caps/
+- Add live cap parser probes for proxy_health and wiki_export
+- Origin end-to-end smoke verifying handler+store+multiplier
 - Reconstruct bash error handler tests (Task 5)
 - Add failing tests for three directive inject functions
 - Raise MCP tool budget to 24000 chars / 65 tools
@@ -1898,6 +2569,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add comprehensive tests for generator and storage
 
 
+[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/carsteneu/yesmem/compare/v2.0.6...v2.1.0
 [2.0.6]: https://github.com/carsteneu/yesmem/compare/v2.0.5...v2.0.6
 [2.0.5]: https://github.com/carsteneu/yesmem/compare/v2.0.4...v2.0.5
 [2.0.4]: https://github.com/carsteneu/yesmem/compare/v2.0.3...v2.0.4
@@ -1917,4 +2590,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [1.0.1]: https://github.com/carsteneu/yesmem/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/carsteneu/yesmem/compare/safety-before-rebase-2026-04-16...v1.0.0
 [safety-before-rebase-2026-04-16]: https://github.com/carsteneu/yesmem/compare/pre-sanitization-2026-04-29...safety-before-rebase-2026-04-16
-[pre-sanitization-2026-04-29]: https://github.com/carsteneu/yesmem/releases/tag/pre-sanitization-2026-04-29
+[pre-sanitization-2026-04-29]: https://github.com/carsteneu/yesmem/compare/backup-opencode-proxy-20260518-1104...pre-sanitization-2026-04-29
+[backup-opencode-proxy-20260518-1104]: https://github.com/carsteneu/yesmem/compare/backup-main-20260518-1104...backup-opencode-proxy-20260518-1104
+[backup-main-20260518-1104]: https://github.com/carsteneu/yesmem/releases/tag/backup-main-20260518-1104

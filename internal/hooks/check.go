@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -88,8 +89,8 @@ func RunCheck(dataDir string) {
 		// Dialog tools: register session_id so daemon knows who's calling
 		// PreToolUse fires BEFORE the MCP call → daemon has the ID when send_to arrives
 		if hook.SessionID != "" {
-			registerPID(dataDir, hook.SessionID, os.Getppid())
-			writePIDFile(dataDir, hook.SessionID, os.Getppid())
+			RegisterPID(dataDir, hook.SessionID, os.Getppid())
+			WritePIDFile(dataDir, hook.SessionID, os.Getppid())
 		}
 		emitReminder("")
 		return
@@ -155,7 +156,7 @@ func RunCheck(dataDir string) {
 		checkSaveCount(store, hook.ToolName, hashInput(inputStr))
 	}
 
-	gotchas, err := store.GetActiveLearnings("gotcha", "", "", "")
+	gotchas, err := store.GetActiveLearnings("gotcha", "", "", "", 0)
 	if err != nil || len(gotchas) == 0 {
 		emitReminder("")
 		return
@@ -215,6 +216,10 @@ func RunCheck(dataDir string) {
 	// File ops use lower threshold: 1 match with filename (contains ".") suffices
 	var projectMatches, globalMatches []matchedGotcha
 	for _, g := range gotchas {
+		// Skip gotchas with destructive actions that aren't relevant to this tool type.
+		if !isRelevantForTool(&g, hook.ToolName) {
+			continue
+		}
 		score := matchScore(keywords, g.Content)
 		decay := injectionDecay(g.InjectCount, g.UseCount, g.SaveCount)
 		effScore := float64(score) * decay
@@ -302,6 +307,24 @@ func RunCheck(dataDir string) {
 
 	// Check for block-worthy gotchas (hit_count >= threshold)
 	allMatches := append(projectMatches, globalMatches...)
+
+	// Per-session cap: skip gotchas already shown 3+ times this session.
+	// Reset on session restart (new SessionID → new keys). Global injectionDecay
+	// still handles cross-session staleness independently.
+	if hook.SessionID != "" && len(allMatches) > 0 {
+		var capped []matchedGotcha
+		for _, mg := range allMatches {
+			key := fmt.Sprintf("gotcha_count:%s:%d", hook.SessionID, mg.learning.ID)
+			countStr, _ := store.GetProxyState(key)
+			count, _ := strconv.Atoi(countStr)
+			if count >= 3 {
+				continue
+			}
+			capped = append(capped, mg)
+		}
+		allMatches = capped
+	}
+
 	if bg := findBlockableGotcha(allMatches); bg != nil {
 		store.IncrementMatchCounts([]int64{bg.learning.ID})
 		store.IncrementInjectCounts([]int64{bg.learning.ID})
@@ -325,6 +348,14 @@ func RunCheck(dataDir string) {
 		store.SetProxyState("last_gotcha_ids", string(idsJSON))
 		store.SetProxyState("last_gotcha_tool", hook.ToolName)
 		store.SetProxyState("last_gotcha_input_hash", hashInput(inputStr))
+
+		// Per-session cap: increment injection counter for each injected gotcha
+		for _, id := range injectedIDs {
+			key := fmt.Sprintf("gotcha_count:%s:%d", hook.SessionID, id)
+			countStr, _ := store.GetProxyState(key)
+			count, _ := strconv.Atoi(countStr)
+			store.SetProxyState(key, strconv.Itoa(count+1))
+		}
 	} else {
 		store.SetProxyState("last_gotcha_ids", "")
 	}
@@ -419,6 +450,33 @@ func isProtectedFile(filePath string) bool {
 // Warning threshold is score >= 2; blocking requires stronger evidence to avoid
 // cross-matching unrelated commands that share generic keywords.
 const blockMinScore = 4
+
+// isRelevantForTool checks whether a gotcha's actions make it relevant for the current tool.
+// Gotchas with destructive/bash-only actions (rm, mv, git push, make, deploy) only fire on Bash/Write/Edit.
+// Gotchas with no actions are always relevant (backward compatible).
+// Gotchas with non-destructive actions fire on all tools.
+func isRelevantForTool(g *models.Learning, toolName string) bool {
+	if len(g.Actions) == 0 {
+		return true
+	}
+	// Tools that can perform destructive/file operations
+	toolName = strings.ToLower(toolName)
+	fileOpTools := map[string]bool{"bash": true, "write": true, "edit": true}
+	if !fileOpTools[toolName] {
+		for _, a := range g.Actions {
+			al := strings.ToLower(a)
+			if strings.Contains(al, "rm") || strings.Contains(al, "mv") ||
+				strings.Contains(al, "git") || strings.Contains(al, "make") ||
+				strings.Contains(al, "deploy") || strings.Contains(al, "cp") ||
+				strings.Contains(al, "chmod") || strings.Contains(al, "chown") ||
+				strings.Contains(al, "write") || strings.Contains(al, "edit") ||
+				strings.Contains(al, "delete") || strings.Contains(al, "remove") {
+				return false
+			}
+		}
+	}
+	return true
+}
 
 // findBlockableGotcha returns the first match whose fail_count >= blockThreshold,
 // match score >= blockMinScore, AND was auto-learned from an actual failure, or nil.

@@ -31,7 +31,7 @@ func main() {
 
 	// Which have learnings
 	extracted := map[string]bool{}
-	allLearnings, _ := store.GetActiveLearnings("", "", "", "")
+	allLearnings, _ := store.GetActiveLearnings("", "", "", "", 0)
 	for _, l := range allLearnings {
 		if l.SessionID != "" {
 			extracted[l.SessionID] = true
@@ -66,7 +66,7 @@ func main() {
 	}
 
 	// Narratives
-	narratives, _ := store.GetActiveLearnings("narrative", "", "", "")
+	narratives, _ := store.GetActiveLearnings("narrative", "", "", "", 0)
 	fmt.Printf("\nNarratives: %d\n", len(narratives))
 
 	// One-time migrations
@@ -166,7 +166,7 @@ func main() {
 	}
 
 	// Re-read after potential backfill
-	allLearnings, _ = store.GetActiveLearnings("", "", "", "")
+	allLearnings, _ = store.GetActiveLearnings("", "", "", "", 0)
 
 	// Project distribution
 	withProject := 0

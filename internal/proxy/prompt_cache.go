@@ -327,6 +327,35 @@ func UpgradeCacheTTL(req map[string]any, ttl string) int {
 	return upgraded
 }
 
+// NormalizeCacheTTL guarantees that every cache_control block in the request
+// carries the same TTL, so Anthropic never sees an increasing-TTL violation
+// (e.g. a 5m block followed by a 1h block, which yields HTTP 400).
+//
+// Target selection: if ANY block already carries ttl:"1h" — whether from
+// cfgTTL, Claude Code passthrough on --resume, or a stale frozen prefix
+// captured during an earlier 1h-mode turn — we promote the entire request to
+// 1h. Otherwise we fall back to cfgTTL (empty/ephemeral leaves blocks without
+// a ttl field so they keep Anthropic's default 5m semantics).
+//
+// Returns the number of cache_control blocks that were rewritten.
+func NormalizeCacheTTL(req map[string]any, cfgTTL string) int {
+	target := cfgTTL
+	for _, holder := range collectCacheControlHolders(req) {
+		cc, ok := holder.holder["cache_control"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if ttl, _ := cc["ttl"].(string); ttl == "1h" {
+			target = "1h"
+			break
+		}
+	}
+	if target == "" {
+		target = "ephemeral"
+	}
+	return UpgradeCacheTTL(req, target)
+}
+
 func injectSystemCache(req map[string]any, cc map[string]any) bool {
 	switch sys := req["system"].(type) {
 	case []any:

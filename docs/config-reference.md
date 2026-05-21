@@ -119,9 +119,9 @@ Each injection can be toggled individually. Default: all `true` except as noted.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `prompt_ungate` | bool | `true` | Strip CLAUDE.md subordination disclaimer. |
-| `prompt_rewrite` | bool | `false` | Strip output-throttling + inject quality directives. |
-| `prompt_enhance` | bool | `false` | CLAUDE.md authority boost + comment discipline + persona tone. |
+| `prompt_ungate` | bool | `true` | `[deprecated]` Use `claude_prompt.prompt_ungate`. Strip CLAUDE.md subordination disclaimer. |
+| `prompt_rewrite` | bool | `false` | `[deprecated]` Use `claude_prompt.prompt_rewrite`. Strip output-throttling + inject quality directives. |
+| `prompt_enhance` | bool | `false` | `[deprecated]` Use `claude_prompt.prompt_enhance`. CLAUDE.md authority boost + comment discipline + persona tone. |
 | `prompt_tool_prefs` | bool | `true` | `[yesmem-tool-prefs]` Edit/Write preference + error-semantics warning. |
 | `prompt_output_discipline` | bool | `true` | `[yesmem-output-discipline]` No preamble + no skill eval + exploratory heuristic. |
 | `prompt_coding_discipline` | bool | `true` | `[yesmem-coding-discipline]` Read-before-propose + no brute force + no half-finished. |
@@ -133,6 +133,35 @@ Each injection can be toggled individually. Default: all `true` except as noted.
 | `prompt_pattern_suggest` | bool | `true` | Record repeated shell-command shapes for cap-suggestion analysis. |
 | `effort_floor` | string | `""` | Minimum effort level: `low`, `medium`, `high`, `max`. Empty = off. |
 | `skill_eval_inject` | string | `silent` | `true` (verbose eval output), `silent` (internal eval only), `false` (disabled). |
+
+### Profile-Aware Prompt Configuration
+
+Replaces the deprecated flat prompt flags. Each pipeline gets its own prompt profile; empty fields inherit from `shared_prompt`.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `shared_prompt` | PromptProfile | `{}` | Base prompt profile for ALL pipelines. |
+| `claude_prompt` | PromptProfile | `{}` | Claude Code override. Empty = inherit from shared_prompt. |
+| `codex_prompt` | PromptProfile | `{}` | Codex override. Empty = inherit from shared_prompt. |
+| `opencode_prompt` | PromptProfile | `{}` | OpenCode override. Empty = inherit from shared_prompt. |
+
+### Provider Auto-Discovery
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `auto_configure_providers` | bool | `true` | Read models.json + opencode.json + auth.json at proxy startup to auto-configure provider routing. Set to `false` to disable. |
+| `provider_targets` | map[string]string | `{deepseek: "https://api.deepseek.com"}` | Per-provider target URLs for OpenAI-compatible providers. Keys are matched as case-insensitive prefixes against model names. |
+
+### Custom System Prompt
+
+Replaces the default system prompt with the SYSTEM.md template for supported pipelines.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `custom_system_prompt.enabled_opencode` | bool | `true` | Inject SYSTEM.md for OpenCode/DeepSeek/OpenAI-compatible pipelines. |
+| `custom_system_prompt.enabled_claude_code` | bool | `true` | Inject SYSTEM.md for Claude Code pipeline. Anthropic provides `--system-prompt` as official CLI flag. |
+| `custom_system_prompt.enabled_codex` | bool | `true` | Inject SYSTEM.md for Codex pipeline. |
+| `custom_system_prompt.template_path` | string | `~/.claude/yesmem/SYSTEM.md` | Path to the system prompt template file. |
 
 ---
 
@@ -288,3 +317,15 @@ Per-million-token pricing for budget tracking. Configurable without rebuild.
 ---
 
 > **See also:** `config.example.yaml` in repo root (abridged version with inline comments).
+
+### exclude_projects — Project Exclusion
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `exclude_projects` | []string | `[]` | Projects to exclude from session indexing. Prevents noise directories from being tracked. |
+
+### caps_dir — CAP Storage
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `caps_dir` | string | `~/.claude/caps/` | Directory for CAP.md capability files. Runtime-agnostic storage for reusable tool definitions. |

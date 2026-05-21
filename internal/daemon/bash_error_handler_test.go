@@ -216,7 +216,7 @@ func TestAutoCorrect_DoesNotPersistWhenSandboxUnavailable(t *testing.T) {
 
 	h.processBashJobErrors()
 
-	caps, err := h.store.GetActiveLearnings("cap", "yesmem", "", "")
+	caps, err := h.store.GetActiveLearnings("cap", "yesmem", "", "", 0)
 	if err != nil {
 		t.Fatalf("read caps: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestPersistProposalForReview_FindsBashByRuntime(t *testing.T) {
 		CapName:  "demo_persist",
 		ErrorMsg: "exit 1",
 	}
-	caps, err := h.store.GetActiveLearnings("cap", "", "", "")
+	caps, err := h.store.GetActiveLearnings("cap", "", "", "", 0)
 	if err != nil {
 		t.Fatalf("GetActiveLearnings: %v", err)
 	}
@@ -339,7 +339,7 @@ func TestPersistProposalForReview_FindsBashByRuntime(t *testing.T) {
 	}
 
 	// The active cap must still hold the original body — proposals do not mutate the live row.
-	caps, err = h.store.GetActiveLearnings("cap", "yesmem", "", "")
+	caps, err = h.store.GetActiveLearnings("cap", "yesmem", "", "", 0)
 	if err != nil {
 		t.Fatalf("read active caps: %v", err)
 	}
@@ -560,7 +560,7 @@ func TestPersistProposalForReview_MultiBashTargetsScriptByName(t *testing.T) {
 		t.Fatalf("seed save_cap: %s", saveResp.Error)
 	}
 
-	caps, err := h.store.GetActiveLearnings("cap", "yesmem", "", "")
+	caps, err := h.store.GetActiveLearnings("cap", "yesmem", "", "", 0)
 	if err != nil {
 		t.Fatalf("GetActiveLearnings: %v", err)
 	}

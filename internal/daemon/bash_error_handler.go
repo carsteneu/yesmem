@@ -139,7 +139,7 @@ func (h *Handler) diagnoseBashError(run storage.BashJobRun) bool {
 }
 
 func (h *Handler) autoCorrectBashCap(run storage.BashJobRun, job *ScheduledJob, allowedPorts string) {
-	caps, err := h.store.GetActiveLearnings("cap", "", "", "")
+	caps, err := h.store.GetActiveLearnings("cap", "", "", "", 0)
 	if err != nil {
 		h.diagnoseBashError(run)
 		return

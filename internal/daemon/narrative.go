@@ -138,7 +138,7 @@ func SummarizeMessages(msgs []models.Message) []string {
 // getSessionFlavorAndIntensity returns the flavor and max emotional intensity
 // from non-narrative learnings of the same session.
 func getSessionFlavorAndIntensity(store *storage.Store, sessionID string) (string, float64) {
-	learnings, err := store.GetActiveLearnings("", "", "", "")
+	learnings, err := store.GetActiveLearnings("", "", "", "", 0)
 	if err != nil {
 		return "", 0
 	}
@@ -171,7 +171,7 @@ func buildProjectContext(store *storage.Store, projectShort string) *ProjectCont
 	if err == nil {
 		for _, s := range sessions {
 			// Get flavor from narratives for this session
-			narratives, _ := store.GetActiveLearnings("narrative", projectShort, "", "")
+			narratives, _ := store.GetActiveLearnings("narrative", projectShort, "", "", 0)
 			flavor := ""
 			for _, n := range narratives {
 				if n.SessionID == s.ID && n.SessionFlavor != "" {
@@ -191,7 +191,7 @@ func buildProjectContext(store *storage.Store, projectShort string) *ProjectCont
 	}
 
 	// Open work items (max 3)
-	unfinished, _ := store.GetActiveLearnings("unfinished", projectShort, "", "")
+	unfinished, _ := store.GetActiveLearnings("unfinished", projectShort, "", "", 0)
 	for i, u := range unfinished {
 		if i >= 3 {
 			break
@@ -276,7 +276,7 @@ func generateNarrativeForSession(store *storage.Store, s models.Session, client 
 	}
 
 	// Check if narrative already exists
-	existing, _ := store.GetActiveLearnings("narrative", "", "", "")
+	existing, _ := store.GetActiveLearnings("narrative", "", "", "", 0)
 	for _, l := range existing {
 		if l.SessionID == s.ID {
 			return // Already has narrative

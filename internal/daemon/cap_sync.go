@@ -17,6 +17,7 @@ func CapFileToParams(cf capfile.CapFile) map[string]any {
 	params := map[string]any{
 		"name":        cf.Name,
 		"description": cf.Description,
+		"version":     float64(cf.Version),
 	}
 
 	if len(cf.Scripts) > 0 {
@@ -148,7 +149,7 @@ func SyncCapsFromDisk(h *Handler, userDir, projectDir string) {
 }
 
 func ExportAllCaps(h *Handler, baseDir string) {
-	learnings, err := h.store.GetActiveLearnings("cap", "", "", "")
+	learnings, err := h.store.GetActiveLearnings("cap", "", "", "", 0)
 	if err != nil {
 		log.Printf("[cap-export] query: %v", err)
 		return

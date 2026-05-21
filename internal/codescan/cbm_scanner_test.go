@@ -1,6 +1,7 @@
 package codescan
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -146,6 +147,66 @@ func TestParseTestCoverage(t *testing.T) {
 	}
 	if result["daemon.go"] != 1 {
 		t.Errorf("expected 1 test file for daemon.go, got %d", result["daemon.go"])
+	}
+}
+
+func TestIsBlacklistedPath(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot determine home dir")
+	}
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"", true},
+		{"/", true},
+		{home, true},
+	}
+	for _, tt := range tests {
+		got := isBlacklistedPath(tt.path)
+		if got != tt.want {
+			t.Errorf("isBlacklistedPath(%q) = %v, want %v", tt.path, got, tt.want)
+		}
+	}
+}
+
+func TestIsBlacklistedPath_NoGit(t *testing.T) {
+	dir := t.TempDir()
+	if !isBlacklistedPath(dir) {
+		t.Error("expected blacklisted for directory without .git")
+	}
+}
+
+func TestIsBlacklistedPath_NormalRepo(t *testing.T) {
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, ".git"), 0755)
+	if isBlacklistedPath(dir) {
+		t.Error("expected NOT blacklisted for normal git repo")
+	}
+}
+
+func TestIsBlacklistedPath_WorktreeWithActivity(t *testing.T) {
+	root := repoRoot(t)
+	if !isWorktree(root) {
+		t.Skip("not a git worktree")
+	}
+	if !hasRecentGitActivity(root) {
+		t.Skip("no recent git activity in this worktree")
+	}
+	if isBlacklistedPath(root) {
+		t.Error("expected NOT blacklisted for active worktree")
+	}
+}
+
+func TestIsBlacklistedPath_StaleWorktree(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: /fake/path\n"), 0644)
+	if !isWorktree(dir) {
+		t.Fatal("expected isWorktree to detect .git file")
+	}
+	if !isBlacklistedPath(dir) {
+		t.Error("expected blacklisted for stale worktree (no git history)")
 	}
 }
 

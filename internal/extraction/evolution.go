@@ -184,7 +184,7 @@ func (e *Extractor) findConflictCandidates(newID int64, newLearning *models.Lear
 // findCandidatesByRecency is the original recency-based candidate selection.
 // Returns the most recent active learnings in the same category/project, excluding newID.
 func (e *Extractor) findCandidatesByRecency(newID int64, newLearning *models.Learning, limit int) []models.Learning {
-	existing, err := e.store.GetActiveLearnings(newLearning.Category, newLearning.Project, "", "")
+	existing, err := e.store.GetActiveLearnings(newLearning.Category, newLearning.Project, "", "", 0)
 	if err != nil {
 		return nil
 	}

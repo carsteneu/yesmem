@@ -392,3 +392,99 @@ func TestApplyJSONFilter_RawInputSelect(t *testing.T) {
 		t.Fatalf("got %q want %q", got, want)
 	}
 }
+
+// --- jsonCLIRun: end-to-end shape used by the worker's json_cli op ---
+
+func TestJSONCLIRun_RawField(t *testing.T) {
+	out, exit, err := jsonCLIRun([]string{"-r", ".foo"}, strings.NewReader(`{"foo":"bar"}`))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if exit != 0 {
+		t.Fatalf("exit=%d, want 0", exit)
+	}
+	if string(out) != "bar\n" {
+		t.Fatalf("got %q, want %q", out, "bar\n")
+	}
+}
+
+func TestJSONCLIRun_NullInputBuildsObject(t *testing.T) {
+	// Mirrors how caps build payloads: yesmem json -n --arg k V --argjson n 1 '{k:$k, n:$n}'
+	out, exit, err := jsonCLIRun([]string{
+		"-n",
+		"--arg", "k", "hello",
+		"--argjson", "n", "42",
+		`{k:$k, n:$n}`,
+	}, strings.NewReader(""))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if exit != 0 {
+		t.Fatalf("exit=%d, want 0", exit)
+	}
+	got := strings.TrimSpace(string(out))
+	want := `{"k":"hello","n":42}`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestJSONCLIRun_ExitStatusNull(t *testing.T) {
+	// -e on null result → exit 1
+	_, exit, err := jsonCLIRun([]string{"-e", ".missing"}, strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if exit != 1 {
+		t.Fatalf("exit=%d, want 1", exit)
+	}
+}
+
+func TestJSONCLIRun_ExitStatusNoOutput(t *testing.T) {
+	// -e with empty iteration → exit 4
+	_, exit, err := jsonCLIRun([]string{"-e", ".[]"}, strings.NewReader(`[]`))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if exit != 4 {
+		t.Fatalf("exit=%d, want 4", exit)
+	}
+}
+
+func TestJSONCLIRun_DefaultFallback(t *testing.T) {
+	// Cap pattern: .rows[0].value // "0" with empty rows → "0"
+	out, exit, err := jsonCLIRun([]string{"-r", `.rows[0].value // "0"`}, strings.NewReader(`{"rows":[]}`))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if exit != 0 {
+		t.Fatalf("exit=%d", exit)
+	}
+	if string(out) != "0\n" {
+		t.Fatalf("got %q, want %q", out, "0\n")
+	}
+}
+
+func TestJSONCLIRun_BadArg(t *testing.T) {
+	_, exit, err := jsonCLIRun([]string{"--indent", "notanumber"}, strings.NewReader(`{}`))
+	if err == nil {
+		t.Fatalf("expected error on bad --indent")
+	}
+	if exit != 2 {
+		t.Fatalf("exit=%d, want 2", exit)
+	}
+}
+
+func TestParseJSONArgs_HelpRequested(t *testing.T) {
+	_, _, _, err := parseJSONArgs([]string{"--help"})
+	if err != errJSONHelpRequested {
+		t.Fatalf("got %v, want errJSONHelpRequested", err)
+	}
+}
+
+func TestParseJSONArgs_MissingExpression(t *testing.T) {
+	_, _, _, err := parseJSONArgs([]string{"-r"})
+	if err == nil {
+		t.Fatalf("expected error on missing expression")
+	}
+}

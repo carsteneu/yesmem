@@ -43,7 +43,7 @@ func DestillChunks(chunks []storage.DocChunk, cfg Config, client extraction.LLMC
 	}
 
 	// Load existing learnings for this project for dedup
-	existingLearnings, _ := store.GetActiveLearnings("", cfg.Project, "", "")
+	existingLearnings, _ := store.GetActiveLearnings("", cfg.Project, "", "", 0)
 	existingTokens := make([][]string, len(existingLearnings))
 	for i, l := range existingLearnings {
 		existingTokens[i] = textutil.Tokenize(l.Content)

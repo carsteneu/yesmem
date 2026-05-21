@@ -1,17 +1,21 @@
 package daemon
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/carsteneu/yesmem/internal/bloom"
 	"github.com/carsteneu/yesmem/internal/embedding"
 	"github.com/carsteneu/yesmem/internal/extraction"
+	"github.com/carsteneu/yesmem/internal/indexer"
 	"github.com/carsteneu/yesmem/internal/sanitize"
+	_ "modernc.org/sqlite" // opencode session tracking
 	"github.com/carsteneu/yesmem/internal/storage"
 )
 
@@ -37,6 +41,8 @@ type Handler struct {
 	agentMaxDepth    int           // max spawn depth — set by daemon from config
 	agentTokenBudget      int            // max tokens per agent — set by daemon from config
 	defaultSandboxProfile SandboxProfile // default sandbox for scheduled jobs — set by daemon from config
+	httpRPCAddr    string // HTTP API listen address for bun MCP polyfill (e.g. 127.0.0.1:9377)
+	httpAuthToken  string // bearer token for HTTP API authentication
 	redactor              sanitize.Sanitizer // optional; nil = passthrough
 
 	// Optional: vector search (set via SetEmbedding)
@@ -80,6 +86,11 @@ type Handler struct {
 	// Optional: LLM client for quality tasks (rules condensation, narratives)
 	QualityClient extraction.LLMClient
 
+	// LLM provider config for on-the-fly client creation (llm_complete RPC)
+	LLMProvider string // e.g. "opencode", "api", "openai"
+	LLMAPIKey   string
+	LLMBaseURL  string
+
 	// Optional: LLM client for commit-triggered staleness evaluation
 	CommitEvalClient extraction.LLMClient
 
@@ -97,6 +108,9 @@ type Handler struct {
 	// PID tracking for stdin injection (session_id → OS PID of claude process)
 	pidMapMu sync.Mutex
 	pidMap   map[string]int
+
+	// OpenCode session scanner for extraction pipeline
+	opencodeScanner *indexer.OpencodeScanner
 
 	// Window tracking for xdotool push (session_id → X11 window ID string)
 	windowMapMu sync.Mutex
@@ -190,6 +204,11 @@ func NewHandler(store *storage.Store, bloomMgr *bloom.Manager) *Handler {
 	return h
 }
 
+// SetOpencodeScanner sets the opencode DB scanner for periodic indexing.
+func (h *Handler) SetOpencodeScanner(scanner *indexer.OpencodeScanner) {
+	h.opencodeScanner = scanner
+}
+
 func (h *Handler) initIdleState() {
 	h.idleCounters = make(map[string]*idleState)
 }
@@ -198,6 +217,11 @@ func (h *Handler) handleIdleTick(params map[string]any) Response {
 	sessionID, _ := params["session_id"].(string)
 	if sessionID == "" {
 		sessionID = "unknown"
+	}
+
+	// Periodic opencode DB scanning (every ~5min via MaybeScan rate-limit)
+	if h.opencodeScanner != nil {
+		h.opencodeScanner.MaybeScan()
 	}
 
 	// Track active session for remember() calls
@@ -244,6 +268,19 @@ func (h *Handler) Handle(req Request) Response {
 		h.idleMu.Unlock()
 	}
 
+	// Persist CWD for opencode sessions (not sent in HTTP request body).
+	// opencode sends promptCacheKey in API requests — proxy looks up cwd:<session_id>.
+	if cwd, _ := req.Params["_cwd"].(string); cwd != "" {
+		sid, _ := req.Params["_session_id"].(string)
+		sa, _ := req.Params["_source_agent"].(string)
+		if sid != "" {
+			_ = h.store.SetProxyState("cwd:"+sid, cwd)
+		}
+		if sid != "" && sa != "" {
+			_ = h.store.SetProxyState("source_agent:"+sid, sa)
+		}
+	}
+
 	switch req.Method {
 	case "search":
 		params := h.resolveProjectParam(req.Params)
@@ -274,6 +311,8 @@ func (h *Handler) Handle(req Request) Response {
 	case "deactivate_cap":
 		// No project scope: activations are keyed on (thread_id, name).
 		return h.handleDeactivateCap(req.Params)
+	case "execute_cap":
+		return h.handleExecuteCap(req.Params)
 	case "get_active_caps":
 		// Internal: called by the proxy via RPC, not exposed as an MCP tool.
 		return h.handleGetActiveCaps(req.Params)
@@ -559,9 +598,124 @@ func (h *Handler) Handle(req Request) Response {
 	case "schedule":
 		return h.handleSchedule(req.Params)
 
+	case "llm_complete":
+		return h.handleLLMComplete(req.Params)
+
 	default:
 		return errorResponse(fmt.Sprintf("unknown method: %s", req.Method))
 	}
+}
+
+func (h *Handler) handleLLMComplete(params map[string]any) Response {
+	model, _ := params["model"].(string)
+	system, _ := params["system"].(string)
+	prompt, _ := params["prompt"].(string)
+	sessionID := stringOr(params, "session", "")
+
+	if system == "" && prompt == "" {
+		return errorResponse("system or prompt required")
+	}
+
+	client := h.QualityClient
+	if client == nil {
+		client = h.SummarizeClient
+	}
+	if model != "" && client != nil && client.Model() != model && h.LLMProvider != "" {
+		mc, err := extraction.NewLLMClient(h.LLMProvider, h.LLMAPIKey, model, "", h.LLMBaseURL)
+		if err == nil && mc != nil {
+			client = mc
+		}
+	}
+	if client == nil {
+		return errorResponse("llm client not initialized — missing config or API key")
+	}
+
+	userMsg := prompt
+	if system != "" && prompt != "" {
+		userMsg = fmt.Sprintf("%s\n\n%s", system, prompt)
+	} else if system != "" {
+		userMsg = system
+	}
+
+	// Track opencode session creation: before the call, record the latest
+	// session timestamp. After the call, check for a new one.
+	var beforeTS int64
+	if sessionID == "" && h.LLMProvider == "opencode" {
+		beforeTS = opencodeLatestSessionTS()
+	}
+
+	var opts []extraction.CallOption
+	if sessionID != "" {
+		opts = append(opts, extraction.WithSession(sessionID))
+	}
+	result, err := client.Complete("", userMsg, opts...)
+	if err != nil {
+		return errorResponse(fmt.Sprintf("llm call failed: %v", err))
+	}
+
+	resp := map[string]any{"result": result}
+
+	// Return the opencode session ID on every call so callers
+	// can always update their stored session for resume.
+	if h.LLMProvider == "opencode" {
+		if sessionID != "" {
+			resp["session_id"] = sessionID
+		} else {
+			newID := opencodeSessionAfter(beforeTS)
+			if newID != "" {
+				resp["session_id"] = newID
+			}
+		}
+	}
+
+	return jsonResponse(resp)
+}
+
+// opencodeLatestSessionTS returns the max time_created from the opencode session table.
+func opencodeLatestSessionTS() int64 {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		log.Printf("[opencode-session] home dir error: %v", err)
+		return 0
+	}
+	dbPath := filepath.Join(home, ".local", "share", "opencode", "opencode.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		log.Printf("[opencode-session] open error (latest): %v", err)
+		return 0
+	}
+	defer db.Close()
+	var ts int64
+	err = db.QueryRow("SELECT IFNULL(MAX(time_created),0) FROM session").Scan(&ts)
+	if err != nil {
+		log.Printf("[opencode-session] query/scan error (latest): %v", err)
+		return 0
+	}
+	log.Printf("[opencode-session] latest TS: %d", ts)
+	return ts
+}
+
+// opencodeSessionAfter returns the newest session ID created after the given timestamp.
+func opencodeSessionAfter(afterTS int64) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		log.Printf("[opencode-session] home dir error: %v", err)
+		return ""
+	}
+	dbPath := filepath.Join(home, ".local", "share", "opencode", "opencode.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		log.Printf("[opencode-session] open error: %v", err)
+		return ""
+	}
+	defer db.Close()
+	var id string
+	err = db.QueryRow("SELECT id FROM session WHERE time_created > ? ORDER BY time_created DESC LIMIT 1", afterTS).Scan(&id)
+	if err != nil {
+		log.Printf("[opencode-session] query/scan error (afterTS=%d): %v", afterTS, err)
+		return ""
+	}
+	return id
 }
 
 // helpers

@@ -18,17 +18,23 @@ import (
 
 // Indexer orchestrates the full indexing pipeline.
 type Indexer struct {
-	store    *storage.Store
-	bloom    *bloom.Manager
-	archiver *archive.Archiver
+	store          *storage.Store
+	bloom          *bloom.Manager
+	archiver       *archive.Archiver
+	excludeProject map[string]bool
 }
 
 // New creates an indexer with all dependencies.
-func New(store *storage.Store, bloomMgr *bloom.Manager, arch *archive.Archiver) *Indexer {
+func New(store *storage.Store, bloomMgr *bloom.Manager, arch *archive.Archiver, excludeProjects []string) *Indexer {
+	exclude := make(map[string]bool, len(excludeProjects))
+	for _, p := range excludeProjects {
+		exclude[strings.ToLower(p)] = true
+	}
 	return &Indexer{
-		store:    store,
-		bloom:    bloomMgr,
-		archiver: arch,
+		store:          store,
+		bloom:          bloomMgr,
+		archiver:       arch,
+		excludeProject: exclude,
 	}
 }
 
@@ -51,6 +57,13 @@ func (idx *Indexer) IndexSession(jsonlPath string) error {
 	if meta.SessionID == "" {
 		return nil // empty or unparseable session
 	}
+
+	// Skip daemon-internal extraction sessions (cluster labeling, evolution, etc.)
+	// to prevent self-referential backlog. Uses the same prompt signatures as
+	// the OpencodeScanner filter.
+	if isExtractionPipelineSession(messages) {
+		return nil
+	}
 	meta.SourceAgent = models.NormalizeSourceAgent(meta.SourceAgent)
 	meta.SessionID = models.NormalizeSessionID(meta.SourceAgent, meta.SessionID)
 	for i := range messages {
@@ -60,6 +73,11 @@ func (idx *Indexer) IndexSession(jsonlPath string) error {
 
 	// 3. Build session record
 	projectShort := models.ProjectShortFromPath(meta.Project)
+
+	// Skip projects on the exclusion list
+	if idx.excludeProject[strings.ToLower(meta.Project)] || idx.excludeProject[projectShort] {
+		return nil
+	}
 	sess := &models.Session{
 		ID:           meta.SessionID,
 		Project:      meta.Project,

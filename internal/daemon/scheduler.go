@@ -34,6 +34,7 @@ type Scheduler struct {
 	jobs     map[string]*ScheduledJob
 	crons    map[string]cronExpr
 	lastFire map[string]time.Time
+	running  map[string]bool
 	executor JobExecutor
 }
 
@@ -42,6 +43,7 @@ func NewScheduler(executor JobExecutor) *Scheduler {
 		jobs:     make(map[string]*ScheduledJob),
 		crons:    make(map[string]cronExpr),
 		lastFire: make(map[string]time.Time),
+		running:  make(map[string]bool),
 		executor: executor,
 	}
 }
@@ -72,7 +74,20 @@ func (s *Scheduler) RemoveJob(id string) error {
 	delete(s.jobs, id)
 	delete(s.crons, id)
 	delete(s.lastFire, id)
+	delete(s.running, id)
 	return nil
+}
+
+func (s *Scheduler) JobDone(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.running, id)
+}
+
+func (s *Scheduler) IsRunning(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.running[id]
 }
 
 func (s *Scheduler) ListJobs() []ScheduledJob {
@@ -93,6 +108,9 @@ func (s *Scheduler) dueJobs(now time.Time) []ScheduledJob {
 		if !job.Enabled {
 			continue
 		}
+		if s.running[id] {
+			continue
+		}
 		if job.IntervalSeconds > 0 {
 			interval := time.Duration(job.IntervalSeconds) * time.Second
 			if last, ok := s.lastFire[id]; ok && now.Sub(last) < interval {
@@ -100,6 +118,7 @@ func (s *Scheduler) dueJobs(now time.Time) []ScheduledJob {
 			}
 			due = append(due, *job)
 			s.lastFire[id] = now
+			s.running[id] = true
 			job.LastRun = now
 			continue
 		}
@@ -110,6 +129,7 @@ func (s *Scheduler) dueJobs(now time.Time) []ScheduledJob {
 		if c, ok := s.crons[id]; ok && c.matches(truncated) {
 			due = append(due, *job)
 			s.lastFire[id] = truncated
+			s.running[id] = true
 			job.LastRun = truncated
 		}
 	}

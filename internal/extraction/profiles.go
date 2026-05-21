@@ -47,7 +47,7 @@ func GenerateProjectProfile(client LLMClient, store *storage.Store, project stri
 	var learningsSummary strings.Builder
 	categories := []string{"gotcha", "decision", "pattern", "explicit_teaching"}
 	for _, cat := range categories {
-		learnings, err := store.GetActiveLearnings(cat, project, "", "")
+		learnings, err := store.GetActiveLearnings(cat, project, "", "", 0)
 		if err != nil || len(learnings) == 0 {
 			continue
 		}

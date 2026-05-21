@@ -90,7 +90,7 @@ func TestUpdateSessionFlavorOnlyEmpty(t *testing.T) {
 	}
 
 	// Verify: learning with "Phase A" should still have "Phase A"
-	learnings, _ := s.GetActiveLearnings("", "", "", "")
+	learnings, _ := s.GetActiveLearnings("", "", "", "", 0)
 	for _, l := range learnings {
 		if l.SessionID != "s1" {
 			continue

@@ -233,6 +233,7 @@ func TestScheduler_IntervalSeconds_FiresOnInterval(t *testing.T) {
 	if len(due) != 1 {
 		t.Fatalf("first tick should fire, got %d", len(due))
 	}
+	s.JobDone("poll")
 
 	due = s.dueJobs(base.Add(5 * time.Second))
 	if len(due) != 0 {
@@ -243,6 +244,7 @@ func TestScheduler_IntervalSeconds_FiresOnInterval(t *testing.T) {
 	if len(due) != 1 {
 		t.Fatalf("15s later should fire, got %d", len(due))
 	}
+	s.JobDone("poll")
 
 	due = s.dueJobs(base.Add(16 * time.Second))
 	if len(due) != 0 {
@@ -262,6 +264,101 @@ func TestScheduler_IntervalSeconds_ZeroUsesCron(t *testing.T) {
 	due := s.dueJobs(now)
 	if len(due) != 1 {
 		t.Fatalf("IntervalSeconds=0 should use cron, got %d due", len(due))
+	}
+}
+
+func TestDueJobs_RunningExcluded(t *testing.T) {
+	s := NewScheduler(nil)
+	s.AddJob(ScheduledJob{
+		ID: "j1", Name: "test", Enabled: true, Recurring: true,
+		IntervalSeconds: 1,
+	})
+	s.running["j1"] = true
+	now := time.Date(2026, 4, 22, 10, 0, 0, 0, time.UTC)
+	due := s.dueJobs(now)
+	if len(due) != 0 {
+		t.Fatalf("expected 0 due jobs (running), got %d", len(due))
+	}
+}
+
+func TestDueJobs_RunningClearedThenDue(t *testing.T) {
+	s := NewScheduler(nil)
+	s.AddJob(ScheduledJob{
+		ID: "j1", Name: "test", Enabled: true, Recurring: true,
+		IntervalSeconds: 1,
+	})
+	now := time.Date(2026, 4, 22, 10, 0, 0, 0, time.UTC)
+	due1 := s.dueJobs(now)
+	if len(due1) != 1 {
+		t.Fatalf("expected 1 due job, got %d", len(due1))
+	}
+	if !s.IsRunning("j1") {
+		t.Fatal("expected job to be marked running")
+	}
+	due2 := s.dueJobs(now)
+	if len(due2) != 0 {
+		t.Fatalf("expected 0 due jobs (still running), got %d", len(due2))
+	}
+	s.JobDone("j1")
+	if s.IsRunning("j1") {
+		t.Fatal("expected job to no longer be running after JobDone")
+	}
+	later := now.Add(2 * time.Second)
+	due3 := s.dueJobs(later)
+	if len(due3) != 1 {
+		t.Fatalf("expected 1 due after done+interval, got %d", len(due3))
+	}
+}
+
+func TestDueJobs_RunningGatesBeforeTimeCheck(t *testing.T) {
+	s := NewScheduler(nil)
+	s.AddJob(ScheduledJob{
+		ID: "j1", Name: "test", Enabled: true, Recurring: true,
+		IntervalSeconds: 5,
+	})
+	now := time.Date(2026, 4, 22, 10, 0, 0, 0, time.UTC)
+	due1 := s.dueJobs(now)
+	if len(due1) != 1 {
+		t.Fatalf("expected 1 due, got %d", len(due1))
+	}
+	later := now.Add(10 * time.Second)
+	due2 := s.dueJobs(later)
+	if len(due2) != 0 {
+		t.Fatalf("expected 0 due (still running despite interval), got %d", len(due2))
+	}
+	s.JobDone("j1")
+	due3 := s.dueJobs(later.Add(1 * time.Second))
+	if len(due3) != 1 {
+		t.Fatalf("expected 1 due after done, got %d", len(due3))
+	}
+}
+
+func TestDueJobs_MultipleJobsIndependentRunning(t *testing.T) {
+	s := NewScheduler(nil)
+	s.AddJob(ScheduledJob{
+		ID: "a", Name: "alpha", Enabled: true, Recurring: true,
+		IntervalSeconds: 1,
+	})
+	s.AddJob(ScheduledJob{
+		ID: "b", Name: "beta", Enabled: true, Recurring: true,
+		IntervalSeconds: 1,
+	})
+	now := time.Date(2026, 4, 22, 10, 0, 0, 0, time.UTC)
+	due := s.dueJobs(now)
+	if len(due) != 2 {
+		t.Fatalf("expected 2 due, got %d", len(due))
+	}
+	if !s.IsRunning("a") || !s.IsRunning("b") {
+		t.Fatal("expected both jobs running")
+	}
+	s.JobDone("a")
+	later := now.Add(2 * time.Second)
+	due2 := s.dueJobs(later)
+	if len(due2) != 1 {
+		t.Fatalf("expected 1 due (a released, b still running), got %d", len(due2))
+	}
+	if due2[0].ID != "a" {
+		t.Fatalf("expected job a due, got %s", due2[0].ID)
 	}
 }
 

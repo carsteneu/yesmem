@@ -1,0 +1,7 @@
+{
+  "description": "Package config loads, stores, and provides sensible defaults for all YesMem configuration from a YAML file (config.yaml). It is loaded once at daemon/proxy startup by Load() and consumed throughout the application for LLM provider selection, extraction pipeline settings, proxy behavior, agent spawning, pricing, and paths. Key dependencies are gopkg.in/yaml.v3 for parsing, internal/embedding for vector-store config, and internal/models for profile types.",
+  "anti_patterns": [
+    "→ Prefer profile-specific PromptFlags (SharedPrompt, ClaudePrompt) over deprecated flat ProxyConfig prompt fields (PromptUngate, PromptRewrite, etc.)",
+    "→ Model ID resolution helpers (ModelID, NarrativeModelID, etc.) on Config add surface area — consider whether a standalone utility function in internal/models would be cleaner"
+  ]
+}

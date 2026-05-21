@@ -87,6 +87,7 @@ type Config struct {
 	Replace          bool   // Kill existing daemon before starting
 	HTTPEnabled      bool   // --http flag or config: start HTTP API server
 	HTTPListen       string // from config, default "127.0.0.1:9377"
+	CapsDir          string // CAP.md file directory — defaults to DataDir/../caps
 }
 
 // Run starts the daemon: socket-first for instant MCP availability, then index async.
@@ -143,9 +144,17 @@ func Run(cfg Config) error {
 	bloomMgr := bloom.New()
 	assocGraph := graph.New()
 
+	// Load config early — needed for indexer exclude lists and agent settings
+	ac, _ := config.Load(filepath.Join(cfg.DataDir, "config.yaml"))
+
 	// Archiver + Indexer
 	arch := archive.New(filepath.Join(cfg.DataDir, "archive"))
-	idx := indexer.New(store, bloomMgr, arch)
+	var idx *indexer.Indexer
+	if ac != nil {
+		idx = indexer.New(store, bloomMgr, arch, ac.ExcludeProjects)
+	} else {
+		idx = indexer.New(store, bloomMgr, arch, nil)
+	}
 
 	// Index progress tracking (atomics — safe for concurrent reads)
 	var indexTotal, indexDone, indexSkipped int64
@@ -157,7 +166,8 @@ func Run(cfg Config) error {
 	// ━━━ Socket server FIRST — MCP available immediately ━━━
 	handler := NewHandler(store, bloomMgr)
 	handler.dataDir = cfg.DataDir
-	if ac, _ := config.Load(filepath.Join(cfg.DataDir, "config.yaml")); ac != nil {
+	handler.RebuildFromPIDFiles()
+	if ac != nil {
 		handler.agentTerminal = ac.Agents.Terminal
 		if ac.Agents.MaxRuntime != "" {
 			if d, err := time.ParseDuration(ac.Agents.MaxRuntime); err == nil {
@@ -184,6 +194,28 @@ func Run(cfg Config) error {
 	}
 	LoadPlansFromDB(store)
 
+	// Opencode DB scanner for extraction pipeline
+	ocDBPath := ""
+	if ac != nil {
+		ocDBPath = ac.Paths.OpencodeDB
+	}
+	if ocDBPath == "" {
+		ocDBPath = filepath.Join(os.Getenv("HOME"), ".local", "share", "opencode", "opencode.db")
+	}
+	if _, err := os.Stat(ocDBPath); err == nil {
+		ocScanner := indexer.NewOpencodeScanner(ocDBPath, store, log.Default(), batchExtractNotify, ac.ExcludeProjects)
+		handler.SetOpencodeScanner(ocScanner)
+		log.Printf("opencode scanner: watching %s", ocDBPath)
+
+		go func() {
+			ticker := time.NewTicker(60 * time.Second)
+			defer ticker.Stop()
+			for range ticker.C {
+				ocScanner.MaybeScan()
+			}
+		}()
+	}
+
 	// Recover agents from before daemon restart — keep living, delete dead
 	reconnected, deleted, err := store.AgentRecoverOrphaned(func(pid int) bool {
 		return syscall.Kill(pid, 0) == nil
@@ -207,7 +239,10 @@ func Run(cfg Config) error {
 	log.Println("Socket ready for MCP connections.")
 
 	// Sync CAP.md files from disk into DB (user-scoped caps)
-	userCapsDir := filepath.Join(filepath.Dir(cfg.DataDir), "caps")
+	userCapsDir := cfg.CapsDir
+	if userCapsDir == "" {
+		userCapsDir = filepath.Join(filepath.Dir(cfg.DataDir), "caps")
+	}
 	go func() {
 		SyncCapsFromDisk(handler, userCapsDir, "")
 		ExportAllCaps(handler, userCapsDir)
@@ -234,8 +269,10 @@ func Run(cfg Config) error {
 	}()
 
 	// ━━━ Scheduler ━━━
-	sched := NewScheduler(func(job ScheduledJob) {
+	var sched *Scheduler
+	sched = NewScheduler(func(job ScheduledJob) {
 		log.Printf("[scheduler] firing job %s: %s", job.Name, job.Prompt)
+		defer sched.JobDone(job.ID)
 		handler.executeScheduledPrompt(job)
 		_ = handler.store.UpdateJobLastRun(job.ID, time.Now())
 	})
@@ -286,6 +323,8 @@ func Run(cfg Config) error {
 			}
 			// Adapter: bridges daemon.Handler to httpapi.RPCHandler interface
 			adapter := &handlerAdapter{h: handler}
+			handler.httpRPCAddr = listen
+			handler.httpAuthToken = authToken
 			httpSrv := httpapi.New(adapter, listen, authToken, log.Default())
 			go func() {
 				if err := httpSrv.Serve(); err != nil && err != http.ErrServerClosed {
@@ -687,7 +726,6 @@ func Run(cfg Config) error {
 					// Make summarize client available for doc destillation
 					handler.SummarizeClient = summarizeClient
 					handler.CommitEvalClient = extractClient
-					handler.QualityClient = qualityClient
 				} else {
 					ext = evoExt
 					log.Printf("Extraction mode: single-pass fallback (quality client unavailable)")
@@ -696,6 +734,13 @@ func Run(cfg Config) error {
 				ext = evoExt
 				log.Printf("Extraction mode: single-pass (%s)", client.Model())
 			}
+
+			// Always wire handler LLM fields for llm_complete RPC,
+			// regardless of extraction mode.
+			handler.QualityClient = qualityClient
+			handler.LLMProvider = ac.LLM.Provider
+			handler.LLMAPIKey = apiKey
+			handler.LLMBaseURL = baseURL
 
 			extMu.Lock()
 			extractor = ext

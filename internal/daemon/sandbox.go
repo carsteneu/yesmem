@@ -6,6 +6,7 @@ import (
 	"log"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,27 +19,39 @@ type SandboxConfig struct {
 type Sandbox struct {
 	cfg        SandboxConfig
 	binaryPath string
+	binaryOnce sync.Once
 }
 
+var (
+	sandboxLookPath   = exec.LookPath
+	sandboxDownloader = downloadAiJail
+)
+
 func NewSandbox(cfg SandboxConfig) *Sandbox {
-	sb := &Sandbox{cfg: cfg}
-	if cfg.Enabled {
-		path, err := exec.LookPath("ai-jail")
-		if err == nil {
-			sb.binaryPath = path
-		} else {
-			downloaded, dlErr := downloadAiJail()
-			if dlErr != nil {
-				log.Printf("[sandbox] ai-jail not available: %v (fallback=%v)", dlErr, cfg.FallbackUnsandboxed)
-			} else {
-				sb.binaryPath = downloaded
-			}
+	return &Sandbox{cfg: cfg}
+}
+
+func (s *Sandbox) ensureBinary() {
+	s.binaryOnce.Do(func() {
+		if !s.cfg.Enabled {
+			return
 		}
-	}
-	return sb
+		path, err := sandboxLookPath("ai-jail")
+		if err == nil {
+			s.binaryPath = path
+			return
+		}
+		downloaded, dlErr := sandboxDownloader()
+		if dlErr != nil {
+			log.Printf("[sandbox] ai-jail not available: %v (fallback=%v)", dlErr, s.cfg.FallbackUnsandboxed)
+			return
+		}
+		s.binaryPath = downloaded
+	})
 }
 
 func (s *Sandbox) Available() bool {
+	s.ensureBinary()
 	return s.binaryPath != ""
 }
 

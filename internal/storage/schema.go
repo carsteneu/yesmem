@@ -446,6 +446,16 @@ var migrations = []string{
 	`ALTER TABLE repl_pattern_observations ADD COLUMN matched_cap TEXT NOT NULL DEFAULT ''`,
 	// v0.58: Origin tool — records which MCP/hook tool triggered a remember() call
 	`ALTER TABLE learnings ADD COLUMN origin_tool TEXT NOT NULL DEFAULT ''`,
+	// v0.59: Learning provenance — persist source/target agent per learning (previously derived via session JOIN)
+	`ALTER TABLE learnings ADD COLUMN source_agent TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE learnings ADD COLUMN target_agent TEXT NOT NULL DEFAULT ''`,
+	// v0.60: Backfill learnings.source_agent from sessions.source_agent (idempotent).
+	`UPDATE learnings SET source_agent = COALESCE((SELECT s.source_agent FROM sessions s WHERE s.id = learnings.session_id), 'claude') WHERE source_agent = ''`,
+	// v0.61: Canonical project — family-scoped learnings across worktree/main boundaries
+	`ALTER TABLE learnings ADD COLUMN canonical_project TEXT NOT NULL DEFAULT ''`,
+	`UPDATE learnings SET canonical_project = project`,
+	`UPDATE learnings SET canonical_project = 'yesmem' WHERE project IN ('checkcodebase', 'bridge-langgraph-bridge', 'opencode-proxy', 'feat+capability-memory', 'feat+security-hardening', 'codex-anpassungen', 'worktree-scoring-fixes', 'forked-agent-proxy', 'briefing-injection')`,
+	`CREATE INDEX IF NOT EXISTS idx_learnings_canonical ON learnings(canonical_project, superseded_by)`,
 }
 
 // messagesMigrations runs against messages.db (separate from yesmem.db migrations).
@@ -538,7 +548,10 @@ const tableLearnings = `CREATE TABLE IF NOT EXISTS learnings (
 	impact_count        INTEGER DEFAULT 0,
 	source_msg_from     INTEGER DEFAULT -1,
 	source_msg_to       INTEGER DEFAULT -1,
-	origin_tool         TEXT NOT NULL DEFAULT ''
+	origin_tool         TEXT NOT NULL DEFAULT '',
+	source_agent        TEXT NOT NULL DEFAULT '',
+	target_agent        TEXT NOT NULL DEFAULT '',
+	canonical_project   TEXT NOT NULL DEFAULT ''
 )`
 
 const tableAssociations = `CREATE TABLE IF NOT EXISTS associations (
@@ -666,6 +679,11 @@ var indices = []string{
 	`CREATE INDEX IF NOT EXISTS idx_lcs_cluster ON learning_cluster_scores(cluster_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_agents_project ON agents(project)`,
 	`CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status) WHERE status = 'running'`,
+	`CREATE INDEX IF NOT EXISTS idx_learnings_session ON learnings(session_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_learnings_canonical_cat ON learnings(canonical_project, category, superseded_by, created_at)`,
+	`CREATE INDEX IF NOT EXISTS idx_coverage_project_touched ON file_coverage(project, last_touched DESC)`,
+	`CREATE INDEX IF NOT EXISTS idx_pinned_project ON pinned_learnings(project)`,
+	`CREATE INDEX IF NOT EXISTS idx_assoc_relation ON associations(relation_type)`,
 }
 
 const tableClaudeMdState = `CREATE TABLE IF NOT EXISTS claudemd_state (

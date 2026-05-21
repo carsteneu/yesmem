@@ -54,8 +54,16 @@ func Status(dataDir string) error {
 	fmt.Printf("  instructions:    %s\n", statusText(codexState.InstructionsReferenced && codexState.InstructionsPresent, "configured", "missing"))
 	fmt.Printf("  proxy /health:   %s\n", statusText(codexProxyReachable(), "reachable", "unreachable"))
 
+	opencodeState := readOpencodeConfigState(home)
+	fmt.Println("\nOpencode:")
+	fmt.Printf("  config.json:     %s\n", statusText(opencodeState.ConfigPresent, "present", "missing"))
+	fmt.Printf("  plugin:          %s\n", statusText(opencodeState.PluginConfigured, "configured", "missing"))
+	fmt.Printf("  mcp.yesmem:      %s\n", statusText(opencodeState.MCPConfigured, "configured", "missing"))
+	fmt.Printf("  provider.llm:    %s\n", statusText(opencodeState.ProviderConfigured, "configured", "missing"))
+	fmt.Printf("  compaction.auto: %s\n", statusText(opencodeState.CompactionConfigured, "disabled", "not set"))
+
 	// Learnings
-	learnings, err := store.GetActiveLearnings("", "", "", "")
+	learnings, err := store.GetActiveLearnings("", "", "", "", 0)
 	if err == nil {
 		cats := map[string]int{}
 		for _, l := range learnings {

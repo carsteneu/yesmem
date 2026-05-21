@@ -6,16 +6,19 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
 
 // CacheKeepaliveConfig holds configuration for the keepalive timer.
 type CacheKeepaliveConfig struct {
-	Target           string            // API endpoint URL
+	Target           string            // API endpoint URL (default upstream)
+	ProviderTargets  map[string]string // per-provider upstream URLs, e.g. {"deepseek": "https://api.deepseek.com"}
 	Mode             string            // "auto", "5m", "1h"
 	Pings5m          int               // max pings per phase when TTL=5min
 	Pings1h          int               // max pings per phase when TTL=1h
+	MinMessages      int               // skip keepalive when request body has fewer messages (0 = always)
 	Detector         *CacheTTLDetector // for auto mode
 	IntervalOverride time.Duration     // testing only: override computed interval
 	Logger           *log.Logger
@@ -95,7 +98,14 @@ func (ka *CacheKeepalive) effectivePings() int {
 }
 
 // Reset stores the request body for a thread and starts/resets only that thread's timer.
+// Skips internal/automated threads (UUID format) — only real user sessions get keepalive.
 func (ka *CacheKeepalive) Reset(threadID string, requestBody []byte, apiKey string) {
+	if !isRealUserSession(threadID) {
+		return
+	}
+	if !isClaudeModel(requestBody) {
+		return
+	}
 	ka.mu.Lock()
 	defer ka.mu.Unlock()
 
@@ -120,6 +130,16 @@ func (ka *CacheKeepalive) Reset(threadID string, requestBody []byte, apiKey stri
 	if pings <= 0 {
 		return
 	}
+
+	if ka.cfg.MinMessages > 0 {
+		var tmp struct {
+			Messages []json.RawMessage `json:"messages"`
+		}
+		if json.Unmarshal(requestBody, &tmp) == nil && len(tmp.Messages) < ka.cfg.MinMessages {
+			return
+		}
+	}
+
 	ts.pingsRemaining = pings
 	ts.generation++
 	gen := ts.generation
@@ -241,7 +261,8 @@ func (ka *CacheKeepalive) evictStaleLocked() {
 }
 
 func (ka *CacheKeepalive) doHTTPPing(body []byte, apiKey string) (cacheRead, cacheWrite, outputTokens int) {
-	req, err := http.NewRequest("POST", ka.cfg.Target+"/v1/messages", nil)
+	endpoint := ka.resolveTarget(body) + "/v1/messages"
+	req, err := http.NewRequest("POST", endpoint, nil)
 	if err != nil {
 		return 0, 0, 0
 	}
@@ -322,6 +343,40 @@ func (r *bytesReaderImpl) Read(p []byte) (int, error) {
 	n := copy(p, r.data[r.pos:])
 	r.pos += n
 	return n, nil
+}
+
+func (ka *CacheKeepalive) resolveTarget(body []byte) string {
+	var tmp struct {
+		Model string `json:"model"`
+	}
+	json.Unmarshal(body, &tmp)
+	model := strings.ToLower(tmp.Model)
+	if len(ka.cfg.ProviderTargets) > 0 {
+		for key, url := range ka.cfg.ProviderTargets {
+			if url == "" {
+				continue
+			}
+			keyLower := strings.ToLower(key)
+			if strings.HasPrefix(model, keyLower) || strings.HasPrefix(model, keyLower+"-") {
+				return strings.TrimRight(url, "/")
+			}
+		}
+		for key, url := range ka.cfg.ProviderTargets {
+			if url != "" && strings.EqualFold(key, tmp.Model) {
+				return strings.TrimRight(url, "/")
+			}
+		}
+	}
+	return ka.cfg.Target
+}
+
+// isClaudeModel returns true when the request body contains a Claude (Anthropic) model.
+// Non-Claude models (DeepSeek, GPT, etc.) use automatic caching and don't need keepalive.
+func isClaudeModel(body []byte) bool {
+	var tmp struct {
+		Model string `json:"model"`
+	}
+	return json.Unmarshal(body, &tmp) == nil && strings.HasPrefix(strings.ToLower(tmp.Model), "claude")
 }
 
 func truncateBytes(b []byte, max int) string {

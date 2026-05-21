@@ -7,19 +7,12 @@ func TestProjectMatches(t *testing.T) {
 		a, b string
 		want bool
 	}{
-		// exact match
 		{"/home/user/myproject", "/home/user/myproject", true},
-		// suffix match: b is suffix of a
 		{"myproject", "/home/user/myproject", true},
-		// suffix match: a is suffix of b
 		{"/home/user/myproject", "myproject", true},
-		// basename match
 		{"/home/alice/myproject", "/home/bob/myproject", true},
-		// different projects
 		{"/home/user/foo", "/home/user/bar", false},
-		// partial name should not match
 		{"project", "/home/user/myproject", false},
-		// empty strings
 		{"", "", true},
 		{"", "/home/user/project", false},
 	}
@@ -27,6 +20,26 @@ func TestProjectMatches(t *testing.T) {
 		got := ProjectMatches(tt.a, tt.b)
 		if got != tt.want {
 			t.Errorf("ProjectMatches(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
+		}
+	}
+}
+
+func TestCanonicalProject(t *testing.T) {
+	tests := []struct {
+		cwd  string
+		want string
+	}{
+		{"/home/chief/memory/yesmem/.worktrees/opencode-proxy", "yesmem"},
+		{"/home/chief/memory/yesmem/.worktrees/feat+capability-memory", "yesmem"},
+		{"/home/chief/memory/yesmem", "yesmem"},
+		{"/home/chief/projects/gluten", "gluten"},
+		{"/var/www/html/GreenWashProjekt/greenWebsite", "greenWebsite"},
+		{"/home/user/projects/.worktrees/my-feature", "projects"},
+	}
+	for _, tt := range tests {
+		got := CanonicalProject(tt.cwd)
+		if got != tt.want {
+			t.Errorf("CanonicalProject(%q) = %q, want %q", tt.cwd, got, tt.want)
 		}
 	}
 }

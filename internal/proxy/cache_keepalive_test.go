@@ -24,8 +24,8 @@ func TestCacheKeepalive_SendsPing(t *testing.T) {
 	ka := NewCacheKeepalive(CacheKeepaliveConfig{
 		Target: srv.URL, Mode: "5m", Pings5m: 2, IntervalOverride: 50 * time.Millisecond,
 	})
-	body := []byte(`{"model":"test","max_tokens":1024,"messages":[{"role":"user","content":"test"}]}`)
-	ka.Reset("test-thread", body, "test-key")
+	body := []byte(`{"model":"claude-sonnet-4-6","max_tokens":1024,"messages":[{"role":"user","content":"test"}]}`)
+	ka.Reset("opencode:ses_test", body, "test-key")
 	time.Sleep(200 * time.Millisecond)
 	ka.Stop()
 
@@ -45,8 +45,8 @@ func TestCacheKeepalive_StopsAfterMaxPings(t *testing.T) {
 	ka := NewCacheKeepalive(CacheKeepaliveConfig{
 		Target: srv.URL, Mode: "5m", Pings5m: 2, IntervalOverride: 30 * time.Millisecond,
 	})
-	body := []byte(`{"model":"test","max_tokens":1024,"messages":[{"role":"user","content":"test"}]}`)
-	ka.Reset("test-thread", body, "test-key")
+	body := []byte(`{"model":"claude-sonnet-4-6","max_tokens":1024,"messages":[{"role":"user","content":"test"}]}`)
+	ka.Reset("opencode:ses_test", body, "test-key")
 	time.Sleep(300 * time.Millisecond)
 	ka.Stop()
 
@@ -66,10 +66,10 @@ func TestCacheKeepalive_ResetCancelsOld(t *testing.T) {
 	ka := NewCacheKeepalive(CacheKeepaliveConfig{
 		Target: srv.URL, Mode: "5m", Pings5m: 5, IntervalOverride: 50 * time.Millisecond,
 	})
-	body := []byte(`{"model":"test","max_tokens":1024,"messages":[{"role":"user","content":"test"}]}`)
-	ka.Reset("test-thread", body, "test-key")
+	body := []byte(`{"model":"claude-sonnet-4-6","max_tokens":1024,"messages":[{"role":"user","content":"test"}]}`)
+	ka.Reset("opencode:ses_test", body, "test-key")
 	time.Sleep(30 * time.Millisecond)
-	ka.Reset("test-thread", body, "test-key") // should cancel first timer
+	ka.Reset("opencode:ses_test", body, "test-key") // should cancel first timer
 	time.Sleep(200 * time.Millisecond)
 	ka.Stop()
 
@@ -82,8 +82,8 @@ func TestCacheKeepalive_DisabledWhenZeroPings(t *testing.T) {
 	ka := NewCacheKeepalive(CacheKeepaliveConfig{
 		Mode: "5m", Pings5m: 0, IntervalOverride: 50 * time.Millisecond,
 	})
-	body := []byte(`{"model":"test","max_tokens":1024}`)
-	ka.Reset("test-thread", body, "test-key")
+	body := []byte(`{"model":"claude-sonnet-4-6","max_tokens":1024}`)
+	ka.Reset("opencode:ses_test", body, "test-key")
 	time.Sleep(100 * time.Millisecond)
 	ka.Stop()
 	// No panic, no pings — just verifying it doesn't crash
@@ -104,8 +104,8 @@ func TestCacheKeepalive_PingModifiesMaxTokens(t *testing.T) {
 	ka := NewCacheKeepalive(CacheKeepaliveConfig{
 		Target: srv.URL, Mode: "5m", Pings5m: 1, IntervalOverride: 10 * time.Millisecond,
 	})
-	body := []byte(`{"model":"test","max_tokens":4096,"messages":[{"role":"user","content":"test"}]}`)
-	ka.Reset("test-thread", body, "test-key")
+	body := []byte(`{"model":"claude-sonnet-4-6","max_tokens":4096,"messages":[{"role":"user","content":"test"}]}`)
+	ka.Reset("opencode:ses_test", body, "test-key")
 	time.Sleep(80 * time.Millisecond)
 	ka.Stop()
 
@@ -133,9 +133,9 @@ func TestCacheKeepalive_Retrigger(t *testing.T) {
 	})
 	defer ka.Stop()
 
-	body := []byte(`{"model":"test","max_tokens":1024,"messages":[{"role":"user","content":"test"}]}`)
+	body := []byte(`{"model":"claude-sonnet-4-6","max_tokens":1024,"messages":[{"role":"user","content":"test"}]}`)
 	// Reset while detection unknown → 0 pings, timer not started
-	ka.Reset("test-thread", body, "test-key")
+	ka.Reset("opencode:ses_test", body, "test-key")
 	time.Sleep(100 * time.Millisecond)
 	if pingCount.Load() != 0 {
 		t.Errorf("should have 0 pings during unknown detection, got %d", pingCount.Load())
@@ -198,8 +198,8 @@ func TestCacheKeepalive_DynamicInterval(t *testing.T) {
 // Previously, all threads shared one timer — any Reset killed everyone's countdown.
 func TestCacheKeepalive_PerThreadTimerIndependence(t *testing.T) {
 	pingsPerThread := make(map[string]*atomic.Int32)
-	pingsPerThread["thread-A"] = &atomic.Int32{}
-	pingsPerThread["thread-B"] = &atomic.Int32{}
+	pingsPerThread["opencode:ses_thread-A"] = &atomic.Int32{}
+	pingsPerThread["opencode:ses_thread-B"] = &atomic.Int32{}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"type":"message","usage":{"cache_read_input_tokens":100}}`)
@@ -219,10 +219,10 @@ func TestCacheKeepalive_PerThreadTimerIndependence(t *testing.T) {
 	})
 	defer ka.Stop()
 
-	body := []byte(`{"model":"test","max_tokens":1024,"messages":[{"role":"user","content":"test"}]}`)
+	body := []byte(`{"model":"claude-sonnet-4-6","max_tokens":1024,"messages":[{"role":"user","content":"test"}]}`)
 
 	// Thread A sends one request, then goes quiet (user thinking)
-	ka.Reset("thread-A", body, "key-a")
+	ka.Reset("opencode:ses_thread-A", body, "key-a")
 
 	// Thread B resets every 20ms for 300ms — keeps the shared timer from ever firing
 	// (interval=80ms, reset every 20ms → timer never reaches 80ms)
@@ -230,17 +230,17 @@ func TestCacheKeepalive_PerThreadTimerIndependence(t *testing.T) {
 	go func() {
 		for i := 0; i < 15; i++ {
 			time.Sleep(20 * time.Millisecond)
-			ka.Reset("thread-B", body, "key-b")
+			ka.Reset("opencode:ses_thread-B", body, "key-b")
 		}
 		close(done)
 	}()
 	<-done
 
-	aPings := pingsPerThread["thread-A"].Load()
+	aPings := pingsPerThread["opencode:ses_thread-A"].Load()
 	if aPings == 0 {
 		t.Errorf("thread-A should have received pings (independent timer), got 0 — shared timer was starved by thread-B resets")
 	}
-	t.Logf("thread-A pings: %d, thread-B pings: %d", aPings, pingsPerThread["thread-B"].Load())
+	t.Logf("thread-A pings: %d, thread-B pings: %d", aPings, pingsPerThread["opencode:ses_thread-B"].Load())
 }
 
 func TestBuildPingBody_StripsThinkingAndTools(t *testing.T) {
@@ -305,8 +305,8 @@ func TestCacheKeepalive_PingLogsErrorResponse(t *testing.T) {
 		Target: srv.URL, Mode: "5m", Pings5m: 1, IntervalOverride: 10 * time.Millisecond,
 		Logger: logger,
 	})
-	body := []byte(`{"model":"test","max_tokens":1024,"messages":[{"role":"user","content":"test"}]}`)
-	ka.Reset("test-thread", body, "test-key")
+	body := []byte(`{"model":"claude-sonnet-4-6","max_tokens":1024,"messages":[{"role":"user","content":"test"}]}`)
+	ka.Reset("opencode:ses_test", body, "test-key")
 	time.Sleep(80 * time.Millisecond)
 	ka.Stop()
 
@@ -327,8 +327,8 @@ func TestCacheKeepalive_PingStripsThinkingEndToEnd(t *testing.T) {
 	ka := NewCacheKeepalive(CacheKeepaliveConfig{
 		Target: srv.URL, Mode: "5m", Pings5m: 1, IntervalOverride: 10 * time.Millisecond,
 	})
-	body := []byte(`{"model":"test","max_tokens":64000,"thinking":{"type":"adaptive"},"tools":[{"name":"bash"}],"messages":[{"role":"user","content":"test"}]}`)
-	ka.Reset("test-thread", body, "test-key")
+	body := []byte(`{"model":"claude-sonnet-4-6","max_tokens":64000,"thinking":{"type":"adaptive"},"tools":[{"name":"bash"}],"messages":[{"role":"user","content":"test"}]}`)
+	ka.Reset("opencode:ses_test", body, "test-key")
 	time.Sleep(80 * time.Millisecond)
 	ka.Stop()
 
@@ -344,6 +344,48 @@ func TestCacheKeepalive_PingStripsThinkingEndToEnd(t *testing.T) {
 	}
 	if _, ok := receivedBody["context_management"]; ok {
 		t.Error("ping request must not contain 'context_management'")
+	}
+}
+
+func TestCacheKeepalive_SkipsUUIDThread(t *testing.T) {
+	var pingCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pingCount.Add(1)
+		fmt.Fprintf(w, `{"type":"message","usage":{"cache_read_input_tokens":100}}`)
+	}))
+	defer srv.Close()
+
+	ka := NewCacheKeepalive(CacheKeepaliveConfig{
+		Target: srv.URL, Mode: "5m", Pings5m: 2, IntervalOverride: 50 * time.Millisecond,
+	})
+	body := []byte(`{"model":"claude-sonnet-4-6","max_tokens":1024,"messages":[{"role":"user","content":"test"}]}`)
+	ka.Reset("503485dc-b636-4c53-909a-00ed1374a31b", body, "test-key") // UUID format
+	time.Sleep(200 * time.Millisecond)
+	ka.Stop()
+
+	if int(pingCount.Load()) != 0 {
+		t.Errorf("expected 0 pings for UUID thread, got %d", pingCount.Load())
+	}
+}
+
+func TestCacheKeepalive_SkipsDeepSeekModel(t *testing.T) {
+	var pingCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pingCount.Add(1)
+		fmt.Fprintf(w, `{"type":"message","usage":{"cache_read_input_tokens":100}}`)
+	}))
+	defer srv.Close()
+
+	ka := NewCacheKeepalive(CacheKeepaliveConfig{
+		Target: srv.URL, Mode: "5m", Pings5m: 2, IntervalOverride: 50 * time.Millisecond,
+	})
+	body := []byte(`{"model":"deepseek-v4-pro","max_tokens":1024,"messages":[{"role":"user","content":"test"}]}`)
+	ka.Reset("opencode:ses_deepseek_test", body, "test-key")
+	time.Sleep(200 * time.Millisecond)
+	ka.Stop()
+
+	if int(pingCount.Load()) != 0 {
+		t.Errorf("expected 0 pings for DeepSeek model, got %d", pingCount.Load())
 	}
 }
 

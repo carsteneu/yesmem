@@ -2,10 +2,17 @@ package proxy
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 )
+
+// fmtReq formats a request identifier for log lines.
+// Example: [req 3 v2.0.1-213]
+func fmtReq(reqIdx int, version string) string {
+	return fmt.Sprintf("[req %d %s]", reqIdx, version)
+}
 
 // isOpenAIPath returns true if the request targets OpenAI-format endpoints.
 func isOpenAIPath(r *http.Request) bool {
@@ -31,21 +38,82 @@ func (s *Server) handleOpenAICompletions(w http.ResponseWriter, r *http.Request)
 	}
 
 	wantsStream := oaiReq.Stream
-	s.logger.Printf("[req %d] %sOpenAI adapter: model=%s stream=%v msgs=%d%s",
-		reqIdx, colorBlue, oaiReq.Model, wantsStream, len(oaiReq.Messages), colorReset)
+	s.logger.Printf("%s %sOpenAI adapter: model=%s stream=%v msgs=%d%s",
+		fmtReq(reqIdx, s.version), colorBlue, oaiReq.Model, wantsStream, len(oaiReq.Messages), colorReset)
 
 	anthReq, err := translateOpenAIToAnthropic(oaiReq)
 	if err != nil {
 		http.Error(w, "translate request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	ctx := s.prepareOpenAIRequestContext(anthReq, reqIdx, r.Header.Get("X-Claude-Code-Session-Id"), r.Header.Get("User-Agent"))
-	s.runOpenAIParityPipeline(anthReq, &ctx)
+	msgsAfterTrans, _ := anthReq["messages"].([]any)
+	s.logger.Printf("%s FWD-TRANSLATE: input=%d output=%d", fmtReq(reqIdx, s.version), len(oaiReq.Messages), len(msgsAfterTrans))
+	s.logger.Printf("%s OPENAI-PIPE: after-translate msgs=%d", fmtReq(reqIdx, s.version), len(msgsAfterTrans))
+
+	ocSessionID := r.Header.Get("x-opencode-session")
+	if ocSessionID == "" {
+		ocSessionID = r.Header.Get("x-session-affinity")
+	}
+	if ocSessionID != "" {
+		s.logger.Printf("%s %sopencode session=%s%s", fmtReq(reqIdx, s.version), colorGreen, ocSessionID, colorReset)
+	}
+	ctx := s.prepareOpenAIRequestContext(anthReq, reqIdx, r.Header.Get("X-Claude-Code-Session-Id"), ocSessionID, r.Header.Get("User-Agent"))
+	ctx.Model = oaiReq.Model
+
+	// Non-interactive requests (CLI tools, extraction pipeline) have no session headers.
+	// Skip the entire proxy pipeline — no MCP calls, no associative context, no system blocks.
+	// Just validate the request and forward upstream.
+	headerClaudeSession := r.Header.Get("X-Claude-Code-Session-Id")
+	ua := strings.ToLower(r.Header.Get("User-Agent"))
+	isCodex := strings.Contains(ua, "codex") || strings.Contains(ua, "codexcli")
+	if ocSessionID == "" && headerClaudeSession == "" && !isCodex {
+		s.logger.Printf("%s non-interactive request — skipping proxy pipeline", fmtReq(reqIdx, s.version))
+	} else {
+		// Replace default OpenCode system prompt with custom template (if enabled and loaded)
+		if s.cfg.CustomSystemPrompt.EnabledOpenCode && s.customSystemPrompt != nil {
+			skillBlock := extractSkillBlock(anthReq)
+			workDir := extractWorkingDirectory(anthReq)
+			tplCtx := buildSystemContext(buildSystemContextOpts{
+				WorkingDir:    workDir,
+				ModelID:       ctx.Model,
+				ModelDisplayName: modelDisplayName(ctx.Model),
+				HostAgentName: "OpenCode",
+			})
+			filled := fillSystemTemplate(s.customSystemPrompt, tplCtx)
+			filled = append(filled, []byte(skillBlock)...)
+			replaceFirstSystemBlock(anthReq, string(filled))
+			s.logger.Printf("%s %sCUSTOM-SYSTEM: applied (%d bytes, skillBlock=%d)%s",
+				fmtReq(reqIdx, s.version), colorGreen, len(filled), len(skillBlock), colorReset)
+			if skillBlock == "" {
+				s.logger.Printf("%s %sCUSTOM-SYSTEM: no <available_skills> found in original prompt%s",
+					fmtReq(reqIdx, s.version), colorOrange, colorReset)
+			}
+		}
+		s.runOpenAIParityPipeline(anthReq, &ctx)
+	}
+
+	msgsAfterPipe, _ := anthReq["messages"].([]any)
+	s.logger.Printf("%s OPENAI-PIPE: after-pipeline msgs=%d (was %d)", fmtReq(reqIdx, s.version), len(msgsAfterPipe), len(msgsAfterTrans))
 
 	outReq, err := translateAnthropicToOpenAI(anthReq)
 	if err != nil {
 		http.Error(w, "translate request: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+	msgsOut, _ := outReq["messages"].([]any)
+	s.logger.Printf("%s OPENAI-PIPE: after-reverse msgs=%d", fmtReq(reqIdx, s.version), len(msgsOut))
+	for i, m := range msgsOut {
+		if msg, ok := m.(map[string]any); ok {
+			role, _ := msg["role"].(string)
+			_ = i
+			_ = role
+			// keep json.Marshal for side-effect validation
+			if j, _ := json.Marshal(msg); len(j) < 200 {
+				// s.logger.Printf("[req %d] OPENAI-OUT msg[%d] role=%s: %s", reqIdx, i, role, string(j))
+			} else {
+				// s.logger.Printf("[req %d] OPENAI-OUT msg[%d] role=%s len=%d", reqIdx, i, role, len(j))
+			}
+		}
 	}
 	outReq["stream"] = wantsStream
 
@@ -70,6 +138,6 @@ func (s *Server) passthroughResponse(w http.ResponseWriter, resp *http.Response,
 
 	written, _ := io.Copy(w, resp.Body)
 
-	s.logger.Printf("[req %d] %sOpenAI passthrough: status=%d bytes=%d%s",
-		reqIdx, colorBlue, resp.StatusCode, written, colorReset)
+	s.logger.Printf("%s %sOpenAI passthrough: status=%d bytes=%d%s",
+		fmtReq(reqIdx, s.version), colorBlue, resp.StatusCode, written, colorReset)
 }

@@ -187,8 +187,58 @@ func TestGenerateAdapterBash_StoreFunction(t *testing.T) {
 	if !strings.Contains(bash, "store()") {
 		t.Error("should define store() shell function")
 	}
-	if !strings.Contains(bash, "yesmem store") {
-		t.Error("store() should call yesmem store")
+}
+
+func TestGenerateAdapterBash_StartsCoprocWorker(t *testing.T) {
+	bash := GenerateAdapterBash()
+
+	if !strings.Contains(bash, "coproc YESMEM_WORKER") {
+		t.Error("preamble should start a coproc named YESMEM_WORKER")
+	}
+	if !strings.Contains(bash, "yesmem worker") {
+		t.Error("coproc body should invoke `yesmem worker`")
+	}
+}
+
+func TestGenerateAdapterBash_StoreUsesCoproc(t *testing.T) {
+	bash := GenerateAdapterBash()
+
+	if !strings.Contains(bash, "YESMEM_WORKER_IN") {
+		t.Error("store() should reference YESMEM_WORKER_IN file descriptor")
+	}
+	if !strings.Contains(bash, "YESMEM_WORKER_OUT") {
+		t.Error("store() should reference YESMEM_WORKER_OUT file descriptor")
+	}
+	if !strings.Contains(bash, `"op":"store"`) {
+		t.Error("store() should send op=store payload to worker")
+	}
+}
+
+func TestGenerateAdapterBash_LlmFunction(t *testing.T) {
+	bash := GenerateAdapterBash()
+
+	if !strings.Contains(bash, "llm()") {
+		t.Error("should define llm() shell function")
+	}
+	if !strings.Contains(bash, "yesmem llm-complete") {
+		t.Error("llm() should call yesmem llm-complete")
+	}
+}
+
+func TestGenerateAdapterBash_YesmemFunction(t *testing.T) {
+	bash := GenerateAdapterBash()
+
+	if !strings.Contains(bash, "yesmem()") {
+		t.Error("should define yesmem() shell function to intercept json subcommand")
+	}
+	if !strings.Contains(bash, `"op":"json_cli"`) {
+		t.Error("yesmem() should route json subcommand through worker via op=json_cli")
+	}
+	if !strings.Contains(bash, "command yesmem") {
+		t.Error("yesmem() should fall through to real binary via `command yesmem` for non-json subcommands")
+	}
+	if !strings.Contains(bash, "stdin_len") {
+		t.Error("yesmem() should send stdin_len for length-framed stdin payload")
 	}
 }
 

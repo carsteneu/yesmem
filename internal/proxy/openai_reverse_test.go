@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -134,6 +135,36 @@ func TestTranslateAnthropicToOpenAI_ToolCalls(t *testing.T) {
 	m3, _ := msgs[3].(map[string]any)
 	if m3["role"] != "user" {
 		t.Errorf("msg[3].role = %v, want user", m3["role"])
+	}
+}
+
+func TestTranslateAnthropicToOpenAI_UserTextBlocksPreserved(t *testing.T) {
+	anthReq := map[string]any{
+		"model": "deepseek-v4-pro",
+		"messages": []any{
+			map[string]any{"role": "user", "content": []any{
+				map[string]any{"type": "text", "text": "wie geht es dir?"},
+				map[string]any{"type": "text", "text": "\n<context>injected</context>"},
+			}},
+		},
+	}
+
+	oaiBody, err := translateAnthropicToOpenAI(anthReq)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+
+	msgs, _ := oaiBody["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("messages = %d, want 1", len(msgs))
+	}
+	msg, _ := msgs[0].(map[string]any)
+	if msg["role"] != "user" {
+		t.Fatalf("role = %v, want user", msg["role"])
+	}
+	content, _ := msg["content"].(string)
+	if content != "wie geht es dir?\n<context>injected</context>" {
+		t.Fatalf("content = %q", content)
 	}
 }
 
@@ -281,5 +312,44 @@ func TestTranslateAnthropicToOpenAI_PassthroughParams(t *testing.T) {
 	}
 	if oaiBody["stream"] != true {
 		t.Errorf("stream = %v", oaiBody["stream"])
+	}
+}
+
+// Regression: when the sawtooth path appends associative/docs/rules context to
+// the last user message, the content is converted from string to a []text-block
+// array. The reverse translation must preserve the joined text — silently
+// dropping it produces an empty user message and the model loses the latest turn.
+func TestTranslateAnthropicUserMsg_TextOnlyArrayPreserved(t *testing.T) {
+	m := map[string]any{
+		"role": "user",
+		"content": []any{
+			map[string]any{"type": "text", "text": "wie geht es dir?"},
+			map[string]any{"type": "text", "text": "\n<system-reminder>injected</system-reminder>"},
+		},
+	}
+
+	out := translateAnthropicUserMsg(m)
+	if len(out) != 1 {
+		t.Fatalf("expected 1 message, got %d: %+v", len(out), out)
+	}
+	got, ok := out[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected map message, got %T", out[0])
+	}
+	if got["role"] != "user" {
+		t.Fatalf("role = %v, want user", got["role"])
+	}
+	content, ok := got["content"].(string)
+	if !ok {
+		t.Fatalf("content type = %T, want string (%v)", got["content"], got["content"])
+	}
+	if content == "" {
+		t.Fatalf("content empty — user text was dropped")
+	}
+	wantParts := []string{"wie geht es dir?", "<system-reminder>injected</system-reminder>"}
+	for _, p := range wantParts {
+		if !strings.Contains(content, p) {
+			t.Errorf("content missing %q\ngot: %q", p, content)
+		}
 	}
 }

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -171,6 +172,179 @@ func TestHandleGetCompactedStubs_WithRange(t *testing.T) {
 	resp := h.handleGetCompactedStubs(map[string]any{"thread_id": "t-range", "from_idx": float64(0), "to_idx": float64(50)})
 	if resp.Error != "" {
 		t.Fatalf("range query error: %s", resp.Error)
+	}
+}
+
+func TestHandleGetCompactedStubs_FromFrozenStubs(t *testing.T) {
+	h, store := mustHandler(t)
+
+	// Simulate a frozen stub snapshot with an archive block
+	frozenJSON := `{
+		"messages": [{
+			"role": "user",
+			"content": "Something before archive"
+		}, {
+			"role": "user",
+			"content": "[Archiv: Messages 1-725 (725 msgs) — get_compacted_stubs('t-frozen', 1, 725) zum Reinzoomen]\nTools: bash(238), read(57), edit(43)\nFiles: daemon(8), proxy(3)"
+		}],
+		"cutoff": 726,
+		"boundary_hash": "abc123",
+		"prefix_hash": "def456",
+		"tokens": 45000,
+		"raw_tokens": 120000
+	}`
+	store.SetProxyState("frozen:t-frozen", frozenJSON)
+
+	resp := h.handleGetCompactedStubs(map[string]any{"thread_id": "t-frozen"})
+	if resp.Error != "" {
+		t.Fatalf("get from frozen: %s", resp.Error)
+	}
+	blocks := resultSlice(t, resp)
+	if len(blocks) == 0 {
+		t.Fatal("expected at least 1 block from frozen stubs")
+	}
+	block := blocks[0].(map[string]any)
+	if start, ok := block["start_idx"].(float64); !ok || start != 1 {
+		t.Fatalf("expected start_idx=1, got %v", block["start_idx"])
+	}
+	if end, ok := block["end_idx"].(float64); !ok || end != 725 {
+		t.Fatalf("expected end_idx=725, got %v", block["end_idx"])
+	}
+	content, _ := block["content"].(string)
+	if content == "" {
+		t.Fatal("expected non-empty content")
+	}
+}
+
+func TestHandleGetCompactedStubs_FrozenWithRange(t *testing.T) {
+	h, store := mustHandler(t)
+
+	frozenJSON := `{
+		"messages": [{
+			"role": "user",
+			"content": "[Archiv: Messages 100-199 (100 msgs) — x]"
+		}],
+		"cutoff": 200,
+		"tokens": 5000
+	}`
+	store.SetProxyState("frozen:t-range2", frozenJSON)
+
+	// Range fully overlapping: should return block
+	resp := h.handleGetCompactedStubs(map[string]any{"thread_id": "t-range2", "from_idx": float64(50), "to_idx": float64(150)})
+	if resp.Error != "" {
+		t.Fatalf("range query: %s", resp.Error)
+	}
+	blocks := resultSlice(t, resp)
+	if len(blocks) == 0 {
+		t.Fatal("expected block in overlapping range")
+	}
+
+	// Range outside: should return empty
+	resp = h.handleGetCompactedStubs(map[string]any{"thread_id": "t-range2", "from_idx": float64(300), "to_idx": float64(400)})
+	if resp.Error != "" {
+		t.Fatalf("range query outside: %s", resp.Error)
+	}
+	blocks = resultSlice(t, resp)
+	if len(blocks) != 0 {
+		t.Fatal("expected 0 blocks for non-overlapping range")
+	}
+}
+
+func TestHandleGetCompactedStubs_ContentFormat(t *testing.T) {
+	h, store := mustHandler(t)
+
+	frozenJSON := `{
+		"messages": [{"role":"user","content":"[Archiv: Messages 10-20 (11 msgs) — get_compacted_stubs('t-fmt', 10, 20) zum Reinzoomen]\nTools: bash(5)"}],
+		"cutoff": 21,
+		"tokens": 5000
+	}`
+	store.SetProxyState("frozen:t-fmt", frozenJSON)
+
+	resp := h.handleGetCompactedStubs(map[string]any{"thread_id": "t-fmt"})
+	if resp.Error != "" {
+		t.Fatalf("get: %s", resp.Error)
+	}
+	blocks := resultSlice(t, resp)
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(blocks))
+	}
+	b := blocks[0].(map[string]any)
+	if start, ok := b["start_idx"].(float64); !ok || start != 10 {
+		t.Fatalf("expected start_idx=10, got %v", b["start_idx"])
+	}
+	content, _ := b["content"].(string)
+	if content == "" {
+		t.Fatal("content is empty")
+	}
+	// Verify content mentions the range and frozen tokens
+	if !strings.Contains(content, "Messages 10-20") {
+		t.Fatalf("content missing range: %s", content)
+	}
+	if !strings.Contains(content, "frozen_tokens=5000") {
+		t.Fatalf("content missing frozen_tokens: %s", content)
+	}
+}
+
+func TestHandleGetCompactedStubs_MultipleMarkers(t *testing.T) {
+	h, store := mustHandler(t)
+
+	frozenJSON := `{
+		"messages": [
+			{"role":"user","content":"[Archiv: Messages 1-100 (100 msgs) — stage-2]"},
+			{"role":"user","content":"[Archiv: Messages 101-200 (100 msgs) — stage-3]"}
+		],
+		"cutoff": 201,
+		"tokens": 8000
+	}`
+	store.SetProxyState("frozen:t-multi", frozenJSON)
+
+	resp := h.handleGetCompactedStubs(map[string]any{"thread_id": "t-multi"})
+	if resp.Error != "" {
+		t.Fatalf("get: %s", resp.Error)
+	}
+	blocks := resultSlice(t, resp)
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks, got %d", len(blocks))
+	}
+}
+
+func TestHandleGetCompactedStubs_FallbackToCompactedBlocks(t *testing.T) {
+	h, _ := mustHandler(t)
+
+	// Store a block via the legacy path (compacted_blocks table)
+	resp := h.handleStoreCompactedBlock(map[string]any{
+		"thread_id": "t-legacy",
+		"start_idx": float64(0),
+		"end_idx":   float64(50),
+		"content":   "legacy archive",
+	})
+	if resp.Error != "" {
+		t.Fatalf("store: %s", resp.Error)
+	}
+
+	// No frozen stubs — should fall back to compacted_blocks
+	resp = h.handleGetCompactedStubs(map[string]any{"thread_id": "t-legacy"})
+	if resp.Error != "" {
+		t.Fatalf("get fallback: %s", resp.Error)
+	}
+	blocks := resultSlice(t, resp)
+	if len(blocks) == 0 {
+		t.Fatal("expected blocks from legacy fallback")
+	}
+	content, _ := blocks[0].(map[string]any)["content"].(string)
+	if content != "legacy archive" {
+		t.Fatalf("expected legacy content, got: %s", content)
+	}
+}
+
+func TestHandleGetCompactedStubs_MalformedJSON(t *testing.T) {
+	h, store := mustHandler(t)
+
+	store.SetProxyState("frozen:t-bad", `{not valid json`)
+
+	resp := h.handleGetCompactedStubs(map[string]any{"thread_id": "t-bad"})
+	if resp.Error == "" {
+		t.Fatal("expected error for malformed JSON")
 	}
 }
 

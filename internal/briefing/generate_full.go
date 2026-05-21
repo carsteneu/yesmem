@@ -74,8 +74,13 @@ func GenerateFullBriefing(store *storage.Store, dataDir, project, sessionID stri
 		text = InjectPinnedBlock(text, pinnedBlock)
 	}
 
-	// Open work reminder (skip for agents, respect config)
-	if cfg.Briefing.RemindOpenWork && !isAgentSession {
+	// Open work reminder — only for Claude Code, not codex/opencode.
+	// Non-Claude agents misinterpret task hints as instructions to start working.
+	isNonClaudeAgent := false
+	if sa, _ := store.GetProxyState("source_agent:" + sessionID); sa != "" && sa != "claude" {
+		isNonClaudeAgent = true
+	}
+	if cfg.Briefing.RemindOpenWork && !isAgentSession && !isNonClaudeAgent {
 		if count, _ := store.CountActiveUnfinished(projectShort); count > 0 {
 			s := ResolveStrings(filepath.Join(dataDir, "strings.yaml"))
 			if s.OpenWorkRemind != "" {

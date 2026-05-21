@@ -33,6 +33,7 @@ func (h *Handler) handleRemember(params map[string]any) Response {
 		Category: category, Content: text, Project: project,
 		Confidence: 1.0, CreatedAt: timeNow(), ModelUsed: rememberModel(params),
 		Source: source, OriginTool: origin,
+		CanonicalProject: canonicalProjectFor(project),
 	}
 
 	// Session ID: try explicit param, then active session from idle_tick, then latest from DB
@@ -107,7 +108,7 @@ func (h *Handler) handleRemember(params map[string]any) Response {
 
 	// Phase 1: fuzzy dedup via token similarity (Jaccard ≥ 0.5)
 	if supersedesID == 0 {
-		existing, _ := h.store.GetActiveLearnings(category, project, "", "")
+		existing, _ := h.store.GetActiveLearnings(category, project, "", "", 0)
 		newTokens := textutil.Tokenize(text)
 		for _, e := range existing {
 			sim := textutil.TokenSimilarity(newTokens, textutil.Tokenize(e.Content))
@@ -217,6 +218,16 @@ func rememberModel(params map[string]any) string {
 func (h *Handler) handleGetLearnings(params map[string]any) Response {
 	// Single learning by ID
 	if id, ok := params["id"].(float64); ok && id > 0 {
+		if history, _ := params["history"].(bool); history {
+			chain, err := h.store.GetLearningChain(int64(id))
+			if err != nil {
+				return errorResponse(err.Error())
+			}
+			for i := range chain {
+				h.store.LoadJunctionData(&chain[i])
+			}
+			return jsonResponse(chain)
+		}
 		l, err := h.store.GetLearning(int64(id))
 		if err != nil {
 			return errorResponse(err.Error())
@@ -231,7 +242,7 @@ func (h *Handler) handleGetLearnings(params map[string]any) Response {
 	before, _ := params["before"].(string)
 	taskType, _ := params["task_type"].(string)
 	limit := intOr(params, "limit", 30)
-	learnings, err := h.store.GetActiveLearnings(category, project, since, before)
+	learnings, err := h.store.GetActiveLearnings(category, project, since, before, limit*5)
 	if err != nil {
 		return errorResponse(err.Error())
 	}
@@ -729,4 +740,10 @@ func (h *Handler) handleGetSessionFlavorsForSession(params map[string]any) Respo
 		return errorResponse(err.Error())
 	}
 	return jsonResponse(flavors)
+}
+
+// canonicalProjectFor derives the canonical project basename from a project string.
+// If project contains .worktrees/, returns the parent directory basename.
+func canonicalProjectFor(project string) string {
+	return models.CanonicalProject(project)
 }

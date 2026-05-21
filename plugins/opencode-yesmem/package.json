@@ -1,0 +1,12 @@
+{
+  "name": "opencode-yesmem",
+  "version": "0.2.0",
+  "type": "module",
+  "main": "index.ts",
+  "dependencies": {
+    "@opencode-ai/sdk": "^1.14.0"
+  },
+  "scripts": {
+    "typecheck": "bun run --check index.ts"
+  }
+}

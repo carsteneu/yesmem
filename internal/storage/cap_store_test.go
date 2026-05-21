@@ -765,3 +765,46 @@ func TestGetCapTableDDL_EmptyCap(t *testing.T) {
 		t.Errorf("want empty DDL for nonexistent cap, got: %s", ddl)
 	}
 }
+
+func TestCapsClaimAndRead_ClaimsAtomic(t *testing.T) {
+	s := mustOpenCapStore(t)
+	s.CapsCreateTable("telegram", "updates", []ColumnDef{
+		{Name: "chat_id", Type: "INTEGER"},
+		{Name: "sender", Type: "TEXT"},
+		{Name: "text", Type: "TEXT"},
+		{Name: "processed", Type: "INTEGER"},
+	})
+	s.CapsUpsert("telegram", "updates", map[string]any{"chat_id": 123, "sender": "Alice", "text": "Hello", "processed": 0})
+	s.CapsUpsert("telegram", "updates", map[string]any{"chat_id": 456, "sender": "Bob", "text": "Hi", "processed": 0})
+	s.CapsUpsert("telegram", "updates", map[string]any{"chat_id": 789, "sender": "Eve", "text": "Hey", "processed": 0})
+	row, err := s.CapsClaimAndRead("telegram", "updates", "processed = 0", "id ASC", nil, map[string]any{"processed": 1}, []string{"id", "chat_id", "sender", "text"})
+	if err != nil { t.Fatalf("claim: %v", err) }
+	if row == nil { t.Fatal("expected a row, got nil") }
+	if row["sender"] != "Alice" { t.Errorf("expected Alice, got %v", row["sender"]) }
+	remaining, _ := s.CapsQuery("telegram", "updates", "processed = 0", nil, 10)
+	if len(remaining) != 2 { t.Errorf("expected 2 unprocessed remaining, got %d", len(remaining)) }
+	// Exhaust
+	if _, err := s.CapsClaimAndRead("telegram", "updates", "processed = 0", "id ASC", nil, map[string]any{"processed": 1}, []string{"id"}); err != nil { t.Fatal(err) }
+	if _, err := s.CapsClaimAndRead("telegram", "updates", "processed = 0", "id ASC", nil, map[string]any{"processed": 1}, []string{"id"}); err != nil { t.Fatal(err) }
+	row4, _ := s.CapsClaimAndRead("telegram", "updates", "processed = 0", "id ASC", nil, map[string]any{"processed": 1}, []string{"id"})
+	if row4 != nil { t.Errorf("expected nil for exhausted queue, got %v", row4) }
+}
+func TestCapsClaimAndRead_NoRows(t *testing.T) {
+	s := mustOpenCapStore(t)
+	s.CapsCreateTable("test", "items", []ColumnDef{{Name: "processed", Type: "INTEGER"}, {Name: "data", Type: "TEXT"}})
+	row, err := s.CapsClaimAndRead("test", "items", "processed = 0", "id ASC", nil, map[string]any{"processed": 1}, []string{"id", "data"})
+	if err != nil { t.Fatalf("claim empty: %v", err) }
+	if row != nil { t.Errorf("expected nil for empty table, got %v", row) }
+}
+func TestCapsClaimAndRead_RequiresWhere(t *testing.T) {
+	s := mustOpenCapStore(t)
+	s.CapsCreateTable("test", "items", []ColumnDef{{Name: "processed", Type: "INTEGER"}})
+	_, err := s.CapsClaimAndRead("test", "items", "", "id ASC", nil, map[string]any{"processed": 1}, []string{"id"})
+	if err == nil { t.Error("claim without WHERE should fail") }
+}
+func TestCapsClaimAndRead_RequiresSet(t *testing.T) {
+	s := mustOpenCapStore(t)
+	s.CapsCreateTable("test", "items", []ColumnDef{{Name: "processed", Type: "INTEGER"}})
+	_, err := s.CapsClaimAndRead("test", "items", "processed = 0", "id ASC", nil, nil, []string{"id"})
+	if err == nil { t.Error("claim without set columns should fail") }
+}

@@ -172,7 +172,7 @@ func TestLearningCRUD(t *testing.T) {
 		t.Error("expected positive ID")
 	}
 
-	learnings, err := s.GetActiveLearnings("", "", "", "")
+	learnings, err := s.GetActiveLearnings("", "", "", "", 0)
 	if err != nil {
 		t.Fatalf("get active: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestLearningSupersede(t *testing.T) {
 		t.Fatalf("supersede: %v", err)
 	}
 
-	active, _ := s.GetActiveLearnings("decision", "", "", "")
+	active, _ := s.GetActiveLearnings("decision", "", "", "", 0)
 	if len(active) != 1 {
 		t.Fatalf("expected 1 active, got %d", len(active))
 	}
@@ -225,7 +225,7 @@ func TestResolveLearning(t *testing.T) {
 	}
 
 	// Should no longer appear in active learnings
-	active, _ := s.GetActiveLearnings("unfinished", "memory", "", "")
+	active, _ := s.GetActiveLearnings("unfinished", "memory", "", "", 0)
 	if len(active) != 0 {
 		t.Errorf("expected 0 active unfinished, got %d", len(active))
 	}
@@ -237,6 +237,62 @@ func TestResolveLearning(t *testing.T) {
 	}
 	if l.SupersedeReason != "completed in commit abc123" {
 		t.Errorf("expected reason, got %q", l.SupersedeReason)
+	}
+}
+
+func TestGetLearningChain(t *testing.T) {
+	s := mustOpen(t)
+
+	// Create a chain: v1 → v2 → v3
+	id1, _ := s.InsertLearning(&models.Learning{
+		Category: "decision", Content: "v1: Use Redis",
+		Confidence: 1.0, CreatedAt: time.Now(), ModelUsed: "opus",
+	})
+	id2, _ := s.InsertLearning(&models.Learning{
+		Category: "decision", Content: "v2: Redis+Sentinel",
+		Confidence: 1.0, CreatedAt: time.Now(), ModelUsed: "opus",
+	})
+	id3, _ := s.InsertLearning(&models.Learning{
+		Category: "decision", Content: "v3: Only Redis Cluster",
+		Confidence: 1.0, CreatedAt: time.Now(), ModelUsed: "opus",
+	})
+	s.SupersedeLearning(id1, id2, "added sentinel")
+	s.SupersedeLearning(id2, id3, "full cluster")
+
+	// Get chain from middle
+	chain, err := s.GetLearningChain(id2)
+	if err != nil {
+		t.Fatalf("GetLearningChain: %v", err)
+	}
+	if len(chain) != 3 {
+		t.Fatalf("expected 3 in chain, got %d", len(chain))
+	}
+	if chain[0].Content != "v1: Use Redis" {
+		t.Errorf("chain[0] = %q, want v1", chain[0].Content)
+	}
+	if chain[1].Content != "v2: Redis+Sentinel" {
+		t.Errorf("chain[1] = %q, want v2", chain[1].Content)
+	}
+	if chain[2].Content != "v3: Only Redis Cluster" {
+		t.Errorf("chain[2] = %q, want v3", chain[2].Content)
+	}
+
+	// Get chain from leaf
+	chain, err = s.GetLearningChain(id3)
+	if err != nil {
+		t.Fatalf("GetLearningChain from leaf: %v", err)
+	}
+	if len(chain) != 3 {
+		t.Fatalf("expected 3 from leaf, got %d", len(chain))
+	}
+
+	// Get chain from root
+	chain, err = s.GetLearningChain(id1)
+	if err != nil {
+		t.Fatalf("GetLearningChain from root: %v", err)
+	}
+	if len(chain) != 3 {
+		t.Fatalf("expected 3 from root, got %d", len(chain))
 	}
 }
 
@@ -333,7 +389,7 @@ func TestGetStaleUnfinished(t *testing.T) {
 	})
 
 	// Get all active unfinished (no age filter)
-	all, _ := s.GetActiveLearnings("unfinished", "", "", "")
+	all, _ := s.GetActiveLearnings("unfinished", "", "", "", 0)
 	if len(all) != 3 {
 		t.Fatalf("expected 3, got %d", len(all))
 	}
@@ -345,7 +401,7 @@ func TestGetStaleUnfinished(t *testing.T) {
 	}
 
 	// Only the recent one should remain
-	remaining, _ := s.GetActiveLearnings("unfinished", "", "", "")
+	remaining, _ := s.GetActiveLearnings("unfinished", "", "", "", 0)
 	if len(remaining) != 1 {
 		t.Fatalf("expected 1 remaining, got %d", len(remaining))
 	}
@@ -633,7 +689,7 @@ func TestSupersedeSessionLearnings(t *testing.T) {
 	}
 
 	// Check: user-stated learnings preserved (still active)
-	all, _ := s.GetActiveLearnings("", "", "", "")
+	all, _ := s.GetActiveLearnings("", "", "", "", 0)
 	var preserved, otherSession int
 	for _, l := range all {
 		if l.SessionID == sid {
@@ -752,7 +808,7 @@ func TestUpdateSessionFlavor(t *testing.T) {
 	}
 
 	// Verify
-	learnings, _ := s.GetActiveLearnings("", "", "", "")
+	learnings, _ := s.GetActiveLearnings("", "", "", "", 0)
 	for _, l := range learnings {
 		if l.SessionID == "s1" && l.SessionFlavor != "Intensiver Debug-Marathon" {
 			t.Errorf("expected flavor on learning %d, got %q", l.ID, l.SessionFlavor)

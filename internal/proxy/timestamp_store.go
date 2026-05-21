@@ -21,9 +21,16 @@ type TimestampStore struct {
 
 // TimestampMeta holds the temporal data for a single user message.
 type TimestampMeta struct {
-	Timestamp string `json:"ts,omitempty"` // "Di 2026-04-14 21:32:03"
-	Delta     string `json:"d,omitempty"`  // "36s" or "1m33s"
+	Timestamp      string `json:"ts,omitempty"` // "Di 2026-04-14 21:32:03"
+	Delta          string `json:"d,omitempty"`  // "36s" or "1m33s"
+	ThinkReminder  string `json:"tr,omitempty"` // think-reminder text (stored once, replayed idempotent)
+	SkillEval      string `json:"se,omitempty"` // skill-eval text (stored once, replayed idempotent)
+	Rules          string `json:"ru,omitempty"` // rules reminder text (stored once, replayed idempotent)
 }
+
+// TimestampHint is prepended once as a system-prompt block explaining the
+// timestamp format injected into every message. Keep it short.
+const TimestampHint = "[HH:MM:SS] = message timestamp, [msg:N] = message number in conversation, [+Δ] = time since previous message"
 
 type threadTimestamps struct {
 	Entries map[int]*TimestampMeta `json:"entries"` // msg:N → timestamp data
@@ -107,15 +114,39 @@ func (ts *TimestampStore) getOrCreate(threadID string) *threadTimestamps {
 }
 
 // BuildMeta assembles the full annotation string from a msg:N and optional stored data.
+// Returns the formatted metadata block. Additional stable injects (think-reminder, skill-eval,
+// rules) are appended on separate lines when present. Lines are \n-separated.
+// The TimestampHint is included on the first message (msg:1) only.
 func BuildMeta(msgN int, meta *TimestampMeta) string {
+	var parts []string
+
 	if meta != nil && meta.Timestamp != "" {
 		s := fmt.Sprintf("[%s] [msg:%d]", meta.Timestamp, msgN)
 		if meta.Delta != "" {
 			s += " [+" + meta.Delta + "]"
 		}
-		return s
+		parts = append(parts, s)
+	} else {
+		parts = append(parts, fmt.Sprintf("[msg:%d]", msgN))
 	}
-	return fmt.Sprintf("[msg:%d]", msgN)
+
+	if msgN == 1 {
+		parts = append(parts, "[ts-hint] "+TimestampHint)
+	}
+
+	if meta != nil {
+		if meta.ThinkReminder != "" {
+			parts = append(parts, "[think-reminder] "+meta.ThinkReminder)
+		}
+		if meta.SkillEval != "" {
+			parts = append(parts, "[skill-eval] "+meta.SkillEval)
+		}
+		if meta.Rules != "" {
+			parts = append(parts, "[rules] "+meta.Rules)
+		}
+	}
+
+	return strings.Join(parts, "\n")
 }
 
 // InjectTimestamps injects [msg:N] (+ timestamp/delta if available) on messages.

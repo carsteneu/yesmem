@@ -355,35 +355,9 @@ func (h *Handler) handleHybridSearch(params map[string]any) Response {
 	merged = h.resolveSupersededResults(merged)
 	tSupersede := time.Since(t0)
 
-	// Filter/down-rank by category — consistent with other search functions.
-	// Narratives are session-level briefing context, not inline search results.
+	// Bulk metadata lookup: category, source, created_at in a single round-trip.
+	// Replaces the old GetCategoriesBulk + separate source + separate cooldown queries.
 	if len(merged) > 0 {
-		ids := make([]string, len(merged))
-		for i, r := range merged {
-			ids[i] = r.ID
-		}
-		if cats, err := h.store.GetCategoriesBulk(ids); err == nil {
-			filtered := merged[:0]
-			for _, r := range merged {
-				switch cats[r.ID] {
-				case "narrative":
-					continue // excluded from search, belongs in briefing only
-				case "unfinished":
-					r.Score *= 0.7
-					filtered = append(filtered, r)
-				default:
-					filtered = append(filtered, r)
-				}
-			}
-			merged = filtered
-		}
-	}
-	tCategory := time.Since(t0)
-
-	// Cooldown filter: skip learnings created less than 30 minutes ago.
-	// Prevents echo-injection where a just-stored learning is immediately
-	// retrieved because it semantically matches the ongoing conversation.
-	if h.store != nil && len(merged) > 0 {
 		ids := make([]string, len(merged))
 		for i, r := range merged {
 			ids[i] = r.ID
@@ -394,66 +368,72 @@ func (h *Handler) handleHybridSearch(params map[string]any) Response {
 			placeholders[i] = "?"
 			args[i] = id
 		}
-		freshIDs := map[string]bool{}
-		rows, err := h.store.ReaderDB().Query(
-			"SELECT CAST(id AS TEXT) FROM learnings WHERE id IN ("+strings.Join(placeholders, ",")+") AND created_at > datetime('now', '-30 minutes')", args...)
+		type bulkMeta struct {
+			category      string
+			source        string
+			createdAt     string
+		}
+		bulk := make(map[string]bulkMeta, len(ids))
+		rows, err := h.store.ReaderDB().Query("SELECT CAST(id AS TEXT), COALESCE(category, ''), COALESCE(source, ''), created_at FROM learnings WHERE id IN ("+strings.Join(placeholders, ",")+")", args...)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
-				var id string
-				if rows.Scan(&id) == nil {
-					freshIDs[id] = true
+				var id, cat, src, created string
+				if rows.Scan(&id, &cat, &src, &created) == nil {
+					bulk[id] = bulkMeta{category: cat, source: src, createdAt: created}
 				}
 			}
 		}
-		if len(freshIDs) > 0 {
+
+		// Category filter/down-rank (was GetCategoriesBulk)
+		{
 			filtered := merged[:0]
 			for _, r := range merged {
-				if freshIDs[r.ID] {
-					log.Printf("hybrid_search: [SKIP-cooldown] id=%s (created <30min ago)", r.ID)
+				bm, ok := bulk[r.ID]
+				switch {
+				case !ok:
+					filtered = append(filtered, r)
+				case bm.category == "narrative":
+					continue
+				case bm.category == "unfinished":
+					r.Score *= 0.7
+					filtered = append(filtered, r)
+				default:
+					filtered = append(filtered, r)
+				}
+			}
+			merged = filtered
+		}
+
+		// Cooldown filter: skip learnings created less than 30 minutes ago
+		{
+			cooldownCutoff := time.Now().Add(-30 * time.Minute).UTC().Format(time.RFC3339)
+			filtered := merged[:0]
+			for _, r := range merged {
+				if bm, ok := bulk[r.ID]; ok && bm.createdAt >= cooldownCutoff {
 					continue
 				}
 				filtered = append(filtered, r)
 			}
 			merged = filtered
 		}
-	}
 
-	// Source-boost: user-stated learnings are epistemically more valuable.
-	// Consistent with proxy/associate.go source-boost multipliers.
-	if h.store != nil && len(merged) > 0 {
-		var sids []string
-		for _, r := range merged {
-			sids = append(sids, r.ID)
-		}
-		placeholders := make([]string, len(sids))
-		args := make([]any, len(sids))
-		for i, id := range sids {
-			placeholders[i] = "?"
-			args[i] = id
-		}
-		srcMap := map[string]string{}
-		rows, err := h.store.ReaderDB().Query("SELECT CAST(id AS TEXT), COALESCE(source, '') FROM learnings WHERE id IN ("+strings.Join(placeholders, ",")+") ", args...)
-		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var id, src string
-				if rows.Scan(&id, &src) == nil {
-					srcMap[id] = src
+		// Source-boost: user-stated learnings are epistemically more valuable
+		for i, r := range merged {
+			if bm, ok := bulk[r.ID]; ok {
+				switch bm.source {
+				case "user_stated":
+					merged[i].Score *= 1.25
+				case "agreed_upon":
+					merged[i].Score *= 1.15
+				case "hook_auto_learned":
+					merged[i].Score *= 1.10
 				}
 			}
 		}
-		for i, r := range merged {
-			switch srcMap[r.ID] {
-			case "user_stated":
-				merged[i].Score *= 1.25
-			case "agreed_upon":
-				merged[i].Score *= 1.15
-			case "hook_auto_learned":
-				merged[i].Score *= 1.10
-			}
-		}
 	}
+
+	tCategory := time.Since(t0)
 
 	// Apply cluster-affinity boost: learnings that perform well in the current query cluster rank higher
 	// Cluster-affinity needs a query vector to find the nearest cluster.

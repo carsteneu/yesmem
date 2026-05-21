@@ -125,26 +125,38 @@ func TestParseNavCommand_PipedGrep(t *testing.T) {
 }
 
 func TestSuggestYesmemTool_Grep(t *testing.T) {
-	s := SuggestYesmemTool("grep", "internal/proxy/proxy.go")
+	s := SuggestYesmemTool("grep", "internal/proxy/proxy.go", "yesmem")
 	if s == "" {
 		t.Fatal("should return suggestion for grep")
 	}
 	if !contains(s, "search_code") {
 		t.Errorf("grep suggestion should mention search_code, got: %s", s)
 	}
+	if !contains(s, "proxy.go") {
+		t.Errorf("grep suggestion should include filename, got: %s", s)
+	}
+	if !contains(s, "yesmem") {
+		t.Errorf("grep suggestion should include project, got: %s", s)
+	}
 }
 
 func TestSuggestYesmemTool_Sed(t *testing.T) {
-	s := SuggestYesmemTool("sed", "internal/proxy/proxy.go")
+	s := SuggestYesmemTool("sed", "internal/proxy/proxy.go", "yesmem")
 	if !contains(s, "get_code_snippet") {
 		t.Errorf("sed suggestion should mention get_code_snippet, got: %s", s)
+	}
+	if !contains(s, "proxy.go") {
+		t.Errorf("sed suggestion should include filename, got: %s", s)
 	}
 }
 
 func TestSuggestYesmemTool_Cat(t *testing.T) {
-	s := SuggestYesmemTool("cat", "internal/proxy/proxy.go")
+	s := SuggestYesmemTool("cat", "internal/proxy/proxy.go", "yesmem")
 	if !contains(s, "get_file_symbols") {
 		t.Errorf("cat suggestion should mention get_file_symbols, got: %s", s)
+	}
+	if !contains(s, "proxy.go") {
+		t.Errorf("cat suggestion should include filename, got: %s", s)
 	}
 }
 

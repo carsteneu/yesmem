@@ -366,7 +366,7 @@ func (h *Handler) watchScheduledAgent(section string) {
 }
 
 func prepareBashCommand(command string) string {
-	if !strings.Contains(command, "store ") && !strings.Contains(command, "store'") {
+	if !strings.Contains(command, "store ") && !strings.Contains(command, "store'") && !strings.Contains(command, "llm ") {
 		return command
 	}
 	return capfile.GenerateAdapterBash() + command
@@ -389,8 +389,8 @@ func (h *Handler) fireJobBash(job *ScheduledJob) {
 		AllowedPorts:        parsePorts(job.AllowedPorts),
 	})
 	timeout := 20
-	if strings.Contains(command, "claude ") {
-		timeout = 120
+	if strings.Contains(command, "claude ") || strings.Contains(command, "llm ") {
+		timeout = 600
 	}
 
 	effectiveProfile := job.Sandbox
@@ -421,7 +421,7 @@ func (h *Handler) fireJobBash(job *ScheduledJob) {
 
 func (h *Handler) resolveBashCommand(job *ScheduledJob) (string, string, error) {
 	if job.CapName != "" {
-		caps, err := h.store.GetActiveLearnings("cap", "", "", "")
+		caps, err := h.store.GetActiveLearnings("cap", "", "", "", 0)
 		if err != nil {
 			return "", "", fmt.Errorf("cap lookup: %w", err)
 		}
@@ -454,6 +454,9 @@ func (h *Handler) storeBashRun(job *ScheduledJob, command, output string, err er
 	if err != nil {
 		status = "error"
 		errMsg = err.Error()
+	}
+	if status == "ok" && len(output) == 0 {
+		return
 	}
 	if dbErr := h.store.SaveBashJobRun(storage.BashJobRun{
 		JobID:      job.ID,

@@ -26,6 +26,11 @@ type Result struct {
 	Contradictions int
 	BuiltAt        string
 	DurationMs     int64
+	LoadMs         int64
+	ComputeMs      int64
+	WriteMs        int64
+	TplMs          int64
+	SkippedWrites  int
 }
 
 type Learning struct {

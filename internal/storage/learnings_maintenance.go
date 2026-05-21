@@ -11,17 +11,17 @@ import (
 func (s *Store) DeleteOldNarratives(project string, keep int) (int64, error) {
 	// Clean up AQ-FTS entries for learnings about to be deleted
 	s.db.Exec(`DELETE FROM anticipated_queries_fts WHERE learning_id IN (
-		SELECT id FROM learnings WHERE category = 'narrative' AND project = ?
-		AND id NOT IN (SELECT id FROM learnings WHERE category = 'narrative' AND project = ? ORDER BY created_at DESC LIMIT ?)
+		SELECT id FROM learnings WHERE category = 'narrative' AND canonical_project = ?
+		AND id NOT IN (SELECT id FROM learnings WHERE category = 'narrative' AND canonical_project = ? ORDER BY created_at DESC LIMIT ?)
 	)`, project, project, keep)
 
 	result, err := s.db.Exec(`
 		DELETE FROM learnings
 		WHERE category = 'narrative'
-		AND project = ?
+		AND canonical_project = ?
 		AND id NOT IN (
 			SELECT id FROM learnings
-			WHERE category = 'narrative' AND project = ?
+			WHERE category = 'narrative' AND canonical_project = ?
 			ORDER BY created_at DESC
 			LIMIT ?
 		)`, project, project, keep)

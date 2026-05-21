@@ -296,7 +296,7 @@ func synthesizeUserProfile(store *storage.Store, client extraction.LLMClient) {
 	// Load input data: learnings with user_stated/agreed_upon source
 	var allLearnings []models.Learning
 	for _, cat := range []string{"preference", "explicit_teaching", "pattern", "relationship"} {
-		learnings, _ := store.GetActiveLearnings(cat, "", "", "")
+		learnings, _ := store.GetActiveLearnings(cat, "", "", "", 0)
 		for _, l := range learnings {
 			if l.Source == "user_stated" || l.Source == "agreed_upon" {
 				allLearnings = append(allLearnings, l)
@@ -431,8 +431,8 @@ func bootstrapPersonaFromLearnings(store *storage.Store) int {
 // bootstrapPersonaFromLearningsForce runs bootstrap regardless of existing traits.
 func bootstrapPersonaFromLearningsForce(store *storage.Store) int {
 	// Load preference and relationship learnings
-	preferences, _ := store.GetActiveLearnings("preference", "", "", "")
-	relationships, _ := store.GetActiveLearnings("relationship", "", "", "")
+	preferences, _ := store.GetActiveLearnings("preference", "", "", "", 0)
+	relationships, _ := store.GetActiveLearnings("relationship", "", "", "", 0)
 
 	all := append(preferences, relationships...)
 	if len(all) == 0 {
@@ -601,7 +601,7 @@ func extractExpertiseFromLearnings(store *storage.Store) int {
 
 	// Scan all categories
 	for _, cat := range []string{"pattern", "gotcha", "decision", "explicit_teaching"} {
-		learnings, _ := store.GetActiveLearnings(cat, "", "", "")
+		learnings, _ := store.GetActiveLearnings(cat, "", "", "", 0)
 		for _, l := range learnings {
 			content := strings.ToLower(l.Content)
 			for keyword, traitKey := range techKeywords {
@@ -644,7 +644,7 @@ func extractExpertiseFromLearnings(store *storage.Store) int {
 
 // loadTopPivotMoments loads the most impactful pivot moments across all projects.
 func loadTopPivotMoments(store *storage.Store, limit int) []models.Learning {
-	pivots, err := store.GetActiveLearnings("pivot_moment", "", "", "")
+	pivots, err := store.GetActiveLearnings("pivot_moment", "", "", "", 0)
 	if err != nil || len(pivots) == 0 {
 		return nil
 	}

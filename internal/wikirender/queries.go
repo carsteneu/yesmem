@@ -61,27 +61,33 @@ func (s *renderState) loadLearnings(ctx context.Context) error {
 
 func (s *renderState) loadEntities(ctx context.Context) error {
 	return s.loadAttribute(ctx, "learning_entities", func(lid int64, val string) {
+		s.learningsMu.Lock()
 		s.entities[val] = append(s.entities[val], lid)
 		s.byLearning[lid] = append(s.byLearning[lid], val)
 		l := s.learnings[lid]
 		l.Entities = append(l.Entities, val)
 		s.learnings[lid] = l
+		s.learningsMu.Unlock()
 	})
 }
 
 func (s *renderState) loadActions(ctx context.Context) error {
 	return s.loadAttribute(ctx, "learning_actions", func(lid int64, val string) {
+		s.learningsMu.Lock()
 		l := s.learnings[lid]
 		l.Actions = append(l.Actions, val)
 		s.learnings[lid] = l
+		s.learningsMu.Unlock()
 	})
 }
 
 func (s *renderState) loadKeywords(ctx context.Context) error {
 	return s.loadAttribute(ctx, "learning_keywords", func(lid int64, val string) {
+		s.learningsMu.Lock()
 		l := s.learnings[lid]
 		l.Keywords = append(l.Keywords, val)
 		s.learnings[lid] = l
+		s.learningsMu.Unlock()
 	})
 }
 
@@ -108,20 +114,14 @@ func (s *renderState) loadAttribute(ctx context.Context, tbl string, sink func(i
 	return rows.Err()
 }
 
-func (s *renderState) loadSupersedesContent(ctx context.Context) error {
-	supersededIDs := []int64{}
-	for _, l := range s.learnings {
-		if l.Supersedes > 0 {
-			supersededIDs = append(supersededIDs, l.Supersedes)
-		}
-	}
-	if len(supersededIDs) == 0 {
-		return nil
+func (s *renderState) loadSupersedesContentForIDs(ctx context.Context, supIDs []int64) (map[int64]string, error) {
+	if len(supIDs) == 0 {
+		return nil, nil
 	}
 
-	args := make([]any, len(supersededIDs))
-	placeholders := make([]string, len(supersededIDs))
-	for i, id := range supersededIDs {
+	args := make([]any, len(supIDs))
+	placeholders := make([]string, len(supIDs))
+	for i, id := range supIDs {
 		args[i] = id
 		placeholders[i] = "?"
 	}
@@ -129,7 +129,7 @@ func (s *renderState) loadSupersedesContent(ctx context.Context) error {
 	q := fmt.Sprintf(`SELECT id, content FROM learnings WHERE id IN (%s)`, strings.Join(placeholders, ","))
 	rows, err := s.cfg.Store.DB().QueryContext(ctx, q, args...)
 	if err != nil {
-		return fmt.Errorf("loadSupersedesContent: %w", err)
+		return nil, fmt.Errorf("loadSupersedesContent: %w", err)
 	}
 	defer rows.Close()
 
@@ -138,19 +138,11 @@ func (s *renderState) loadSupersedesContent(ctx context.Context) error {
 		var id int64
 		var content string
 		if err := rows.Scan(&id, &content); err != nil {
-			return err
+			return nil, err
 		}
 		supersedes[id] = content
 	}
-	for id, l := range s.learnings {
-		if l.Supersedes > 0 {
-			if c, ok := supersedes[l.Supersedes]; ok {
-				l.SupersedesContent = c
-				s.learnings[id] = l
-			}
-		}
-	}
-	return rows.Err()
+	return supersedes, rows.Err()
 }
 
 func (s *renderState) loadFileCoverage(ctx context.Context) error {
@@ -416,14 +408,7 @@ func (s *renderState) loadContradictions(ctx context.Context) error {
 	return rows.Err()
 }
 
-func (s *renderState) loadSessions(ctx context.Context) error {
-	// Collect all session IDs from loaded learnings.
-	sids := map[string]bool{}
-	for _, l := range s.learnings {
-		if l.SessionID != "" {
-			sids[l.SessionID] = true
-		}
-	}
+func (s *renderState) loadSessionsForIDs(ctx context.Context, sids map[string]bool) error {
 	if len(sids) == 0 {
 		return nil
 	}
@@ -453,6 +438,12 @@ func (s *renderState) loadSessions(ctx context.Context) error {
 		}
 		s.sessions[sess.ID] = sess
 	}
+	return rows.Err()
+}
+
+func (s *renderState) attachLearningsToSessions() {
+	s.learningsMu.Lock()
+	defer s.learningsMu.Unlock()
 	for _, l := range s.learnings {
 		if l.SessionID == "" {
 			continue
@@ -462,7 +453,6 @@ func (s *renderState) loadSessions(ctx context.Context) error {
 			s.sessions[l.SessionID] = sess
 		}
 	}
-	return rows.Err()
 }
 
 func (s *renderState) loadFileSessions(ctx context.Context) error {

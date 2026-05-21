@@ -91,8 +91,8 @@ const tmplOpenWork = `{{if .D.Items}}
 {{if .D.IsReminder}}{{.S.UserReminder}}{{else}}{{.S.OpenWork}}{{end}}
 {{if .D.AbsenceNote}}({{.D.AbsenceNote}})
 {{end}}{{range .D.Items}}- {{if .Project}}[{{.Project}}] {{end}}{{.Content}}{{if .Deadline}} (Deadline: {{.Deadline}}){{end}}
-{{end}}{{if or .D.IdeaCount .D.StaleCount}}(+ {{if .D.IdeaCount}}{{.D.IdeaCount}} ideas{{end}}{{if and .D.IdeaCount .D.StaleCount}}, {{end}}{{if .D.StaleCount}}{{.D.StaleCount}} stale{{end}} — get_learnings(category="unfinished", task_type="idea") to retrieve)
-{{end}}Claude: Bring up these points ACTIVELY — not casually, but directly: "By the way, you have open items..."
+{{end}}{{if or .D.IdeaCount .D.StaleCount}}(+ {{if .D.IdeaCount}}{{.D.IdeaCount}} ideas{{end}}{{if and .D.IdeaCount .D.StaleCount}}, {{end}}{{if .D.StaleCount}}{{.D.StaleCount}} stale{{end}} — get_learnings(category="unfinished:idea") to retrieve)
+{{end}}{{.S.AgentName}}: Bring up these points ACTIVELY — not casually, but directly: "By the way, you have open items..."
 {{end}}`
 
 // templateData wraps translated strings and section data for templates.

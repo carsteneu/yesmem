@@ -6,6 +6,27 @@ import (
 	"testing"
 )
 
+func TestIsRealUserSession(t *testing.T) {
+	tests := []struct {
+		name     string
+		tid      string
+		expected bool
+	}{
+		{"opencode session", "opencode:ses_abc123def456", true},
+		{"claude session", "claude:ses_abc123def456", true},
+		{"uuid internal", "503485dc-b636-4c53-909a-00ed1374a31b", false},
+		{"empty string", "", false},
+		{"wrong prefix", "custom:ses_abc123", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isRealUserSession(tt.tid); got != tt.expected {
+				t.Errorf("isRealUserSession(%q) = %v, want %v", tt.tid, got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestDeriveThreadID_StableWhenBillingHeaderChanges(t *testing.T) {
 	// system[0] = billing header with changing cch= hash
 	// system[2] = main prompt with stable "Primary working directory:"
@@ -128,7 +149,7 @@ func TestExtractSessionID_HeaderTakesPrecedence(t *testing.T) {
 	req := map[string]any{
 		"metadata": map[string]any{"user_id": string(userID)},
 	}
-	got := extractSessionID(req, "header-session")
+	got := extractSessionID(req, "header-session", "")
 	if got != "header-session" {
 		t.Fatalf("expected header-session, got %s", got)
 	}
@@ -139,7 +160,7 @@ func TestExtractSessionID_FallbackToBody(t *testing.T) {
 	req := map[string]any{
 		"metadata": map[string]any{"user_id": string(userID)},
 	}
-	got := extractSessionID(req, "")
+	got := extractSessionID(req, "", "")
 	if got != "body-session" {
 		t.Fatalf("expected body-session, got %s", got)
 	}
@@ -147,7 +168,7 @@ func TestExtractSessionID_FallbackToBody(t *testing.T) {
 
 func TestExtractSessionID_HeaderOnlyNoBody(t *testing.T) {
 	req := map[string]any{}
-	got := extractSessionID(req, "header-only")
+	got := extractSessionID(req, "header-only", "")
 	if got != "header-only" {
 		t.Fatalf("expected header-only, got %s", got)
 	}
@@ -155,9 +176,20 @@ func TestExtractSessionID_HeaderOnlyNoBody(t *testing.T) {
 
 func TestExtractSessionID_BothEmpty(t *testing.T) {
 	req := map[string]any{}
-	got := extractSessionID(req, "")
+	got := extractSessionID(req, "", "")
 	if got != "" {
 		t.Fatalf("expected empty, got %s", got)
+	}
+}
+
+func TestExtractSessionID_OpencodeOverridesAll(t *testing.T) {
+	userID, _ := json.Marshal(map[string]string{"session_id": "body-uuid"})
+	req := map[string]any{
+		"metadata": map[string]any{"user_id": string(userID)},
+	}
+	got := extractSessionID(req, "header-id", "ses_opencode123")
+	if got != "ses_opencode123" {
+		t.Fatalf("expected opencode session ID to take priority, got %s", got)
 	}
 }
 

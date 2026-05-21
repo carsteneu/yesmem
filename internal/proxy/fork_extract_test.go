@@ -48,6 +48,24 @@ func TestExtractAndEvaluatePrompt(t *testing.T) {
 	if !strings.Contains(prompt, "contradictions") {
 		t.Error("prompt JSON format should include contradictions")
 	}
+	// Must NOT contain "Answer:" prose prompt — conflicts with JSON-only instruction
+	if strings.Contains(prompt, "Answer:") {
+		t.Error("prompt should not contain 'Answer:' — replaced with explicit JSON-only instruction")
+	}
+	// Must NOT contain German — unified to English
+	if strings.Contains(prompt, "Antwortformat") {
+		t.Error("prompt should not contain German 'Antwortformat'")
+	}
+	if strings.Contains(prompt, "kurzer Satz") {
+		t.Error("prompt should not contain German 'kurzer Satz'")
+	}
+	// Must contain English format instruction
+	if !strings.Contains(prompt, "Response format") {
+		t.Error("prompt should contain English 'Response format'")
+	}
+	if !strings.Contains(prompt, "Return ONLY a JSON object") {
+		t.Error("prompt should contain 'Return ONLY a JSON object'")
+	}
 }
 
 func TestExtractAndEvaluatePrompt_NoInjectedIDs(t *testing.T) {
@@ -337,5 +355,46 @@ func TestParseExtractionResult_FlavorMissing(t *testing.T) {
 	}
 	if result.SessionFlavor != "" {
 		t.Errorf("expected empty flavor when missing, got %q", result.SessionFlavor)
+	}
+}
+
+func TestParseExtractionJSON_ExtraBraces(t *testing.T) {
+	// DeepSeek sometimes adds extra } at the end
+	response := `{"learnings":[],"evaluations":[]}}`
+	result, err := parseExtractionJSON(response)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected result, got nil")
+	}
+}
+
+func TestParseExtractionJSON_TextBeforeJSON(t *testing.T) {
+	response := "Here is the output:\n{\"learnings\":[],\"evaluations\":[]}\nDone."
+	result, err := parseExtractionJSON(response)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected result, got nil")
+	}
+}
+
+func TestParseExtractionJSON_NestedBraces(t *testing.T) {
+	response := `{"learnings":[{"content":"test {with braces} inside"}],"evaluations":[]}`
+	result, err := parseExtractionJSON(response)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if result == nil || len(result.Learnings) != 1 {
+		t.Fatal("expected 1 learning with nested braces")
+	}
+}
+
+func TestParseExtractionJSON_NoJSON(t *testing.T) {
+	_, err := parseExtractionJSON("Just plain text, no JSON object here.")
+	if err == nil {
+		t.Fatal("expected error for no JSON")
 	}
 }

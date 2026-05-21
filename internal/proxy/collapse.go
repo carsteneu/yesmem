@@ -138,6 +138,9 @@ func blankFirstMessage(m any) any {
 // buildArchiveBlock creates the summary text for collapsed messages.
 // Uses session flavors + git commits + learnings when available,
 // falls back to mechanical timeline when no extraction data exists.
+//
+// Archive format: [Archiv: Messages X-Y (N msgs) — get_compacted_stubs('T', X, Y) zum Reinzoomen]
+// The daemon parses this format in handler_state.go:archivePattern when reading frozen stubs.
 func buildArchiveBlock(start, end int, stats compactionStats, threadID string) string {
 	msgCount := end - start + 1
 	var sb strings.Builder
