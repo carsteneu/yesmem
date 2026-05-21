@@ -34,37 +34,23 @@ That's where you start. Not from zero. From where it matters.
 
 ## What You Get
 
-- **Nothing is ever lost:** Claude Code's built-in compaction throws away your conversation. YesMem collapses it losslessly instead. Three hours in, you need something from hour one? Claude pulls it back, word for word.
-
-- **Optimal context window:** set your threshold, resize on the fly. 150K for focused work, 500K for deep research, switch mid-session. The window adapts to you, not the other way around. No performance degradation, no matter how long you work.
-
-- **Better answers out of the box:** you didn't change anything, but Claude suddenly stops cutting corners. YesMem replaces Anthropic's output throttling with quality directives. Same workflow, better results.
-
-- **Zero effort knowledge capture:** you finish debugging, close the session, go home. Next morning, Claude already knows what you fixed and why. Extraction happens in the background after every response. You don't do anything.
-
-- **Knowledge that self-corrects:** last month you decided on REST. This week you switched to gRPC. Claude doesn't suggest REST anymore. Outdated facts get replaced automatically, and your explicit decisions always outrank Claude's guesses.
-
-- **Costs go down over time,** the longer you work, the more context hits the prompt cache. Collapsing cycles exploit Anthropic's cache TTL. Context typically gets cheaper over time, not more expensive.
-
-- **Your rules stick:** you wrote careful instructions in CLAUDE.md. After 20 minutes, Claude ignores them, buried under tool outputs. YesMem re-injects your rules every 40k tokens. Mid-session, not just at start.
-
-- **Pick up where you left off,** not "here are 5 bullet points" but *"last time you were debugging the race condition in the proxy. You found that the mutex wasn't held across the cache write..."* Immersive handovers, not summaries.
-
-- **Right docs at the right time:** you're using an unfamiliar API and Claude guesses wrong. You indexed the docs once, now Claude searches them on demand and gets the actual function signatures instead of guessing.
-
-- **Understands your codebase:** YesMem scans your code, builds a graph of functions, types, and call chains, and steers Claude toward that graph instead of shelling out to grep. Faster, less context burn, better results. Worktree-aware — branches share the same index.
-
-- **Parallel work:** one agent refactors the auth module, another writes tests, a third updates the docs. They share state, talk to each other, and you watch them work. Heartbeat, crash recovery, cascade shutdown built in.
-
-- **Your system prompt, your rules:** YesMem replaces the default system prompt with SYSTEM.md — a self-constitution template in first-person. The model knows it has memory, knows how to search it, knows its own capabilities. Applied across all pipelines (Claude Code, OpenCode, Codex). Claude Code's own `--system-prompt` flag is officially supported by Anthropic — the proxy does the same via middleware.
-
-- **Self-configuring provider routing:** Add any OpenAI-compatible provider to opencode. YesMem reads `models.json`, `opencode.json`, and `auth.json`, discovers active providers automatically, patches base URLs, and routes models. Works out of the box. Toggle off with `auto_configure_providers: false`.
-
-- **OpenCode integration:** First-class plugin with code-navigation hooks (blocks grep/find when the code graph has better answers), rule_guard (every tool call evaluated against RULES.md via the model), and automatic session identification. Install happens during `yesmem setup` — zero manual steps.
-
-- **Policy engine:** RULES.md with 30+ rules and a skill catalog with activation triggers. Memory search before answers. Code tools before shell. TDD before implementation. The model evaluates every tool call, BLOCK/SUGGEST decisions enforced before execution. Self-correcting — rules rewrite themselves based on what works.
-
-- **Self-cleaning:** Claude gets stuck in a loop, suggesting the same broken approach three times. YesMem detects it, quarantines the learnings from that session. The knowledge base maintains itself.
+| Feature | What it does |
+|---------|-------------|
+| **Infinite sessions** | Lossless context collapsing — three hours in, need something from hour one? Claude pulls it back, word for word. |
+| **Adaptive context window** | Set your threshold, resize on the fly. 150K for focused work, 500K for deep research. No performance degradation. |
+| **Zero-effort knowledge** | Extraction runs in the background after every response. Next morning, Claude already knows what you fixed. |
+| **Self-correcting knowledge** | Switched from REST to gRPC? Claude stops suggesting REST. Your explicit decisions outrank automatic guesses. |
+| **Costs drop over time** | Context hits the prompt cache across collapsing cycles. Longer you work, cheaper it gets. |
+| **Rules that stick** | CLAUDE.md re-injected every 40k tokens mid-session — not buried under tool outputs after 20 minutes. |
+| **Immersive handovers** | "Last time you were debugging the race condition in the proxy..." — not "here are 5 bullet points." |
+| **Docs on demand** | Index your docs once, Claude searches them on demand and gets actual function signatures instead of guessing. |
+| **Codebase-native** | Pre-built function graph steers Claude toward `search_code_index` instead of shelling out to grep. Worktree-aware. |
+| **Parallel agents** | Refactor auth, write tests, update docs — simultaneously. Heartbeat, crash recovery, cascade shutdown built in. |
+| **Your system prompt** | SYSTEM.md template in first-person. The model knows it has memory, knows how to search it. Applied across Claude Code, OpenCode, and Codex. |
+| **Self-configuring routing** | Reads `models.json`, `opencode.json`, `auth.json` — discovers providers, patches base URLs, routes models. Zero manual config. |
+| **OpenCode plugin** | Code-navigation hooks, rule_guard, automatic session identification. Installs during `yesmem setup`. |
+| **Policy engine** | RULES.md with skill catalog. Memory search before answers. Code tools before shell. Model evaluates every tool call. |
+| **Self-cleaning** | Detects fixation loops, quarantines bad learnings automatically. The knowledge base maintains itself. |
 
 ### Foundations
 
