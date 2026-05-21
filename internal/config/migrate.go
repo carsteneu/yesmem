@@ -92,6 +92,11 @@ const modelFeaturesBlock = `
     think_reminder: true
 `
 
+const deepseekPricingSnippet = `
+    deepseek-v4-flash: { input: 0.14, output: 0.56 }
+    deepseek-v4-pro:   { input: 0.28, output: 1.12 }
+`
+
 // MigrateConfig reads an existing config.yaml and inserts any missing
 // proxy-section fields, paths fields, and model_features section.
 // Returns the number of fields/sections added.
@@ -137,6 +142,14 @@ func MigrateConfig(path string) (int, error) {
 			content = appendToEnd(content, "\nproxy:\n  enabled: true"+modelFeaturesBlock)
 		}
 		added++
+	}
+
+	// ━━ pricing section: deepseek entries ━━
+	if !strings.Contains(content, "deepseek-v4-flash") {
+		if strings.Contains(content, "pricing:") {
+			content = insertAtEndOfSection(content, "pricing:", deepseekPricingSnippet)
+			added++
+		}
 	}
 
 	// ━━ exclude_projects (top-level) ━━

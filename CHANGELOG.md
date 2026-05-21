@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Restore missing YesMemRPC import in index.ts
+- Per-model token threshold override + DeepSeek 500k default
+- Add deepseek pricing entries, raise quality budget to 0
+- Per-session gotcha cap — suppress after 3 injections
+- Use mcp__yesmem__* wildcard instead of 65 individual tool permissions
 - Sync user edits — re-read directive positioning, wording refinements
 - Single nudge line, no rotation
 - Rotate 3 nudge variants based on system reminder text (DE+EN)
@@ -40,11 +45,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Commit audit May 5-21 — 7 missing features found, 4 removed, 18 documented
+- Update Features.md overview counts (70 tools, 64 commands, 130 rpc, 48 tables)
+- Rewrite reference docs — mcp (70 tools), cli (64 commands), rpc (130 methods), db (48 tables + 4 FTS5)
+- Fix 58 audit discrepancies across all feature docs + config-reference
+- Document opencode plugin update issue (provider-resolution not loading)
+- Doc audit findings (58 discrepancies) + rule_guard provider resolution plan
+- Renumber feature doc sections consistently per file (1..N)
+- Split Features.md into target-group docs (7 feature files + 4 reference docs)
+- README model-agnostic language — replace DeepSeek with the model in functional descriptions
+- Update README — LLM backend, SYSTEM.md, autoconf, opencode plugin, RULES.md
 - Git history 120 commits — May 15-21: fork-cache, SYSTEM.md, provider autoconf
 - Expand search exceptions — reflexive, self-contained, trivial
 - Sync runtime SYSTEM.md to repo — reflexive-search exception, formatting alignment
 - Add SYSTEM.md — canonical system prompt template
 - Auto-extracted superpowers plan/spec documents
+
+### Testing
+
+- Replace hardcoded  path with generic path for public sync
 
 ## [2.1.0] - 2026-05-18
 

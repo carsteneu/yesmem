@@ -31,15 +31,67 @@ async function loadRules(directory: string): Promise<string> {
   }
 }
 
-async function getDeepSeekKey(): Promise<string> {
-  try {
-    const authFile = `${process.env.HOME}/.local/share/opencode/auth.json`;
-    const auth = JSON.parse(await Bun.file(authFile).text());
-    return auth?.deepseek?.key || "";
-  } catch {
-    return "";
+const FIRST_PARTY_DEFAULTS: Record<string, string> = {
+    openai: "https://api.openai.com",
+    anthropic: "https://api.anthropic.com",
+    google: "https://generativelanguage.googleapis.com",
+    groq: "https://api.groq.com",
+    mistral: "https://api.mistral.ai",
+  };
+
+  const OPENAI_COMPAT_NPMS = new Set([
+    "@ai-sdk/openai-compatible",
+    "@ai-sdk/openai",
+    "@ai-sdk/mistral",
+  ]);
+
+  async function loadModelsJSON(): Promise<Record<string, any>> {
+    try {
+      const modelsFile = `${process.env.HOME}/.cache/opencode/models.json`;
+      return JSON.parse(await Bun.file(modelsFile).text());
+    } catch {
+      return {};
+    }
   }
-}
+
+  async function loadAuthJSON(): Promise<Record<string, any>> {
+    try {
+      const authFile = `${process.env.HOME}/.local/share/opencode/auth.json`;
+      return JSON.parse(await Bun.file(authFile).text());
+    } catch {
+      return {};
+    }
+  }
+
+  async function resolveGuardConfig(): Promise<{ model: string; apiUrl: string; apiKey: string; npm: string }> {
+    // 1. Read extraction.model from config.yaml (fallback: deepseek-v4-flash)
+    let model = "deepseek-v4-flash";
+    try {
+      const configPath = `${process.env.HOME}/.claude/yesmem/config.yaml`;
+      const yaml = await import("yaml");
+      const config = yaml.parse(await Bun.file(configPath).text());
+      if (config?.extraction?.model) model = config.extraction.model;
+    } catch {}
+
+    // 2. Find provider in models.json that owns this model
+    const models = await loadModelsJSON();
+    const auth = await loadAuthJSON();
+    let apiUrl = "https://api.deepseek.com";
+    let apiKey = "";
+    let npm = "";
+
+    for (const [providerId, provider] of Object.entries(models)) {
+      const p = provider as any;
+      if (p.models && p.models[model]) {
+        apiUrl = p.api || FIRST_PARTY_DEFAULTS[providerId] || "";
+        apiKey = auth[providerId]?.key || "";
+        npm = p.npm || "";
+        break;
+      }
+    }
+
+    return { model, apiUrl, apiKey, npm };
+  }
 
 type GuardResult = { decision: string; violations?: string[]; suggestion?: string };
 
@@ -80,8 +132,9 @@ async function guardCheck(rules: string, tool: string, context: string, canBlock
     return cached.result;
   }
 
-  const key = await getDeepSeekKey();
-  if (!key) { dbgLog("guard", "NO-KEY"); return { decision: "PASS" }; }
+    const cfg = await resolveGuardConfig();
+    const key = cfg.apiKey;
+    if (!key || !cfg.apiUrl) { dbgLog("guard", `NO-KEY url=${cfg.apiUrl} key=${key ? "yes" : "no"}`); return { decision: "PASS" }; }
 
   const blockOption = canBlock
     ? `- BLOCK: call violates a rule → {"decision":"BLOCK","violations":["Rule X: reason"]}\n`
@@ -101,25 +154,28 @@ async function guardCheck(rules: string, tool: string, context: string, canBlock
   const sysTok = Math.round(systemPrompt.length / 4);
   const usrTok = Math.round(userPrompt.length / 4);
 
-  try {
-    const t0 = Date.now();
-    dbgLog("guard", `FETCH tool=${tool}`);
-    const resp = await fetch("https://api.deepseek.com/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-      body: JSON.stringify({
-        model: "deepseek-v4-flash",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        temperature: 0,
-        max_tokens: 4096,
-        response_format: { type: "json_object" },
-        thinking: { type: "disabled" },
-      }),
-      signal: AbortSignal.timeout(15000),
-    });
+      try {
+        const t0 = Date.now();
+        dbgLog("guard", `FETCH tool=${tool} model=${cfg.model} url=${cfg.apiUrl}`);
+        const body: Record<string, any> = {
+          model: cfg.model,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          temperature: 0,
+          max_tokens: 4096,
+        };
+        if (OPENAI_COMPAT_NPMS.has(cfg.npm)) {
+          body.response_format = { type: "json_object" };
+          body.thinking = { type: "disabled" };
+        }
+        const resp = await fetch(`${cfg.apiUrl}/v1/chat/completions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+          body: JSON.stringify(body),
+        signal: AbortSignal.timeout(15000),
+      });
     dbgLog("guard", `FETCH-OK status=${resp.status} t=${Date.now() - t0}ms`);
 
     const elapsed = Date.now() - t0;

@@ -1,4 +1,4 @@
-import { YesMemRPC } from "./rpc";
+// yesmem opencode plugin (rule_guard: provider-resolution v2)
 import { appendFileSync } from "node:fs";
 import { codeNavHook } from "./code_nav";
 
@@ -13,6 +13,7 @@ import { autoResolveHook } from "./auto_resolve";
 import { idleReminderHook } from "./idle_reminder";
 import { hsNudgeHook } from "./hs_nudge";
 import { ruleGuardHook } from "./rule_guard";
+import { YesMemRPC } from "./rpc";
 
 export const YesMemPlugin = async (ctx: any) => {
   const rpc = new YesMemRPC();

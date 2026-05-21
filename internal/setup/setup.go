@@ -695,8 +695,8 @@ llm:
   # Daily spending limits per model tier (USD). Prevents cost explosion
   # with many parallel sessions or large backlogs. 0 = no limit.
   # Only applies to provider: "api" — CLI usage is covered by your subscription.
-  daily_budget_extract_usd: 5.0    # Budget for Pass 1 (extraction) + evolution
-  daily_budget_quality_usd: 2.0    # Budget for narrative + Pass 2 (quality)
+  daily_budget_extract_usd: 20.0   # Budget for Pass 1 (extraction) + evolution
+  daily_budget_quality_usd: 10.0   # Budget for narrative + Pass 2 (quality)
 
   # Max cost per single LLM call (USD). Safety net against runaway prompts.
   # max_budget_per_call_usd: 0.50
@@ -1028,12 +1028,14 @@ api:
 # Override here when prices change — no rebuild needed.
 # Keys are matched by substring (e.g. "sonnet" matches "claude-sonnet-4-6").
 pricing:
-  haiku:      { input: 1.0, output: 5.0 }
-  sonnet:     { input: 3.0, output: 15.0 }
-  opus:       { input: 5.0, output: 25.0 }
-  gpt-5-mini: { input: 0.25, output: 2.0 }
-  gpt-5.2:    { input: 1.75, output: 14.0 }
-  gpt-5.4:    { input: 2.5, output: 15.0 }
+  haiku:             { input: 1.0, output: 5.0 }
+  sonnet:            { input: 3.0, output: 15.0 }
+  opus:              { input: 5.0, output: 25.0 }
+  gpt-5-mini:        { input: 0.25, output: 2.0 }
+  gpt-5.2:           { input: 1.75, output: 14.0 }
+  gpt-5.4:           { input: 2.5, output: 15.0 }
+  deepseek-v4-flash: { input: 0.14, output: 0.56 }
+  deepseek-v4-pro:   { input: 0.28, output: 1.12 }
 
 # --- Cognitive Signals ---
 # The signal bus captures Claude's self-reflection during conversations.
