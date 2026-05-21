@@ -365,8 +365,8 @@ func Default() *Config {
 		},
 		LLM: LLMConfig{
 			Provider:              "auto",
-			DailyBudgetExtractUSD: 5.0,
-			DailyBudgetQualityUSD: 2.0,
+			DailyBudgetExtractUSD: 20.0,
+			DailyBudgetQualityUSD: 10.0,
 			MaxBudgetPerCallUSD:   1.0,
 		},
 		Pricing: DefaultPricing(),
@@ -449,11 +449,12 @@ func Default() *Config {
 			CodeNavMode:              "block",
 			CodeNavDismissCount:      5,
 			TokenThresholds: map[string]int{
-				"opus":   180000,
-				"sonnet": 180000,
-				"haiku":  130000,
-				"gpt-5":  180000,
-				"codex":  180000,
+				"opus":     180000,
+				"sonnet":   180000,
+				"haiku":    130000,
+				"gpt-5":    180000,
+				"codex":    180000,
+				"deepseek": 500000,
 			},
 			CustomSystemPrompt: CustomSystemPromptConfig{
 				EnabledOpenCode:   true,
@@ -655,12 +656,14 @@ func (c *Config) ResolvedOpenAIBaseURL() string {
 // DefaultPricing returns hardcoded per-million-token pricing as fallback defaults.
 func DefaultPricing() map[string]ModelPricing {
 	return map[string]ModelPricing{
-		"haiku":      {Input: 1.0, Output: 5.0},
-		"sonnet":     {Input: 3.0, Output: 15.0},
-		"opus":       {Input: 5.0, Output: 25.0},
-		"gpt-5-mini": {Input: 0.25, Output: 2.0},
-		"gpt-5.2":    {Input: 1.75, Output: 14.0},
-		"gpt-5.4":    {Input: 2.5, Output: 15.0},
+		"haiku":             {Input: 1.0, Output: 5.0},
+		"sonnet":            {Input: 3.0, Output: 15.0},
+		"opus":              {Input: 5.0, Output: 25.0},
+		"gpt-5-mini":        {Input: 0.25, Output: 2.0},
+		"gpt-5.2":           {Input: 1.75, Output: 14.0},
+		"gpt-5.4":           {Input: 2.5, Output: 15.0},
+		"deepseek-v4-flash": {Input: 0.14, Output: 0.56},
+		"deepseek-v4-pro":   {Input: 0.28, Output: 1.12},
 	}
 }
 

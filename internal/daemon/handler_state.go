@@ -212,7 +212,9 @@ func (h *Handler) handleDeleteProxyStatePrefix(params map[string]any) Response {
 }
 
 // handleSetConfig allows runtime config overrides via MCP.
-// Supported keys: token_threshold (int, e.g. 300000)
+// Supported keys:
+//   token_threshold        — global override (int, e.g. 300000)
+//   token_threshold:<model> — per-model override (e.g. token_threshold:deepseek=500000)
 // Optional session_id: if set, override applies only to that session.
 func (h *Handler) handleSetConfig(params map[string]any) Response {
 	key, _ := params["key"].(string)
@@ -220,21 +222,37 @@ func (h *Handler) handleSetConfig(params map[string]any) Response {
 	if key == "" || value == "" {
 		return errorResponse("key and value required")
 	}
+	// Split model suffix: "token_threshold:deepseek" → base="token_threshold", model="deepseek"
+	base := key
+	modelSuffix := ""
+	if idx := strings.Index(key, ":"); idx >= 0 {
+		base = key[:idx]
+		modelSuffix = key[idx+1:]
+	}
 	allowed := map[string]bool{"token_threshold": true}
-	if !allowed[key] {
-		return errorResponse(fmt.Sprintf("unknown config key %q (allowed: token_threshold)", key))
+	if !allowed[base] {
+		return errorResponse(fmt.Sprintf("unknown config key %q (allowed: token_threshold, token_threshold:<model>)", key))
 	}
 	sessionID, _ := params["session_id"].(string)
-	stateKey := "config_override:" + key
+	stateKey := "config_override:" + base
+	if modelSuffix != "" {
+		stateKey += ":" + modelSuffix
+	}
 	if sessionID != "" {
-		stateKey = "config_override:" + key + ":" + sessionID
+		stateKey += ":" + sessionID
 	}
 	if err := h.store.SetProxyState(stateKey, value); err != nil {
 		return errorResponse(fmt.Sprintf("set config: %v", err))
 	}
 	scope := "global"
+	if modelSuffix != "" {
+		scope = "model:" + modelSuffix
+	}
 	if sessionID != "" {
-		scope = "session:" + sessionID
+		if scope != "global" {
+			scope += "+"
+		}
+		scope += "session:" + sessionID
 	}
 	return jsonResponse(map[string]string{"status": "ok", "key": key, "value": value, "scope": scope})
 }

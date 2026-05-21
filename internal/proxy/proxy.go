@@ -546,11 +546,13 @@ func Run(cfg Config) error {
 }
 
 // effectiveTokenThreshold returns the runtime token threshold for a given model.
-// Priority: MCP override (model-specific) > MCP override (global) > config model-specific > config global.
+// Priority: session override (via set_config with session_id) > model-specific override (MCP set_config token_threshold:<model>)
+// > model-specific override (config TokenThresholds) > global override (set_config token_threshold) > config global default.
 func (s *Server) effectiveTokenThreshold(model string) int {
 	s.configOverrideMu.RLock()
 	overrides := s.tokenThresholdOverrides
 	s.configOverrideMu.RUnlock()
+	// 1. MCP override (model-specific)
 	if len(overrides) > 0 && model != "" {
 		lower := strings.ToLower(model)
 		for key, threshold := range overrides {
@@ -559,12 +561,7 @@ func (s *Server) effectiveTokenThreshold(model string) int {
 			}
 		}
 	}
-	// Global override fallback (key "")
-	if len(overrides) > 0 {
-		if globalOverride, ok := overrides[""]; ok && globalOverride > 0 {
-			return globalOverride
-		}
-	}
+	// 2. Config model-specific
 	if model != "" && len(s.cfg.TokenThresholds) > 0 {
 		lower := strings.ToLower(model)
 		for key, threshold := range s.cfg.TokenThresholds {
@@ -573,6 +570,13 @@ func (s *Server) effectiveTokenThreshold(model string) int {
 			}
 		}
 	}
+	// 3. Global override fallback (key "")
+	if len(overrides) > 0 {
+		if globalOverride, ok := overrides[""]; ok && globalOverride > 0 {
+			return globalOverride
+		}
+	}
+	// 4. Config global default
 	return s.cfg.TokenThreshold
 }
 
@@ -601,9 +605,9 @@ func (s *Server) SetTokenThresholdOverride(modelKey string, threshold int) {
 }
 
 // refreshConfigOverrides loads runtime config overrides from daemon proxy_state.
-// Checks session-specific override first (by threadID), then falls back to global.
+// Checks in priority order: session-specific, model-specific, then global.
 func (s *Server) refreshConfigOverrides(threadID string) {
-	// Try session-specific first
+	// 1. Session-specific override (highest priority)
 	if threadID != "" {
 		result, err := s.queryDaemon("get_proxy_state", map[string]any{"key": "config_override:token_threshold:" + threadID})
 		if err == nil && result != nil {
@@ -618,7 +622,21 @@ func (s *Server) refreshConfigOverrides(threadID string) {
 			}
 		}
 	}
-	// Fall back to global
+	// 2. Model-specific overrides (e.g. config_override:token_threshold:deepseek)
+	for modelKey := range s.cfg.TokenThresholds {
+		result, err := s.queryDaemon("get_proxy_state", map[string]any{"key": "config_override:token_threshold:" + modelKey})
+		if err == nil && result != nil {
+			var resp struct {
+				Value string `json:"value"`
+			}
+			if json.Unmarshal(result, &resp) == nil && resp.Value != "" {
+				if v, err := strconv.Atoi(resp.Value); err == nil && v > 0 {
+					s.SetTokenThresholdOverride(modelKey, v)
+				}
+			}
+		}
+	}
+	// 3. Global override (fallback)
 	result, err := s.queryDaemon("get_proxy_state", map[string]any{"key": "config_override:token_threshold"})
 	if err != nil || result == nil {
 		return
