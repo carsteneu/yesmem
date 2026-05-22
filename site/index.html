@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>YesMem — Persistent Memory &amp; Adaptive Context for Claude Code</title>
-<meta name="description" content="Persistent memory and lossless context collapsing for Claude Code. Every session starts where it matters, not at zero. Local-first MCP server, zero cloud, single Go binary. 70 MCP tools, hybrid search, automatic knowledge extraction.">
+<meta name="description" content="Persistent memory and lossless context collapsing for Claude Code. Every session starts where it matters, not at zero. Local-first MCP server, zero cloud, single Go binary. 50 MCP tools, hybrid search, automatic knowledge extraction.">
 <meta name="keywords" content="Claude Code, MCP server, persistent memory, context window, AI coding assistant, Claude Code memory, knowledge management, developer tools">
 <meta name="author" content="Papoo Software &amp; Media GmbH">
 <meta name="theme-color" content="#0d1117">
@@ -70,21 +70,20 @@
 
   </div>
 
-   <!-- What You Get -->
-   <section class="py-12">
-     <h2 class="text-2xl font-semibold tracking-tight mb-7">What You Get</h2>
-     <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
-       <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Infinite sessions.</h3> Lossless context collapsing. Three hours in, need something from hour one? Claude pulls it back, word for word.</p></div>
-       <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Adaptive context window.</h3> 150K for focused work, 500K for deep research. Resize mid-session. No degradation.</p></div>
-       <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Zero-effort knowledge.</h3> Extraction runs in the background after every response. Next morning, Claude already knows what you fixed.</p></div>
-       <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Self-correcting knowledge.</h3> Switched from REST to gRPC? Claude stops suggesting REST. Your decisions outrank automatic guesses.</p></div>
-       <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Self-configuring routing.</h3> Reads models.json, opencode.json, auth.json. Discovers DeepSeek, OpenAI, Mistral. 84 models with zero config.</p></div>
-       <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Your system prompt.</h3> SYSTEM.md self-constitution template. The model knows it has memory, across Claude Code, OpenCode, Codex.</p></div>
-       <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">OpenCode built-in.</h3> Plugin with code-navigation, rule_guard, auto-session. Installs during <code class="bg-gray-200 px-1.5 py-0.5 rounded text-sm">yesmem setup</code>.</p></div>
-       <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Policy engine.</h3> RULES.md with skill catalog. Memory search before answers. The model evaluates every tool call.</p></div>
-       <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Rules that stick.</h3> CLAUDE.md re-injected every 40k tokens. Mid-session, not buried under tool outputs after 20 minutes.</p></div>
-     </div>
-   </section>
+  <!-- What You Get -->
+  <section class="py-12">
+    <h2 class="text-2xl font-semibold tracking-tight mb-7">What You Get</h2>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Nothing is ever lost.</h3> Claude Code&rsquo;s built-in compaction throws away your conversation. YesMem collapses it losslessly instead. Three hours in, you need something from hour one? It&rsquo;s there, word for word.</p></div>
+      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Optimal context window.</h3> Set your threshold, resize on the fly. 150K for focused work, 500K for deep research, switch mid-session. No performance degradation, no matter how long you work.</p></div>
+      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Better answers out of the box.</h3> You didn&rsquo;t change anything, but Claude suddenly stops cutting corners. YesMem replaces Anthropic&rsquo;s output throttling with quality directives. Same workflow, better results.</p></div>
+      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Zero effort knowledge capture.</h3> You finish debugging, close the session, go home. Next morning, Claude already knows what you fixed and why. Extraction happens in the background.</p></div>
+      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Knowledge that self-corrects.</h3> Last month you decided on REST. This week you switched to gRPC. Claude doesn&rsquo;t suggest REST anymore. Outdated facts get replaced automatically, your explicit decisions always outrank Claude&rsquo;s guesses.</p></div>
+      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Your rules stick.</h3> You wrote careful instructions in CLAUDE.md. After 20 minutes, Claude ignores them, buried under tool outputs. YesMem re-injects your rules every 40k tokens.</p></div>
+      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Pick up where you left off.</h3> Not &ldquo;here are 5 bullet points&rdquo; but <em>&ldquo;last time you were debugging the race condition in the proxy&hellip;&rdquo;</em> Immersive handovers, not summaries.</p></div>
+      <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all"><p class="text-sm leading-relaxed text-gray-500 first-letter:text-2xl first-letter:font-bold first-letter:text-gray-600"><h3 class="mb-2 text-gray-900 text-lg font-semibold">Costs go down over time.</h3> The longer you work, the more context hits the prompt cache. Collapsing cycles exploit Anthropic&rsquo;s cache TTL. Context gets cheaper, not more expensive.</p></div>
+    </div>
+  </section>
 
   <!-- Foundations -->
   <section class="py-12">
@@ -127,19 +126,9 @@
         <tr><td class="py-2.5 px-4 border-b border-gray-200">Auto-corrected (superseded)</td><td class="py-2.5 px-4 border-b border-gray-200 tabular-nums">38,057</td></tr>
         <tr><td class="py-2.5 px-4 border-b border-gray-200">Context collapsing ratio</td><td class="py-2.5 px-4 border-b border-gray-200 tabular-nums text-blue-600 font-semibold">87–98%</td></tr>
         <tr><td class="py-2.5 px-4 border-b border-gray-200">LoCoMo benchmark (Opus)</td><td class="py-2.5 px-4 border-b border-gray-200 tabular-nums text-blue-600 font-semibold">0.87</td></tr>
-        <tr><td class="py-2.5 px-4 border-b border-gray-200">MCP tools</td><td class="py-2.5 px-4 border-b border-gray-200 tabular-nums">70</td></tr>
-        <tr><td class="py-2.5 px-4 border-b border-gray-200">CLI commands</td><td class="py-2.5 px-4 border-b border-gray-200 tabular-nums">64</td></tr>
-        <tr><td class="py-2.5 px-4 border-b border-gray-200">Daemon RPC methods</td><td class="py-2.5 px-4 border-b border-gray-200 tabular-nums">130</td></tr>
+        <tr><td class="py-2.5 px-4 border-b border-gray-200">MCP tools</td><td class="py-2.5 px-4 border-b border-gray-200 tabular-nums">50</td></tr>
+        <tr><td class="py-2.5 px-4 border-b border-gray-200">CLI commands</td><td class="py-2.5 px-4 border-b border-gray-200 tabular-nums">~53</td></tr>
       </table>
-    </div>
-    <div class="mt-12">
-      <h2 class="text-2xl font-semibold tracking-tight mb-5">What's new in v2.1.0</h2>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div class="bg-blue-50 rounded-lg p-5 border border-blue-200"><span class="text-blue-700 font-semibold">Self-configuring provider routing</span><p class="text-sm text-gray-600 mt-1">Reads models.json, opencode.json, and auth.json — discovers DeepSeek, OpenAI, Mistral automatically. 84 models routed with zero config.</p></div>
-        <div class="bg-blue-50 rounded-lg p-5 border border-blue-200"><span class="text-blue-700 font-semibold">SYSTEM.md identity layer</span><p class="text-sm text-gray-600 mt-1">Self-constitution template in first-person replaces the default system prompt across Claude Code, OpenCode, and Codex pipelines.</p></div>
-        <div class="bg-blue-50 rounded-lg p-5 border border-blue-200"><span class="text-blue-700 font-semibold">OpenCode built into setup</span><p class="text-sm text-gray-600 mt-1">Setup wizard now offers OpenCode as a provider option. Plugin with code-navigation hooks, rule_guard, auto-session detection.</p></div>
-        <div class="bg-blue-50 rounded-lg p-5 border border-blue-200"><span class="text-blue-700 font-semibold">Documentation restructured</span><p class="text-sm text-gray-600 mt-1">7 target-group feature docs + 4 complete reference docs. 58 discrepancies from full code audit fixed.</p></div>
-      </div>
     </div>
     <div class="mt-12">
       <h2 class="text-2xl font-semibold tracking-tight mb-3">Architecture</h2>
