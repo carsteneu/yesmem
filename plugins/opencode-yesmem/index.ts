@@ -18,7 +18,7 @@ import { YesMemRPC } from "./rpc";
 export const YesMemPlugin = async (ctx: any) => {
   const rpc = new YesMemRPC();
   const directory = ctx.directory || process.env.PWD || "";
-          const V = 11; // bump to bust Bun module cache
+          const V = 12; // bump to bust Bun module cache
 
           // v11: code_nav skips .gitignore/.gitattributes/.gitmodules (git metadata, not code)
   if (directory) {

@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Add tool-context filtering for gotcha injection — closes #29
+- Use runtime.GOOS instead of hardcoded linux in TestFillSystemTemplateOld
+- Add missing limit parameter to GetActiveLearnings calls
 - Restore max_context.png to docs/images/ (lost in yesdocs split)
 - Restore missing YesMemRPC import in index.ts
 - Per-model token threshold override + DeepSeek 500k default
@@ -48,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Convert README features to table format for clarity
 - Fix README — correct counts (70/64/130), 10k plan interval, remove unverifiable 70% claims, 3 scheduler modes
 - April 21-May 4 commit audit — add cap category + cap_<name> origin to memory.md
 - Add 7 missing features from commit audit — excludeProjects, claim_and_read, staus/uninstall, guard git context, opencode merge/update, caps_dir
