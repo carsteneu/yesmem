@@ -159,14 +159,22 @@ The proxy is **optional**. YesMem works fully without it — all MCP tools, brie
 
 | Capability | Typical memory tools | YesMem |
 |---|---|---|
-| Knowledge lifecycle | Append-only, manual cleanup | Auto-supersede, decay, contradiction detection |
-| Trust model | All sources equal | 4-tier hierarchy (user > agreed > suggested > extracted) |
-| Context management | External RAG or full rewrite | Transparent proxy — lossless collapse, prompt cache exploitation |
-| Integration | Custom hooks, config files | `yesmem setup` — one command, zero config |
-| Data location | Cloud/hybrid | Local only (`~/.claude/yesmem/`) |
-| Search | Keyword OR semantic | Hybrid BM25 + 512d vectors, Reciprocal Rank Fusion |
-| Architecture | Python/Node service + dependencies | Single Go binary, no CGo, no runtime dependencies |
-| Code understanding | None or external tools | Pre-built code graph, graph-first steering, worktree-aware indexing |
+| **Knowledge lifecycle** | Append-only, manual cleanup | Auto-supersede, decay, contradiction detection |
+| **Trust model** | All sources equal | 4-tier hierarchy (user > agreed > suggested > extracted) |
+| **Context management** | External RAG or full rewrite | Transparent proxy — lossless collapse, prompt cache exploitation |
+| **Cross-session continuity** | Session-isolated, no persona | Persona engine (50+ traits), immersive handovers, behavioral persistence |
+| **Platform support** | Single-platform (usually Claude Code) | Claude Code, OpenCode, Codex — one memory across all |
+| **Multi-agent** | None or basic parallelism | Spawn, heartbeat, crash recovery, inter-agent messaging, shared scratchpad |
+| **Rules enforcement** | Markdown files the model may ignore | RULES.md policy engine — guard LLM blocks unauthorized actions before they reach the model |
+| **Procedural memory** | Tools defined by developers, not agents | Agent-written caps — one file, no server, auto-injected, sandboxed JS/Bash |
+| **Self-maintenance** | Manual pruning required | Auto-quarantine bad learnings, decay stale ones, detect fixation loops |
+| **Scheduled automation** | Cloud-only (vendor lock-in) | Self-hosted cron scheduler — agent, headless, or bash modes |
+| **Integration** | Custom hooks, config files | `yesmem setup` — one command, zero config |
+| **Data location** | Cloud/hybrid | Local only (`~/.claude/yesmem/`) |
+| **Search** | Keyword OR semantic | Hybrid BM25 + 512d vectors, Reciprocal Rank Fusion |
+| **Architecture** | Python/Node service + dependencies | Single Go binary, no CGo, no runtime dependencies |
+| **Code understanding** | None or external tools | Pre-built code graph, graph-first steering, worktree-aware indexing |
+| **Validation** | Unverified claims | LoCoMo benchmark (0.87), published methodology, reproducible |
 
 ## Benchmarks
 
