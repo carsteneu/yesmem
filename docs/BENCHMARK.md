@@ -19,7 +19,7 @@ The corrected dataset fixes 99 errors in the original LoCoMo gold answers (wrong
 
 ### Primary: Agentic Mode (LLM uses search tools iteratively)
 
-| Eval LLM | Single-hop | Multi-hop | Temporal | Open-domain | **Overall** |
+| Eval LLM | Single-hop | Multi-hop | Temporal³ | Open-domain | **Overall** |
 |----------|------------|-----------|----------|-------------|-------------|
 | gpt-4o¹ | 0.4433 | 0.6168 | 0.3542 | 0.7729 | **0.6539** |
 | gpt-5.4¹ | 0.7589 | 0.8941 | 0.6042 | 0.9191 | **0.8649** |
@@ -27,6 +27,7 @@ The corrected dataset fixes 99 errors in the original LoCoMo gold answers (wrong
 
 ¹ Full dataset (1540 questions, gpt-4o-mini judge for gpt-4o, gpt-5.4-mini judge for gpt-5.4).
 ² 10% sample (150 questions, deterministic seed, Sonnet as judge). Converges with the 100% gpt-5.4 score (0.86 vs 0.87), confirming the sample is representative — the ~0.01 gap is within model-vs-model variance.
+³ Temporal is the hardest LoCoMo category across all published memory systems. The subset measures story-internal time tracking in synthetic dialogue — orthogonal to coding workflows, where the same questions are answered through decision supersession and decay, not diegetic timestamp recall.
 
 ### Secondary: Static Mode (single search pass, no agentic iteration)
 

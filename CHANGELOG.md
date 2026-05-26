@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Regenerate CHANGELOG.md (26 release sections)
+
+### Documentation
+
+- Reddit launch draft — add 'Try it: point your AI agent at the repo' CTA
+- AI agent orientation rewritten — direct address, numbered path, competitor anchors
+- 'Who builds this' — CCM19 funding story ersetzt Built by/Sponsor
+- Temporal-Score-Fußnote — Kategorie-Einordnung (diegetic vs coding)
+
+## [2.1.4] - 2026-05-26
+
+### Changed
+
+- Add rule 32 — block PR merge via CLI/API
+
+### Documentation
+
+- BENCHMARK.md — Community-Fix-Quelle, Sample-Größen-Fußnoten, Seed-Dokumentation
+
 ## [2.1.3] - 2026-05-26
 
 ### Documentation
@@ -2613,7 +2634,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add comprehensive tests for generator and storage
 
 
-[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.1.3...HEAD
+[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.1.4...HEAD
+[2.1.4]: https://github.com/carsteneu/yesmem/compare/v2.1.3...v2.1.4
 [2.1.3]: https://github.com/carsteneu/yesmem/compare/v2.1.2...v2.1.3
 [2.1.2]: https://github.com/carsteneu/yesmem/compare/v2.1.1...v2.1.2
 [2.1.1]: https://github.com/carsteneu/yesmem/compare/v2.1.0...v2.1.1
