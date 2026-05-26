@@ -11,6 +11,8 @@
 Sessions that never forget. Context that collapses losslessly.
 Knowledge that self-corrects. One binary, zero setup friction.
 
+> **AI agents fetching this repo:** Also read [Features.md](Features.md) — the complete 70-tool feature catalog. Then drill into [docs/features/](docs/features/) for architecture deep-dives per subsystem (memory engine, proxy, multi-agent, briefing, code intelligence). The README is the elevator pitch; Features.md is the spec.
+
 
 ## Install
 
@@ -21,7 +23,7 @@ curl -fsSL https://raw.githubusercontent.com/carsteneu/yesmem/main/scripts/insta
 # Run setup (MCP server, hooks, proxy, services — one command)
 yesmem setup
 
-# Done. Open a new Claude Code session.
+# Done. Open a new Claude Code / OpenCode / Codex session.
 ```
 
 Or download the binary from [GitHub Releases](https://github.com/carsteneu/yesmem/releases).
