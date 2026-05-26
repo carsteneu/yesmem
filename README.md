@@ -3,7 +3,7 @@
 [![CI](https://github.com/carsteneu/yesmem/actions/workflows/ci.yml/badge.svg)](https://github.com/carsteneu/yesmem/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/carsteneu/yesmem)](https://github.com/carsteneu/yesmem/releases)
 [![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)](https://go.dev)
-[![License: FSL-1.1-ALv2](https://img.shields.io/badge/License-FSL--1.1--ALv2-blue)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![LoCoMo](https://img.shields.io/badge/LoCoMo-0.87-brightgreen)](docs/BENCHMARK.md)
 
 **Adaptive context window for Claude Code, OpenCode, Codex and more — every session starts where it matters, not at zero.**
@@ -94,7 +94,7 @@ yesmem setup    # Configure MCP server, hooks, proxy, services
 - **Smart extraction,** content-aware truncation before extraction starts. Then: extraction → embedding → quality refinement → clustering.
 - **One binary, one command:** no Python, no Node, no Docker, no cloud account. `yesmem setup`, done.
 - **Your data stays yours,** everything in `~/.claude/yesmem/`. Nothing leaves your machine.
-- **Free:** FSL-1.1-ALv2. Use it for anything except building a competing product. After 2 years, Apache 2.0.
+- **Free:** Apache 2.0. Use it for anything — personal, commercial, agency work. No restrictions.
 
 
 ## Architecture
@@ -257,7 +257,7 @@ YesMem works with both **API keys** (pay-per-token) and **subscription plans** (
 
 ## License
 
-[FSL-1.1-ALv2](LICENSE) — Functional Source License. Use it for anything except building a competing product. After 2 years per version, it becomes Apache 2.0.
+[Apache 2.0](LICENSE) — do whatever you want with it. Personal, commercial, agency work — no restrictions.
 
 ## Built by
 
