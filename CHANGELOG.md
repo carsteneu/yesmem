@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- Expand How YesMem Differs table from 8 to 16 rows, add Procedural memory differentiator
+- Rewrite README from Claude-only to multi-platform (Claude Code, OpenCode, Codex and more)
+- Add AI agent orientation hints to README and CLAUDE.md, update CHANGELOG and HN draft
+
+## [2.1.2] - 2026-05-22
+
 ### Added
 
 - Pre-DeepSeek pattern match for destructive bash
@@ -19,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Exclude .codex and PACKAGE.md from public sync
 - Emit guard SUGGEST/BLOCK in Claude Code hookSpecificOutput schema
 - Fix defer-in-loop leak, silent errors, code fence parsing
 - Move BLOCKED_PATTERNS and scan_text before first use
@@ -2601,7 +2610,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add comprehensive tests for generator and storage
 
 
-[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.1.1...HEAD
+[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.1.2...HEAD
+[2.1.2]: https://github.com/carsteneu/yesmem/compare/v2.1.1...v2.1.2
 [2.1.1]: https://github.com/carsteneu/yesmem/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/carsteneu/yesmem/compare/v2.0.6...v2.1.0
 [2.0.6]: https://github.com/carsteneu/yesmem/compare/v2.0.5...v2.0.6
