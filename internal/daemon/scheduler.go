@@ -9,22 +9,23 @@ import (
 )
 
 type ScheduledJob struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Cron      string    `json:"cron"`
-	Prompt    string    `json:"prompt"`
-	Enabled   bool      `json:"enabled"`
-	Recurring bool      `json:"recurring"`
-	Mode      string    `json:"mode"` // "agent", "headless", or "bash"
-	CapName     string  `json:"cap_name,omitempty"`
-	ScriptName  string  `json:"script_name,omitempty"`
-	AutoCorrect bool    `json:"auto_correct"`
-	AllowedPorts string         `json:"allowed_ports,omitempty"`
+	ID              string    `json:"id"`
+	Name            string    `json:"name"`
+	Cron            string    `json:"cron"`
+	Prompt          string    `json:"prompt"`
+	Enabled         bool      `json:"enabled"`
+	Recurring       bool      `json:"recurring"`
+	Mode            string    `json:"mode"` // "agent", "headless", or "bash"
+	CapName         string    `json:"cap_name,omitempty"`
+	ScriptName      string    `json:"script_name,omitempty"`
+	AutoCorrect     bool      `json:"auto_correct"`
+	AllowedPorts    string    `json:"allowed_ports,omitempty"`
 	Sandbox      SandboxProfile `json:"sandbox"`
-	IntervalSeconds int          `json:"interval_seconds,omitempty"`
-	Model           string       `json:"model,omitempty"`
-	LastRun   time.Time `json:"last_run,omitempty"`
-	NextRun   time.Time `json:"next_run,omitempty"`
+	IntervalSeconds int           `json:"interval_seconds,omitempty"`
+	Model           string        `json:"model,omitempty"`
+	Backend         string        `json:"backend,omitempty"`
+	LastRun         time.Time     `json:"last_run,omitempty"`
+	NextRun         time.Time     `json:"next_run,omitempty"`
 }
 
 type JobExecutor func(job ScheduledJob)
