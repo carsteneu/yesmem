@@ -53,6 +53,7 @@ func (h *Handler) scheduleCreate(params map[string]any) Response {
 	}
 	intervalSeconds := intOr(params, "interval_seconds", 0)
 	model := stringOr(params, "model", "")
+	backend := stringOr(params, "backend", "")
 
 	if mode != "agent" && mode != "headless" && mode != "bash" {
 		return errorResponse(fmt.Sprintf("schedule create: mode must be 'agent', 'headless', or 'bash', got %q", mode))
@@ -90,7 +91,7 @@ func (h *Handler) scheduleCreate(params map[string]any) Response {
 	job := ScheduledJob{
 		ID: id, Name: name, Cron: cron, Prompt: prompt, Enabled: enabled, Recurring: recurring, Mode: mode,
 		CapName: capName, ScriptName: scriptName, AutoCorrect: autoCorrect, AllowedPorts: allowedPorts,
-		Sandbox: sandbox, IntervalSeconds: intervalSeconds, Model: model,
+		Sandbox: sandbox, IntervalSeconds: intervalSeconds, Model: model, Backend: backend,
 	}
 	if h.scheduler != nil {
 		if err := h.scheduler.AddJob(job); err != nil {
@@ -101,7 +102,7 @@ func (h *Handler) scheduleCreate(params map[string]any) Response {
 	row := storage.ScheduledJobRow{
 		ID: id, Name: name, Cron: cron, Prompt: prompt, Enabled: enabled, Recurring: recurring, Mode: mode,
 		CapName: capName, ScriptName: scriptName, AutoCorrect: autoCorrect, AllowedPorts: allowedPorts,
-		Sandbox: sandbox.String(), IntervalSeconds: intervalSeconds, Model: model,
+		Sandbox: sandbox.String(), IntervalSeconds: intervalSeconds, Model: model, Backend: backend,
 		CreatedAt: time.Now(),
 	}
 	if err := h.store.SaveScheduledJob(row); err != nil {
@@ -130,6 +131,8 @@ func (h *Handler) scheduleList(params map[string]any) Response {
 			"auto_correct":  j.AutoCorrect,
 			"allowed_ports": j.AllowedPorts,
 			"sandbox":       j.Sandbox.String(),
+			"backend":       j.Backend,
+			"model":         j.Model,
 		}
 		if !j.LastRun.IsZero() {
 			entry["last_run"] = j.LastRun.Format(time.RFC3339)
@@ -299,6 +302,8 @@ func (h *Handler) executeAgent(job ScheduledJob) {
 		"project":  "yesmem",
 		"section":  section,
 		"work_dir": h.jobWorkDir(),
+		"backend":  job.Backend,
+		"model":    job.Model,
 	})
 	if resp.Error != "" {
 		log.Printf("[scheduler] spawn failed: %s", resp.Error)
