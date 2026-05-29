@@ -232,6 +232,10 @@ type Server struct {
 	// threadCWD caches the working directory per thread (for opencode: only in first message)
 	threadCWDMu sync.RWMutex
 	threadCWD   map[string]string // threadID → cwd
+	
+	// lastSessionID tracks the most recent opencode session ID seen by the proxy.
+	// Used by the daemon to discover real session IDs for -s resume.
+	lastSessionID string
 
 	// Cumulative token savings from collapsing (per threadID)
 	rawSavingsMu sync.Mutex
@@ -512,6 +516,7 @@ func Run(cfg Config) error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
+	mux.HandleFunc("/session-id", s.handleSessionID)
 	mux.HandleFunc("/", s.handleRequest)
 
 	srv := &http.Server{
@@ -810,10 +815,18 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	rawMsgCount := len(messages)
 
 	// Use session_id directly as thread ID (unique per CC session).
-	// Prefer X-Claude-Code-Session-Id header (CC v2.1.86+), fallback to body metadata.
-	threadID := extractSessionID(req, r.Header.Get("X-Claude-Code-Session-Id"), "")
+	// Prefer X-Claude-Code-Session-Id header (CC v2.1.86+), then x-opencode-session, fallback to body metadata.
+	threadID := extractSessionID(req, r.Header.Get("X-Claude-Code-Session-Id"), r.Header.Get("x-opencode-session"))
 	if threadID == "" {
 		threadID = DeriveThreadID(req)
+	}
+	
+	// Track latest session ID for daemon recovery (after all extraction methods)
+	if threadID != "" {
+		s.mu.Lock()
+		s.lastSessionID = threadID
+		s.mu.Unlock()
+		s.logger.Printf("[session-id] tracked latest session ID: %q", threadID)
 	}
 	proj := extractProjectName(req)
 	model, _ := req["model"].(string)

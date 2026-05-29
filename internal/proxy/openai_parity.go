@@ -860,6 +860,13 @@ func (s *Server) finalizeOpenAIUsage(reqIdx int, threadID string, estimatedToken
 	if reqIdx > 0 {
 		s.logger.Printf("%s %s", fmtReq(reqIdx, s.version), usage.LogLine(reqIdx, 0, estimatedTokens, threadID))
 	}
+	
+	// Track latest session ID for daemon recovery
+	if threadID != "" {
+		s.mu.Lock()
+		s.lastSessionID = threadID
+		s.mu.Unlock()
+	}
 	if s.cfg.SawtoothEnabled && threadID != "" && s.sawtoothTrigger != nil {
 		s.sawtoothTrigger.UpdateAfterResponse(threadID, usage.TotalInputTokens(), msgCount)
 	}

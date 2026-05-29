@@ -224,6 +224,12 @@ func Run(cfg Config) error {
 		log.Printf("Agent recovery: %d reconnected, %d deleted (daemon restart)", reconnected, deleted)
 	}
 
+	// Persistent agent recovery — respawn agents that should always be running
+	go func() {
+		time.Sleep(5 * time.Second)
+		handler.recoverPersistentAgents()
+	}()
+
 	handler.IndexProgress = func() (total, done, skipped int, running bool) {
 		return int(atomic.LoadInt64(&indexTotal)),
 			int(atomic.LoadInt64(&indexDone)),

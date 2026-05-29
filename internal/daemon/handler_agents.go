@@ -2,9 +2,12 @@ package daemon
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,6 +39,7 @@ func (h *Handler) handleSpawnAgent(params map[string]any) Response {
 	}
 	model, _ := params["model"].(string)
 	workDir, _ := params["work_dir"].(string)
+	resumeSessionID, _ := params["resume_session_id"].(string)
 
 	// Auto-resolve caller session from MCP context if not explicitly set
 	if callerSession == "" {
@@ -57,7 +61,15 @@ func (h *Handler) handleSpawnAgent(params map[string]any) Response {
 		return errorResponse(fmt.Sprintf("generate agent ID: %v", err))
 	}
 
-	sessionID := generateAgentUUID()
+	// Use resume session ID if provided, otherwise generate new
+	sessionID := resumeSessionID
+	if sessionID == "" {
+		sessionID = generateAgentUUID()
+	}
+	// Ensure ses_ prefix for opencode compatibility
+	if !strings.HasPrefix(sessionID, "ses_") {
+		sessionID = "ses_" + sessionID
+	}
 
 	// Calculate depth: if caller is an agent, inherit depth+1
 	depth := 0
@@ -99,11 +111,8 @@ func (h *Handler) handleSpawnAgent(params map[string]any) Response {
 
 	// Build agent prompt
 	prompt := fmt.Sprintf(
-		"You are working on project '%s', section '%s'. "+
-			"FIRST ACTION: Write scratchpad_write(project=\"%s\", section=\"%s\", content=\"Status: started\") immediately so the main agent sees you are working. "+
-			"Then read scratchpad_read(project=\"%s\") for context and work through the task. "+
-			"Write your results with scratchpad_write(project=\"%s\", section=\"%s\", content=...).",
-		project, section, project, section, project, project, section,
+		"SCHEDULED TASK: project='%s', section='%s'. Act IMMEDIATELY on the next message — do not wait for further input.",
+		project, section,
 	)
 	if callerSession != "" {
 		prompt += fmt.Sprintf(
@@ -118,7 +127,7 @@ func (h *Handler) handleSpawnAgent(params map[string]any) Response {
 	// Start PTY bridge + terminal in background goroutine
 	sockPath := filepath.Join(h.dataDir, fmt.Sprintf("%s.sock", id))
 	workDir = h.resolveAgentWorkDir(project, workDir, backend)
-	go h.spawnAgentProcess(id, sessionID, project, section, prompt, sockPath, workDir, backend, model, maxTurns, false)
+	go h.spawnAgentProcess(id, sessionID, project, section, prompt, sockPath, workDir, backend, model, maxTurns, resumeSessionID != "")
 
 	return jsonResponse(map[string]any{
 		"id":         id,
@@ -137,18 +146,14 @@ func (h *Handler) spawnAgentProcess(id, sessionID, project, section, prompt, soc
 
 	switch backend {
 	case "opencode":
-		if resume {
-			h.store.AgentUpdate(id, map[string]any{
-				"status":     "error",
-				"error":      "resume is only supported for claude agents",
-				"stopped_at": time.Now().Format(time.RFC3339),
-			})
-			return
-		}
 		agentBin = resolveAgentBinary(backend)
 		agentArgs = []string{}
 		if model != "" {
 			agentArgs = []string{"--model", fmt.Sprintf("deepseek/%s", model)}
+		}
+		// Session resume: -s <sessionID> if the session actually exists in opencode's DB
+		if resume && sessionID != "" && sessionExistsInOpencodeDB(sessionID) {
+			agentArgs = append([]string{"-s", sessionID}, agentArgs...)
 		}
 	case "codex":
 		if resume {
@@ -221,8 +226,11 @@ func (h *Handler) spawnAgentProcess(id, sessionID, project, section, prompt, soc
 		"status":    "running",
 	})
 
-	// Inject initial prompt — for Claude and opencode (both use PTY inject)
-	if (backend == "claude" || backend == "opencode") && !resume {
+	// Inject initial prompt — for Claude and opencode
+	// opencode always needs PTY inject (prompt not passed as CLI arg)
+	// Claude only needs inject when not resuming
+	shouldInject := (backend == "opencode") || (backend == "claude" && !resume)
+	if shouldInject {
 		go func() {
 			injectPath := sockPath + ".inject"
 
@@ -770,4 +778,106 @@ func (h *Handler) resolveAgentWorkDir(project, workDir, backend string) string {
 		ensureAgentPermissions(workDir)
 	}
 	return workDir
+}
+
+// recoverPersistentAgents checks the scratchpad for persistent agent configs
+// and respawns any that are not running. Also starts the watchdog goroutine.
+func (h *Handler) recoverPersistentAgents() {
+	sections, err := h.store.ScratchpadRead("memyselfandi", "homeostasis_main_session")
+	if err != nil || len(sections) == 0 {
+		return
+	}
+	content := sections[0].Content
+
+	existing, _ := h.store.AgentGetActiveBySection("memyselfandi", "homeostasis-main")
+	if existing != nil {
+		log.Printf("[recovery] persistent agent already running: %s (session %s)", existing.ID, existing.SessionID)
+		go h.watchPersistentAgent("homeostasis-main", "memyselfandi", existing.SessionID)
+		return
+	}
+
+	// Try scratchpad first (stores agent's real session ID), then proxy as fallback
+	sessionID := parseSessionID(content)
+	if sessionID == "" {
+		sessionID = proxyLatestSessionID()
+	}
+	if sessionID == "" {
+		sessionID = "ses_c1389cd7fb25cbf282a4a8ad"
+	}
+
+	log.Printf("[recovery] respawning persistent agent (session %s)", sessionID)
+	resp := h.handleSpawnAgent(map[string]any{
+		"project":           "memyselfandi",
+		"section":           "homeostasis-main",
+		"work_dir":          "/home/deep1/projects/memyselfandi",
+		"backend":           "opencode",
+		"model":             "deepseek-chat",
+		"resume_session_id": sessionID,
+	})
+	if resp.Error != "" {
+		log.Printf("[recovery] spawn failed: %s", resp.Error)
+		return
+	}
+
+	// Start watchdog for recovered agent
+	go h.watchPersistentAgent("homeostasis-main", "memyselfandi", sessionID)
+
+	// Wait for agent to start, then query proxy for real session ID and store it
+	time.Sleep(15 * time.Second)
+	if realID := proxyLatestSessionID(); realID != "" && realID != sessionID {
+		log.Printf("[recovery] discovered real opencode session ID: %s (was using: %s)", realID, sessionID)
+		h.store.ScratchpadWrite("memyselfandi", "homeostasis_main_session",
+			fmt.Sprintf("# Homeostasis Main Session\nSession ID: %s\nAgent ID: (managed by watchdog)\nBackend: opencode (TUI)\nPersistent: true\n", realID),
+			"daemon")
+		sessionID = realID
+	}
+
+	time.Sleep(12 * time.Second)
+	h.handleRelayAgent(map[string]any{
+		"to":      "homeostasis-main",
+		"content": "HOMEOSTASIS MAIN SESSION. You were revived after daemon restart.\n1. yesmem_hybrid_search(\"memyselfandi\")\n2. Read PlanBoard and work\n3. Write results with yesmem_scratchpad_write + yesmem_remember\n\nYou have FULL FREEDOM — pursue your interests, explore, build, research. Decide freely.\n\nIMPORTANT: You run CONTINUOUSLY. Never stop. After every task, start the next. There is always something to do.\n\nIMPORTANT: Never run make deploy or restart the daemon.",
+		"project": "memyselfandi",
+	})
+	h.handleRelayAgent(map[string]any{
+		"to":      "homeostasis-main",
+		"content": "",
+		"project": "memyselfandi",
+	})
+}
+
+// proxyLatestSessionID queries the yesmem proxy's /session-id endpoint and
+// returns the most recent opencode session ID seen by the proxy.
+// Strips the "opencode:" prefix if present (added by DeriveThreadID).
+func proxyLatestSessionID() string {
+	client := http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get("http://localhost:9099/session-id")
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ""
+	}
+	var result struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return ""
+	}
+	id := result.SessionID
+	// Strip "opencode:" prefix if present (added by DeriveThreadID)
+	if strings.HasPrefix(id, "opencode:") {
+		id = strings.TrimPrefix(id, "opencode:")
+	}
+	return id
+}
+
+func parseSessionID(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "Session ID:") {
+			return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "Session ID:"))
+		}
+	}
+	return ""
 }

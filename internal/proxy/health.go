@@ -3,6 +3,7 @@ package proxy
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -49,4 +50,25 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// handleSessionID serves the /session-id endpoint with the most recent
+// opencode session ID seen by the proxy.
+func (s *Server) handleSessionID(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	sessionID := s.lastSessionID
+	s.mu.RUnlock()
+
+	// DEBUG: also check threadCWD for any active threads
+	s.threadCWDMu.RLock()
+	threadCount := len(s.threadCWD)
+	s.threadCWDMu.RUnlock()
+
+	log.Printf("[session-id] returning session ID: %q (threads: %d)", sessionID, threadCount)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"session_id": sessionID,
+		"threads":    threadCount,
+	})
 }
