@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,8 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/carsteneu/yesmem/internal/models"
 )
 
 func (h *Handler) handleExecuteCap(params map[string]any) Response {
@@ -131,8 +130,19 @@ globalThis.sh = async function(cmd, timeoutMs) {
 globalThis.put = async function(path, content) {
   await Bun.write(path, typeof content === 'string' ? content : JSON.stringify(content));
 };
-globalThis.shQuote = function(s) { return "'" + String(s).replace(/'/g, "'\\\\''") + "'"; };
+globalThis.shQuote = function(s) { return "'" + String(s).replace(/'/g, "'\"'\"'") + "'"; };
 globalThis.registerTool = function(name, desc, schema, handler) { _toolHandler = handler; };
+// --- LLM pass-through (routes through daemon) ---
+globalThis.llm = async function(prompt, schema) {
+  var body = {prompt: String(prompt || '')};
+  if (schema) body.schema = schema;
+  var result = await sh('yesmem llm-complete ' + shQuote(JSON.stringify(body)));
+  try {
+    var parsed = JSON.parse(result.trim());
+    return parsed.result || '';
+  } catch(e) { return result; }
+};
+globalThis.haiku = globalThis.llm;
 // --- MCP tool polyfills (routes through daemon Unix socket) ---
 var _mcpSockPath = %q;
 var _mcpCall = async function(tool, body) {
@@ -198,13 +208,24 @@ if (_result && typeof _result.then === 'function') {
 		}
 		cmd = exec.Command(binary, args...)
 		cmd.Env = os.Environ()
+		cmd.Env = append(cmd.Env, "YESMEM_SOCK="+sockPath)
 		cmd.Env = append(cmd.Env, "CAP_ARGS="+argsJSON)
 		if sessionID != "" {
 			cmd.Env = append(cmd.Env, "CAP_SESSION_ID="+sessionID)
 		}
 	}
 
-	output, err := cmd.CombinedOutput()
+	// Timeout: longer for scripts that call llm()/haiku()
+	capTimeout := 30 * time.Second
+	if strings.Contains(handlerCode, "llm(") || strings.Contains(handlerCode, "haiku(") {
+		capTimeout = 120 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), capTimeout)
+	defer cancel()
+	timeoutCmd := exec.CommandContext(ctx, cmd.Args[0], cmd.Args[1:]...)
+	timeoutCmd.Env = cmd.Env
+
+	output, err := timeoutCmd.CombinedOutput()
 	if err != nil {
 		errDetail := string(output)
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -213,6 +234,9 @@ if (_result && typeof _result.then === 'function') {
 			}
 			return errorResponse(fmt.Sprintf("cap execution failed: %v\n%s", err, errDetail))
 		}
+		if ctx.Err() != nil {
+			return errorResponse(fmt.Sprintf("cap execution timed out after %v (ctx: %v)", capTimeout, ctx.Err()))
+		}
 		return errorResponse(fmt.Sprintf("cap execution failed: %v\n%s", err, errDetail))
 	}
 
@@ -220,8 +244,6 @@ if (_result && typeof _result.then === 'function') {
 	if len(out) > 65536 {
 		out = out[:65536] + fmt.Sprintf("\n... [truncated %d bytes]", len(out)-65536)
 	}
-
-	h.auditCapExecution(meta.Name, fn, argsJSON, out, err)
 
 	return jsonResponse(map[string]any{
 		"output":   out,
@@ -254,18 +276,6 @@ func (h *Handler) findCapScript(meta CapMeta, fn string) (ScriptMeta, bool) {
 		return ScriptMeta{Name: "run", Runtime: "repl", Body: meta.HandlerREPL, Kind: "tool"}, true
 	}
 	return ScriptMeta{}, false
-}
-
-func (h *Handler) auditCapExecution(capName, fn, args, output string, execErr error) {
-	shortArgs := args
-	if len(shortArgs) > 200 {
-		shortArgs = shortArgs[:200] + "..."
-	}
-	h.store.InsertLearning(&models.Learning{
-		Category:  "cap_execution",
-		Content:   fmt.Sprintf("execute_cap(%q, %q, args=%s) → output_len=%d err=%v", capName, fn, shortArgs, len(output), execErr),
-		CreatedAt: time.Now(),
-	})
 }
 
 func findBun() (string, error) {

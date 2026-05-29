@@ -45,8 +45,8 @@ func TestDefaultOpencodeSettings_HasRequiredKeys(t *testing.T) {
 	if !ok || env["YESMEM_SOURCE_AGENT"] != "opencode" {
 		t.Errorf("mcp.yesmem.environment.YESMEM_SOURCE_AGENT should be opencode, got %v", yesmem["environment"])
 	}
-		if yesmem["timeout"] != 30000 {
-		t.Errorf("wrong mcp timeout: got %v, want 30000", yesmem["timeout"])
+		if yesmem["timeout"] != 60000 {
+		t.Errorf("wrong mcp timeout: got %v, want 60000", yesmem["timeout"])
 	}
 
 	compaction := s["compaction"].(map[string]any)
@@ -485,8 +485,8 @@ func TestUpgradeOpencodeTimeout_OldDefault(t *testing.T) {
 	upgradeOpencodeTimeout(cfg)
 
 	yesmem := cfg["mcp"].(map[string]any)["yesmem"].(map[string]any)
-	if yesmem["timeout"] != float64(30000) {
-		t.Errorf("old timeout not upgraded: got %v, want 30000", yesmem["timeout"])
+	if yesmem["timeout"] != float64(60000) {
+		t.Errorf("old timeout not upgraded: got %v, want 60000", yesmem["timeout"])
 	}
 }
 
@@ -549,7 +549,7 @@ func TestMergeOpencodeSettings_UpgradesOldTimeout(t *testing.T) {
 	}
 
 	yesmem := cfg["mcp"].(map[string]any)["yesmem"].(map[string]any)
-	if yesmem["timeout"] != float64(30000) {
-		t.Errorf("old timeout not upgraded in merge: got %v, want 30000", yesmem["timeout"])
+	if yesmem["timeout"] != float64(60000) {
+		t.Errorf("old timeout not upgraded in merge: got %v, want 60000", yesmem["timeout"])
 	}
 }

@@ -43,6 +43,15 @@ func (h *Handler) resolveSessionID(params map[string]any, key string) string {
 	}
 	h.activeSessionMu.Lock()
 	defer h.activeSessionMu.Unlock()
+	// OpenCode has no hooks — the proxy persists the active session on each request.
+	// Check this BEFORE activeSessionID to avoid returning a stale Claude Code session
+	// that was set by a proxy-health-check or other non-OpenCode caller.
+	if sa, _ := params["_source_agent"].(string); sa == "opencode" {
+		if sid, err := h.store.GetProxyState("active_session_opencode"); err == nil && sid != "" {
+			h.activeSessionID = sid
+			return sid
+		}
+	}
 	if h.activeSessionID != "" {
 		return h.activeSessionID
 	}

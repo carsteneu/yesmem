@@ -423,7 +423,7 @@ func isGitFile(info os.FileInfo) bool {
 func formatSignature(label, name, qn string) string {
 	switch label {
 	case "Method":
-		return "method " + name
+		return "func " + name
 	case "Interface":
 		return "interface " + name
 	case "Class":

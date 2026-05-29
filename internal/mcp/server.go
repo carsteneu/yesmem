@@ -595,7 +595,10 @@ func (s *Server) proxyCallWithThreadID(method string, formatter func(json.RawMes
 			return mcplib.NewToolResultText(fmt.Sprintf("Error: %v", err)), nil
 		}
 		if formatter != nil {
+		if formatter != nil {
 			return mcplib.NewToolResultText(formatter(result)), nil
+		}
+		return mcplib.NewToolResultText(string(result)), nil
 		}
 		return mcplib.NewToolResultText(string(result)), nil
 	}

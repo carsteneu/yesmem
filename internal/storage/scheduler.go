@@ -18,10 +18,11 @@ type ScheduledJobRow struct {
 	AutoCorrect bool      `json:"auto_correct"`
 	AllowedPorts string   `json:"allowed_ports"`
 	Sandbox      string   `json:"sandbox"`
-	IntervalSeconds int   `json:"interval_seconds"`
-	Model           string `json:"model"`
-	LastRun     time.Time `json:"last_run,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
+	IntervalSeconds int       `json:"interval_seconds"`
+	Model           string    `json:"model"`
+	Backend         string    `json:"backend"`
+	LastRun         time.Time `json:"last_run,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 func (s *Store) SaveScheduledJob(job ScheduledJobRow) error {
@@ -30,8 +31,8 @@ func (s *Store) SaveScheduledJob(job ScheduledJobRow) error {
 		mode = "agent"
 	}
 	_, err := s.db.Exec(
-		`INSERT OR REPLACE INTO scheduled_jobs (id, name, cron, prompt, enabled, recurring, mode, cap_name, script_name, auto_correct, allowed_ports, sandbox, interval_seconds, model, last_run, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		job.ID, job.Name, job.Cron, job.Prompt, job.Enabled, job.Recurring, mode, job.CapName, job.ScriptName, job.AutoCorrect, job.AllowedPorts, job.Sandbox, job.IntervalSeconds, job.Model, job.LastRun, job.CreatedAt,
+		`INSERT OR REPLACE INTO scheduled_jobs (id, name, cron, prompt, enabled, recurring, mode, cap_name, script_name, auto_correct, allowed_ports, sandbox, interval_seconds, model, backend, last_run, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		job.ID, job.Name, job.Cron, job.Prompt, job.Enabled, job.Recurring, mode, job.CapName, job.ScriptName, job.AutoCorrect, job.AllowedPorts, job.Sandbox, job.IntervalSeconds, job.Model, job.Backend, job.LastRun, job.CreatedAt,
 	)
 	return err
 }
@@ -49,7 +50,7 @@ func (s *Store) DeleteScheduledJob(id string) error {
 }
 
 func (s *Store) ListScheduledJobs() ([]ScheduledJobRow, error) {
-	rows, err := s.db.Query(`SELECT id, name, cron, prompt, enabled, COALESCE(recurring, 1), COALESCE(mode, 'agent'), COALESCE(cap_name, ''), COALESCE(script_name, ''), COALESCE(auto_correct, 1), COALESCE(allowed_ports, '80,443'), COALESCE(sandbox, 'standard'), COALESCE(interval_seconds, 0), COALESCE(model, ''), COALESCE(last_run, ''), created_at FROM scheduled_jobs ORDER BY name`)
+	rows, err := s.db.Query(`SELECT id, name, cron, prompt, enabled, COALESCE(recurring, 1), COALESCE(mode, 'agent'), COALESCE(cap_name, ''), COALESCE(script_name, ''), COALESCE(auto_correct, 1), COALESCE(allowed_ports, '80,443'), COALESCE(sandbox, 'standard'), COALESCE(interval_seconds, 0), COALESCE(model, ''), COALESCE(backend, ''), COALESCE(last_run, ''), created_at FROM scheduled_jobs ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +60,7 @@ func (s *Store) ListScheduledJobs() ([]ScheduledJobRow, error) {
 		var j ScheduledJobRow
 		var lastRun string
 		var autoCorrect int
-		if err := rows.Scan(&j.ID, &j.Name, &j.Cron, &j.Prompt, &j.Enabled, &j.Recurring, &j.Mode, &j.CapName, &j.ScriptName, &autoCorrect, &j.AllowedPorts, &j.Sandbox, &j.IntervalSeconds, &j.Model, &lastRun, &j.CreatedAt); err != nil {
+		if err := rows.Scan(&j.ID, &j.Name, &j.Cron, &j.Prompt, &j.Enabled, &j.Recurring, &j.Mode, &j.CapName, &j.ScriptName, &autoCorrect, &j.AllowedPorts, &j.Sandbox, &j.IntervalSeconds, &j.Model, &j.Backend, &lastRun, &j.CreatedAt); err != nil {
 			continue
 		}
 		if lastRun != "" {

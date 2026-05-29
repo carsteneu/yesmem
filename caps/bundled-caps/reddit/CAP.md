@@ -1,7 +1,7 @@
 ---
 name: reddit
-description: "Reddit fetch + search + research bundle — fetch single posts (with comments + links), search across subreddits with Haiku classification, multi-subreddit topic research with synthesis."
-version: 12
+description: "Reddit fetch + search + research bundle — fetch single posts (with comments + links), search across subreddits with LLM classification, multi-subreddit topic research with synthesis."
+version: 13
 tags: [reddit, fetch, search, research]
 requires: [store]
 scope: user
@@ -10,7 +10,7 @@ auto_active: true
 
 ## Purpose
 
-Reddit fetch + search + research bundle — fetch single posts (with comments + links), search across subreddits with Haiku classification, multi-subreddit topic research with synthesis.
+Reddit fetch + search + research bundle — fetch single posts (with comments + links), search across subreddits with LLM classification, multi-subreddit topic research with synthesis.
 
 ## Scripts
 
@@ -116,7 +116,7 @@ async ({url, max_comments}) => {
 kind: tool
 
 ```js
-async ({ query, limit = 25, sort = "relevance", t = "week", subreddit, classify = true }) => {
+async ({ query, limit = 25, sort = "relevance", t = "week", subreddit, after = "", classify = true }) => {
   const TAXONOMY = `- feature_announcement: announces new product/tool/version/feature release
 - workflow_tip: shares productivity tips, workflow improvements, best practices, configurations
 - bug_complaint: reports bugs, regressions, performance issues, quality drops
@@ -143,14 +143,18 @@ async ({ query, limit = 25, sort = "relevance", t = "week", subreddit, classify 
   if (mListing) {
     const type = mListing[2].toLowerCase();
     const tParam = (type==="top"||type==="controversial") ? `&t=${t}` : "";
-    url = `https://www.reddit.com/r/${encodeURIComponent(sub)}/${type}.json?limit=${limit}&raw_json=1${tParam}`;
+    const afterParam = after ? `&after=${encodeURIComponent(after)}` : "";
+    url = `https://www.reddit.com/r/${encodeURIComponent(sub)}/${type}.json?limit=${limit}&raw_json=1${tParam}${afterParam}`;
   } else if (mSubSearch) {
     const term = mSubSearch[2].trim();
-    url = `https://www.reddit.com/r/${encodeURIComponent(sub)}/search.json?q=${encodeURIComponent(term)}&restrict_sr=1&limit=${limit}&sort=${sort}&t=${t}&raw_json=1`;
+    const afterParam = after ? `&after=${encodeURIComponent(after)}` : "";
+    url = `https://www.reddit.com/r/${encodeURIComponent(sub)}/search.json?q=${encodeURIComponent(term)}&restrict_sr=1&limit=${limit}&sort=${sort}&t=${t}&raw_json=1${afterParam}`;
   } else if (sub) {
-    url = `https://www.reddit.com/r/${encodeURIComponent(sub)}/search.json?q=${encodeURIComponent(q)}&restrict_sr=1&limit=${limit}&sort=${sort}&t=${t}&raw_json=1`;
+    const afterParam = after ? `&after=${encodeURIComponent(after)}` : "";
+    url = `https://www.reddit.com/r/${encodeURIComponent(sub)}/search.json?q=${encodeURIComponent(q)}&restrict_sr=1&limit=${limit}&sort=${sort}&t=${t}&raw_json=1${afterParam}`;
   } else {
-    url = `https://www.reddit.com/search.json?q=${encodeURIComponent(q)}&limit=${limit}&sort=${sort}&t=${t}&raw_json=1`;
+    const afterParam = after ? `&after=${encodeURIComponent(after)}` : "";
+    url = `https://www.reddit.com/search.json?q=${encodeURIComponent(q)}&limit=${limit}&sort=${sort}&t=${t}&raw_json=1${afterParam}`;
   }
   const fetchedAt = Math.floor(Date.now()/1000);
   const blobKey = `search:${fetchedAt}_${Math.random().toString(36).slice(2,8)}`;
@@ -172,6 +176,7 @@ async ({ query, limit = 25, sort = "relevance", t = "week", subreddit, classify 
   try { data = JSON.parse(raw); } catch(e) { return {error:"invalid reddit json", size:raw.length, preview:raw.slice(0,200)}; }
   const children = data?.data?.children;
   if (!Array.isArray(children)) return {error:"unexpected shape", keys:Object.keys(data||{})};
+  const afterToken = data?.data?.after || "";
   await mcp__yesmem__cap_store({capability:"reddit", action:"create_table", table:"listings", columns: JSON.stringify([
     {name:"query",type:"TEXT"},{name:"mode",type:"TEXT"},{name:"permalink",type:"TEXT"},{name:"title",type:"TEXT"},
     {name:"subreddit",type:"TEXT"},{name:"author",type:"TEXT"},{name:"score",type:"INTEGER"},{name:"num_comments",type:"INTEGER"},
@@ -220,7 +225,7 @@ async ({ query, limit = 25, sort = "relevance", t = "week", subreddit, classify 
     }
     outPosts.push({...p, category: cls?.category || null, confidence: cls?.confidence || null});
   }
-  return {query:q, mode, count:outPosts.length, posts:outPosts, stored:outPosts.length, classified:Object.keys(classifications).length, classify_error:classifyErr, source_url:url};
+  return {query:q, mode, count:outPosts.length, posts:outPosts, stored:outPosts.length, classified:Object.keys(classifications).length, classify_error:classifyErr, after:afterToken, source_url:url};
 }
 ```
 

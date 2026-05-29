@@ -162,15 +162,30 @@ func (s *Store) GetAssociationNeighbors(ids []string, limitPerSource int) (map[s
 		args[i] = id
 	}
 
+	// Edges are stored single-directed (A->B). Surface them from both
+	// endpoints: the second branch swaps source/target so the queried id is
+	// always SourceID and the neighbor is always TargetID, keeping the
+	// consumer (which keys by SourceID, reads TargetID) unchanged.
+	ph := strings.Join(placeholders, ",")
 	query := fmt.Sprintf(`
-		SELECT a.source_type, a.source_id, a.target_type, a.target_id, a.weight, COALESCE(a.relation_type, 'related')
-		FROM associations a
-		INNER JOIN learnings l ON CAST(a.target_id AS INTEGER) = l.id
-		WHERE a.source_type = 'learning' AND a.target_type = 'learning'
-		AND a.source_id IN (%s)
-		AND l.superseded_by IS NULL AND l.quarantined_at IS NULL
-		ORDER BY a.weight DESC
-	`, strings.Join(placeholders, ","))
+		SELECT source_type, source_id, target_type, target_id, weight, relation_type FROM (
+			SELECT a.source_type, a.source_id, a.target_type, a.target_id, a.weight, COALESCE(a.relation_type, 'related') AS relation_type
+			FROM associations a
+			INNER JOIN learnings l ON CAST(a.target_id AS INTEGER) = l.id
+			WHERE a.source_type = 'learning' AND a.target_type = 'learning'
+			AND a.source_id IN (%s)
+			AND l.superseded_by IS NULL AND l.quarantined_at IS NULL
+			UNION ALL
+			SELECT a.target_type, a.target_id, a.source_type, a.source_id, a.weight, COALESCE(a.relation_type, 'related') AS relation_type
+			FROM associations a
+			INNER JOIN learnings l ON CAST(a.source_id AS INTEGER) = l.id
+			WHERE a.source_type = 'learning' AND a.target_type = 'learning'
+			AND a.target_id IN (%s)
+			AND l.superseded_by IS NULL AND l.quarantined_at IS NULL
+		)
+		ORDER BY weight DESC
+	`, ph, ph)
+	args = append(args, args...)
 
 	rows, err := s.readerDB().Query(query, args...)
 	if err != nil {

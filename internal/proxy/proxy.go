@@ -875,6 +875,14 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	// don't trigger false-positive strip/rewrite calls.
 	s.applyCCSystemPrompt(req)
 
+	// Strip role:system messages unconditionally — must run on every request.
+	// StripReminders (inside runStubCycle) only runs on long conversations.
+	if filtered := FilterSystemRoleMessages(messages); len(filtered) != len(messages) {
+		messages = filtered
+		req["messages"] = messages
+		needsReserialization = true
+	}
+
 	// prompt_ungate: strip the CLAUDE.md subordination disclaimer so user instructions carry full authority.
 	if pfInject.Ungate {
 		if StripCLAUDEMDDisclaimer(req) {
@@ -1534,7 +1542,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		if currentMessages == nil {
 			currentMessages = messages
 		}
-		if lastUserHasText(currentMessages) {
+		if lastUserHasText(currentMessages) && lastUserTextLen(currentMessages) >= resolveThinkReminderMinChars(&s.cfg, "") {
 			thinkReminder := s.buildThinkReminder(threadID, threadID, false)
 			if thinkReminder != "" {
 				req["messages"] = injectAssociativeContext(currentMessages, thinkReminder, s.cfg.SawtoothEnabled)

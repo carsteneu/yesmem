@@ -23,7 +23,37 @@ var fileChangeLinePattern = regexp.MustCompile(`(?m)^\s+(\d+)→`)
 // Narrative and briefing now live in system block and are actively stripped from messages.
 // Immediately stripped: skill-check, task-reminder, local-command-caveat, yesmem-context.
 // Age-based: file-change diffs (full < 3 req, summary 3-10, minimal > 10).
+// FilterSystemRoleMessages removes messages with role:system from the array.
+// These are not valid in Anthropic's native messages API and cause 400 errors
+// when Claude Code stores SessionStart hook output as standalone system turns.
+func FilterSystemRoleMessages(messages []any) []any {
+	filtered := make([]any, 0, len(messages))
+	for _, m := range messages {
+		msg, ok := m.(map[string]any)
+		if ok {
+			if role, _ := msg["role"].(string); role == "system" {
+				continue
+			}
+		}
+		filtered = append(filtered, m)
+	}
+	return filtered
+}
+
 func StripReminders(messages []any, requestIdx int) []any {
+	// Strip role:system messages — not valid in Anthropic's messages array.
+	filtered := make([]any, 0, len(messages))
+	for _, m := range messages {
+		msg, ok := m.(map[string]any)
+		if ok {
+			if role, _ := msg["role"].(string); role == "system" {
+				continue
+			}
+		}
+		filtered = append(filtered, m)
+	}
+	messages = filtered
+
 	// Find last user message index
 	lastUserIdx := -1
 	for i := len(messages) - 1; i >= 0; i-- {

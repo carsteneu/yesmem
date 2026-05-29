@@ -11,6 +11,12 @@ import (
 // lastUserHasText returns true when the last user message contains actual text content
 // (not just tool_result blocks). Used to skip think-reminder injection on tool continuations.
 func lastUserHasText(messages []any) bool {
+	return lastUserTextLen(messages) > 0
+}
+
+// lastUserTextLen returns the total text length of the last user message.
+// Returns 0 if no user text message found.
+func lastUserTextLen(messages []any) int {
 	for i := len(messages) - 1; i >= 0; i-- {
 		m, ok := messages[i].(map[string]any)
 		if !ok || m["role"] != "user" {
@@ -18,19 +24,22 @@ func lastUserHasText(messages []any) bool {
 		}
 		switch c := m["content"].(type) {
 		case string:
-			return c != ""
+			return len(c)
 		case []any:
+			total := 0
 			for _, block := range c {
 				b, ok := block.(map[string]any)
 				if ok && b["type"] == "text" {
-					return true
+					if t, ok := b["text"].(string); ok {
+						total += len(t)
+					}
 				}
 			}
-			return false
+			return total
 		}
-		return false
+		return 0
 	}
-	return false
+	return 0
 }
 
 // buildThinkReminder increments the per-thread request counter and returns

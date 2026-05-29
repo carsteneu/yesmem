@@ -156,12 +156,14 @@ type CustomSystemPromptConfig struct {
 // for a given model/provider. Default (zero value) = all disabled.
 // This is separate from PromptFlags which control prompt text injection.
 type FeatureGates struct {
-	SkillEval      bool `yaml:"skill_eval"`       // inject [skill-eval] instruction block
-	Briefing       bool `yaml:"briefing"`         // inject yesmem briefing at session start
-	RulesReminder  bool `yaml:"rules_reminder"`   // inject rules/guidelines reminder
-	PlanCheckpoint bool `yaml:"plan_checkpoint"`  // inject plan checkpoint reminders
-	ThinkReminder  bool `yaml:"think_reminder"`   // inject extended-thinking reminder
-	Timestamps     bool `yaml:"timestamps"`       // inject [HH:MM:SS] [msg:N] [+Δ] markers
+	SkillEval              bool `yaml:"skill_eval"`                 // inject [skill-eval] instruction block
+	Briefing               bool `yaml:"briefing"`                   // inject yesmem briefing at session start
+	RulesReminder          bool `yaml:"rules_reminder"`             // inject rules/guidelines reminder
+	PlanCheckpoint         bool `yaml:"plan_checkpoint"`            // inject plan checkpoint reminders
+	ThinkReminder          bool `yaml:"think_reminder"`             // inject extended-thinking reminder
+	ThinkReminderMinChars  int  `yaml:"think_reminder_min_chars"`   // min user text length to trigger think_reminder (0=always)
+	Timestamps             bool `yaml:"timestamps"`                 // inject [HH:MM:SS] [msg:N] [+Δ] markers
+	AssocContext           bool `yaml:"assoc_context"`              // inject [assoc-context] from hybrid_search (frozen per msg:N)
 }
 
 // PromptFlags holds prompt injection flags for a specific profile.
@@ -433,10 +435,10 @@ func Default() *Config {
 			},
 			SkillEvalInject:          "silent",
 		ModelFeatures: map[string]*FeatureGates{
-			"claude":   {SkillEval: true, Briefing: true, RulesReminder: true, PlanCheckpoint: true, ThinkReminder: true, Timestamps: false},
-			"deepseek": {SkillEval: true, Briefing: true, RulesReminder: true, PlanCheckpoint: false, ThinkReminder: true, Timestamps: true},
-			"gpt":      {SkillEval: true, Briefing: true, RulesReminder: true, ThinkReminder: false, Timestamps: false},
-			"openai":   {SkillEval: true, Briefing: true, RulesReminder: true, ThinkReminder: false, Timestamps: false},
+		"claude":   {SkillEval: true, Briefing: true, RulesReminder: true, PlanCheckpoint: true, ThinkReminder: true, Timestamps: false, AssocContext: true},
+		"deepseek": {SkillEval: true, Briefing: true, RulesReminder: true, PlanCheckpoint: false, ThinkReminder: true, Timestamps: true, AssocContext: true},
+		"gpt":      {SkillEval: true, Briefing: true, RulesReminder: true, ThinkReminder: false, Timestamps: false, AssocContext: true},
+		"openai":   {SkillEval: true, Briefing: true, RulesReminder: true, ThinkReminder: false, Timestamps: false, AssocContext: true},
 		},
 		FeatureDefaults: &FeatureGates{
 			SkillEval: true, Briefing: true, RulesReminder: true, PlanCheckpoint: true, ThinkReminder: true, Timestamps: true,

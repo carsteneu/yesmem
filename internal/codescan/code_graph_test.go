@@ -267,6 +267,91 @@ func TestCodeGraph_BuildFromScanResult_ImportsBaseName(t *testing.T) {
 	}
 }
 
+func TestFormatSignature(t *testing.T) {
+	tests := []struct {
+		label    string
+		name     string
+		expected string
+	}{
+		{"Function", "CacheGet", "func CacheGet"},
+		{"Method", "SearchNodes", "func SearchNodes"},
+		{"Interface", "Handler", "interface Handler"},
+		{"Class", "Server", "type Server"},
+		{"Unknown", "Foo", "func Foo"},
+	}
+	for _, tt := range tests {
+		got := formatSignature(tt.label, tt.name, "")
+		if got != tt.expected {
+			t.Errorf("formatSignature(%q, %q) = %q, want %q", tt.label, tt.name, got, tt.expected)
+		}
+	}
+}
+
+func TestExtractNameFromSig(t *testing.T) {
+	tests := []struct {
+		sig      string
+		expected string
+	}{
+		{"func CacheGet()", "CacheGet"},
+		{"func SearchNodes", "SearchNodes"},
+		{"method SearchNodes", "SearchNodes"},
+		{"func (g *CodeGraph) SearchNodes(pattern, kind, filePattern string) []*CodeNode", "SearchNodes"},
+		{"type CodeGraph struct", "CodeGraph"},
+		{"func New(dataDir string) (*Server, error)", "New"},
+	}
+	for _, tt := range tests {
+		got := extractNameFromSig(tt.sig)
+		if got != tt.expected {
+			t.Errorf("extractNameFromSig(%q) = %q, want %q", tt.sig, got, tt.expected)
+		}
+	}
+}
+
+func TestBuildFromScanResult_WithMethods(t *testing.T) {
+	// Regression test: Methods must appear in the code graph.
+	// Bug: formatSignature returned "method X" which extractNameFromSig couldn't parse.
+	result := &ScanResult{
+		RootDir: "/test",
+		Packages: []PackageInfo{
+			{Name: "internal/codescan", Files: []FileInfo{
+				{Path: "internal/codescan/graph.go", Language: "go",
+					Signatures: []string{
+						"func NewCodeGraph",
+						"func SearchNodes",
+						"func AddNode",
+						"type CodeGraph",
+					},
+				},
+			}},
+		},
+	}
+
+	g := BuildCodeGraph(result)
+
+	// All symbols should be findable
+	expected := []string{
+		"internal/codescan.NewCodeGraph",
+		"internal/codescan.SearchNodes",
+		"internal/codescan.AddNode",
+		"internal/codescan.CodeGraph",
+	}
+	for _, qn := range expected {
+		if g.GetNode(qn) == nil {
+			t.Errorf("missing node: %s", qn)
+		}
+	}
+
+	// SearchNodes should find Methods
+	results := g.SearchNodes("SearchNodes", "", "")
+	if len(results) != 1 {
+		t.Errorf("SearchNodes for 'SearchNodes': expected 1, got %d", len(results))
+	}
+	results = g.SearchNodes("AddNode", "", "")
+	if len(results) != 1 {
+		t.Errorf("SearchNodes for 'AddNode': expected 1, got %d", len(results))
+	}
+}
+
 func TestCodeGraph_EdgeDedup(t *testing.T) {
 	g := NewCodeGraph()
 	g.AddNode(CodeNode{QualifiedName: "a", Kind: "package"})

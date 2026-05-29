@@ -24,11 +24,7 @@ func (h *Handler) handleSpawnAgent(params map[string]any) Response {
 	callerSession, _ := params["caller_session"].(string)
 	backend, _ := params["backend"].(string)
 	if backend == "" {
-		if _, err := exec.LookPath("opencode"); err == nil {
-			backend = "opencode"
-		} else {
-			backend = "claude"
-		}
+		backend = "claude"
 	}
 	tokenBudget := 0
 	if tb, ok := params["token_budget"].(float64); ok && tb > 0 {
@@ -150,10 +146,9 @@ func (h *Handler) spawnAgentProcess(id, sessionID, project, section, prompt, soc
 			return
 		}
 		agentBin = resolveAgentBinary(backend)
-		// TUI mode — prompt wird via PTY inject gesendet
-		agentArgs = []string{}
+		agentArgs = []string{"run", "--dangerously-skip-permissions", prompt}
 		if model != "" {
-			agentArgs = []string{"--model", fmt.Sprintf("deepseek/%s", model)}
+			agentArgs = []string{"run", "--dangerously-skip-permissions", "--model", fmt.Sprintf("deepseek/%s", model), prompt}
 		}
 	case "codex":
 		if resume {
@@ -227,8 +222,7 @@ func (h *Handler) spawnAgentProcess(id, sessionID, project, section, prompt, soc
 	})
 
 	// Inject initial prompt — only for Claude (Codex gets prompt as CLI arg)
-	// Inject initial prompt via PTY — for Claude and Opencode TUI (Codex gets prompt as CLI arg)
-	if backend != "codex" && !resume {
+	if backend == "claude" && !resume {
 		go func() {
 			injectPath := sockPath + ".inject"
 

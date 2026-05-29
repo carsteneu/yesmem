@@ -630,13 +630,6 @@ func (h *Handler) handleLLMComplete(params map[string]any) Response {
 		return errorResponse("llm client not initialized — missing config or API key")
 	}
 
-	userMsg := prompt
-	if system != "" && prompt != "" {
-		userMsg = fmt.Sprintf("%s\n\n%s", system, prompt)
-	} else if system != "" {
-		userMsg = system
-	}
-
 	// Track opencode session creation: before the call, record the latest
 	// session timestamp. After the call, check for a new one.
 	var beforeTS int64
@@ -644,11 +637,20 @@ func (h *Handler) handleLLMComplete(params map[string]any) Response {
 		beforeTS = opencodeLatestSessionTS()
 	}
 
+	// For opencode provider without an explicit system prompt, inject a
+	// minimal instruction to prevent the LLM from making tool calls.
+	// The proxy injects CUSTOM-SYSTEM which advertises yesmem MCP tools;
+	// without this guard the LLM uses tools → zero text events.
+	injectedSystem := system
+	if injectedSystem == "" && h.LLMProvider == "opencode" {
+		injectedSystem = "You are a plain text completion API with no tools. You cannot call any functions. Respond with text directly — never use a tool."
+	}
+
 	var opts []extraction.CallOption
 	if sessionID != "" {
 		opts = append(opts, extraction.WithSession(sessionID))
 	}
-	result, err := client.Complete("", userMsg, opts...)
+	result, err := client.Complete(injectedSystem, prompt, opts...)
 	if err != nil {
 		return errorResponse(fmt.Sprintf("llm call failed: %v", err))
 	}

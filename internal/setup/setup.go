@@ -85,7 +85,13 @@ func runDefaults(home, dataDir, binaryPath string) error {
 		}
 	case "opencode":
 		provider = "openai_compatible"
-		apiKey = ""
+		apiKey = readAuthJSONKey(home, "deepseek")
+		if apiKey == "" {
+			apiKey = os.Getenv("DEEPSEEK_API_KEY")
+		}
+		if apiKey == "" {
+			apiKey = os.Getenv("OPENAI_API_KEY")
+		}
 	default:
 		provider = "cli"
 		apiKey, _ = findClaudeCodeKey(home)
@@ -101,7 +107,7 @@ func runDefaults(home, dataDir, binaryPath string) error {
 	binaryPath = ensurePermanentLocation(home, binaryPath)
 	primaryModel := "deepseek/deepseek-reasoner"
 	smallModel := "deepseek/deepseek-chat"
-	return executeSetup(home, dataDir, binaryPath, chosenModel, apiKey, provider, chosenTerminal, autoExtract, autoStart, primaryModel, smallModel)
+	return executeSetup(home, dataDir, binaryPath, chosenModel, apiKey, provider, chosenTerminal, autoExtract, autoStart, primaryModel, smallModel, nil)
 }
 
 func runInteractive(home, dataDir, binaryPath string) error {
@@ -160,7 +166,13 @@ func runInteractive(home, dataDir, binaryPath string) error {
 	if provider == "" {
 		provider = "cli"
 	}
+	// opencode CLI is not needed — the daemon can call the API directly
+	// via openai_compatible. Default to that for DeepSeek/GPT models.
+	if provider == "opencode" {
+		provider = "openai_compatible"
+	}
 	apiKey := ""
+	providerKeys := map[string]string{}
 	fmt.Println("[2/3] LLM Access:")
 	fmt.Println()
 
@@ -216,6 +228,12 @@ func runInteractive(home, dataDir, binaryPath string) error {
 	case 2:
 		provider = "openai_compatible"
 		envKey := os.Getenv("OPENAI_API_KEY")
+		if envKey == "" {
+			envKey = readAuthJSONKey(home, "deepseek")
+		}
+		if envKey == "" {
+			envKey = os.Getenv("DEEPSEEK_API_KEY")
+		}
 		apiKey = promptAPIKeyWithLabel("OpenAI-compatible", envKey)
 		if apiKey == "" {
 			fmt.Println("  → No API key, falling back to CLI")
@@ -267,8 +285,28 @@ func runInteractive(home, dataDir, binaryPath string) error {
 		fmt.Println("  Setup cancelled.")
 		return nil
 	}
-	fmt.Println()
 
+	// When using a non-Claude model (DeepSeek, GPT) via opencode,
+	// prompt for the provider's API key so the proxy can route requests.
+	if forceProvider == "opencode" || provider == "opencode" || provider == "openai_compatible" {
+		providerID := modelToProviderID(chosenModel)
+		if providerID != "" {
+			fmt.Println()
+			fmt.Printf("  The extraction model %q needs a %s API key.\n", chosenModel, providerID)
+			fmt.Println()
+			envVar := providerEnvVar(providerID)
+			envKey := os.Getenv(envVar)
+			key := promptAPIKeyWithLabel(strings.Title(providerID), envKey)
+			if key != "" {
+				providerKeys[providerID] = key
+			} else {
+				fmt.Printf("  ⚠ No %s API key provided. The proxy won't be able to route requests.\n", providerID)
+				fmt.Println("    You can add it later in ~/.local/share/opencode/auth.json")
+			}
+		}
+	}
+
+	fmt.Println()
 	// Auto-detect settings
 	autoExtract := true
 	autoStart := runtime.GOOS == "linux" || runtime.GOOS == "darwin"
@@ -277,10 +315,10 @@ func runInteractive(home, dataDir, binaryPath string) error {
 	// Binary copy (before executeSetup so binaryPath is correct)
 	binaryPath = ensurePermanentLocation(home, binaryPath)
 
-	return executeSetup(home, dataDir, binaryPath, chosenModel, apiKey, provider, chosenTerminal, autoExtract, autoStart, primaryModel, smallModel)
+	return executeSetup(home, dataDir, binaryPath, chosenModel, apiKey, provider, chosenTerminal, autoExtract, autoStart, primaryModel, smallModel, providerKeys)
 }
 
-func executeSetup(home, dataDir, binaryPath, model, apiKey, provider, terminal string, autoExtract, autoStart bool, primaryModel, smallModel string) error {
+func executeSetup(home, dataDir, binaryPath, model, apiKey, provider, terminal string, autoExtract, autoStart bool, primaryModel, smallModel string, providerKeys map[string]string) error {
 	hookDir := filepath.Join(home, ".claude", "hooks")
 	lang := detectSystemLanguage()
 
@@ -412,10 +450,24 @@ func executeSetup(home, dataDir, binaryPath, model, apiKey, provider, terminal s
 	// 7d2. Set model preference (from wizard or default)
 	if primaryModel != "" {
 		withSpinner("Setting model preference", func() (string, error) {
-			if err := mergeOpencodeSettingsWith(home, primaryModel, smallModel); err != nil {
+			if err := mergeOpencodeSettingsWith(home, primaryModel, smallModel, binaryPath); err != nil {
 				return "", err
 			}
 			return primaryModel, nil
+		})
+	}
+
+	// 7d3. Write provider API keys to auth.json (DeepSeek, OpenAI, etc.)
+	if len(providerKeys) > 0 {
+		withSpinner("Writing provider credentials", func() (string, error) {
+			if err := writeAuthJSON(home, providerKeys); err != nil {
+				return "", err
+			}
+			ids := make([]string, 0, len(providerKeys))
+			for id := range providerKeys {
+				ids = append(ids, id)
+			}
+			return strings.Join(ids, ", "), nil
 		})
 	}
 
@@ -536,6 +588,64 @@ func executeSetup(home, dataDir, binaryPath, model, apiKey, provider, terminal s
 	fmt.Println()
 
 	return nil
+}
+
+// writeAuthJSON merges provider API keys into opencode's auth.json.
+// Path: ~/.local/share/opencode/auth.json
+// Format: {"deepseek": {"key": "sk-..."}, "openai": {"key": "sk-..."}}
+func writeAuthJSON(home string, providerKeys map[string]string) error {
+	if len(providerKeys) == 0 {
+		return nil
+	}
+	authPath := filepath.Join(home, ".local", "share", "opencode", "auth.json")
+	if err := os.MkdirAll(filepath.Dir(authPath), 0755); err != nil {
+		return fmt.Errorf("create auth dir: %w", err)
+	}
+
+	var entries map[string]map[string]string
+	data, err := os.ReadFile(authPath)
+	if err == nil {
+		if jsonErr := json.Unmarshal(data, &entries); jsonErr != nil {
+			entries = nil
+		}
+	}
+	if entries == nil {
+		entries = make(map[string]map[string]string)
+	}
+
+	for providerID, key := range providerKeys {
+		entries[providerID] = map[string]string{"key": key}
+	}
+
+	out, err := json.MarshalIndent(entries, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(authPath, append(out, '\n'), 0644)
+}
+
+// modelToProviderID maps an extraction model to its provider ID for auth.json.
+func modelToProviderID(model string) string {
+	switch {
+	case strings.HasPrefix(model, "deepseek"):
+		return "deepseek"
+	case strings.HasPrefix(model, "gpt"):
+		return "openai"
+	default:
+		return ""
+	}
+}
+
+// providerEnvVar returns the environment variable name for a provider's API key.
+func providerEnvVar(providerID string) string {
+	switch providerID {
+	case "deepseek":
+		return "DEEPSEEK_API_KEY"
+	case "openai":
+		return "OPENAI_API_KEY"
+	default:
+		return ""
+	}
 }
 
 // mergeMcpJSON reads existing .mcp.json, adds/updates the yesmem entry,
@@ -931,21 +1041,23 @@ proxy:
   #   briefing        = Inject yesmem briefing at session start (learnings, recent sessions)
   #   rules_reminder  = Periodic reminder of project rules/guidelines from CLAUDE.md/OPENCODE.md
   #   plan_checkpoint = Inject plan checkpoint reminders during long implementation sessions
-  #   think_reminder  = Inject hybrid_search() hint (check memory before assuming)
-  model_features:
-    claude:
-      skill_eval: true
-      briefing: true
-      rules_reminder: true
-      plan_checkpoint: true
-      think_reminder: true
-      deepseek:
+    #   think_reminder       = Inject hybrid_search() hint (check memory before assuming)
+    #   think_reminder_min_chars = Min user text length to trigger reminder (0=always)
+    model_features:
+      claude:
         skill_eval: true
         briefing: true
-        think_reminder: true
         rules_reminder: true
-        timestamps: true
-        plan_checkpoint: false
+        plan_checkpoint: true
+        think_reminder: true
+        deepseek:
+          skill_eval: true
+          briefing: true
+          think_reminder: true
+          think_reminder_min_chars: 10
+          rules_reminder: true
+          timestamps: true
+          plan_checkpoint: false
     gpt:
       skill_eval: true
       briefing: true
@@ -1799,4 +1911,25 @@ func mergeOpencodeJSON(home, pluginPath string) error {
 		return err
 	}
 	return os.WriteFile(cfgPath, append(out, '\n'), 0644)
+}
+
+// readAuthJSONKey reads a provider API key from opencode's auth.json.
+// Returns "" if the file doesn't exist or the provider isn't configured.
+func readAuthJSONKey(home, provider string) string {
+	authPath := filepath.Join(home, ".local", "share", "opencode", "auth.json")
+	data, err := os.ReadFile(authPath)
+	if err != nil {
+		return ""
+	}
+	var auth map[string]struct {
+		Type string `json:"type"`
+		Key  string `json:"key"`
+	}
+	if err := json.Unmarshal(data, &auth); err != nil {
+		return ""
+	}
+	if entry, ok := auth[provider]; ok {
+		return entry.Key
+	}
+	return ""
 }

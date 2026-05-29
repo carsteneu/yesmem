@@ -58,7 +58,8 @@ const modelFeaturesBlock = `
   #   briefing        = Inject yesmem briefing at session start (learnings, recent sessions)
   #   rules_reminder  = Periodic reminder of project rules/guidelines from CLAUDE.md/OPENCODE.md
   #   plan_checkpoint = Inject plan checkpoint reminders during long implementation sessions
-  #   think_reminder  = Inject hybrid_search() hint (check memory before assuming)
+  #   think_reminder       = Inject hybrid_search() hint (check memory before assuming)
+  #   think_reminder_min_chars = Min user text length to trigger reminder (0=always)
   model_features:
     claude:
       skill_eval: true
@@ -70,6 +71,7 @@ const modelFeaturesBlock = `
       skill_eval: true
       briefing: true
       think_reminder: true
+      think_reminder_min_chars: 10
       rules_reminder: true
     gpt:
       skill_eval: true
@@ -173,6 +175,19 @@ exclude_projects:
 		added++
 	}
 
+	// ━━ think_reminder_min_chars — inject into deepseek model_features ━━
+	if strings.Contains(content, "model_features:") && !strings.Contains(content, "think_reminder_min_chars") {
+		// Insert after the last "think_reminder: true" line inside a deepseek section
+		content = injectThinkReminderMinChars(content, "deepseek:", "10")
+		if !strings.Contains(content, "think_reminder_min_chars") {
+			// fallback: also try at feature_defaults level with value 0
+			content = injectThinkReminderMinChars(content, "feature_defaults:", "0")
+		}
+		if strings.Contains(content, "think_reminder_min_chars") {
+			added++
+		}
+	}
+
 	if added == 0 {
 		return 0, nil
 	}
@@ -212,4 +227,60 @@ func insertAtEndOfSection(content, sectionKey, snippet string) string {
 func appendToEnd(content, snippet string) string {
 	content = strings.TrimRight(content, "\n")
 	return content + "\n" + snippet
+}
+
+// injectThinkReminderMinChars inserts think_reminder_min_chars: <value> after the
+// last think_reminder line inside a model_features sub-section (e.g., "deepseek:").
+// Returns unchanged content if the field already exists or the target section is not found.
+func injectThinkReminderMinChars(content, targetSection, value string) string {
+	lines := strings.Split(content, "\n")
+	inSection := false
+	sectionIndent := -1
+	lastThinkLine := -1
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == targetSection {
+			inSection = true
+			sectionIndent = len(line) - len(strings.TrimLeft(line, " \t"))
+			continue
+		}
+		if inSection {
+			indent := 0
+			if len(line) > 0 && (line[0] == ' ' || line[0] == '\t') {
+				indent = len(line) - len(strings.TrimLeft(line, " \t"))
+			} else if len(strings.TrimSpace(line)) > 0 && !strings.HasPrefix(strings.TrimSpace(line), "#") {
+				// new top-level or peer key — left the section
+				break
+			}
+			if indent <= sectionIndent && len(strings.TrimSpace(line)) > 0 && !strings.HasPrefix(strings.TrimSpace(line), "#") {
+				break
+			}
+			if strings.HasPrefix(trimmed, "think_reminder:") {
+				lastThinkLine = i
+			}
+			if strings.HasPrefix(trimmed, "think_reminder_min_chars:") {
+				return content // already exists
+			}
+		}
+	}
+
+	if lastThinkLine < 0 {
+		return content
+	}
+
+	// Use the same indentation as the think_reminder line
+	thinkIndent := ""
+	thinkLine := lines[lastThinkLine]
+	for _, ch := range thinkLine {
+		if ch == ' ' || ch == '\t' {
+			thinkIndent += string(ch)
+		} else {
+			break
+		}
+	}
+
+	newLine := thinkIndent + "think_reminder_min_chars: " + value
+	lines = append(lines[:lastThinkLine+1], append([]string{newLine}, lines[lastThinkLine+1:]...)...)
+	return strings.Join(lines, "\n")
 }

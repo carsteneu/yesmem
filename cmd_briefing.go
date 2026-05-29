@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/carsteneu/yesmem/internal/briefing"
 	"github.com/carsteneu/yesmem/internal/config"
@@ -85,7 +86,22 @@ func runBriefing() {
 	if cfg.Briefing.RemindOpenWork {
 		if count, _ := store.CountActiveUnfinished(projectShort); count > 0 {
 			s := briefing.ResolveStrings(filepath.Join(dataDir, "strings.yaml"))
-			text += "\n\n" + fmt.Sprintf(s.OpenWorkRemind, projectShort) + "\n"
+			lastAtKey := "last_openwork_remind_full_at:" + projectShort
+			lastAtStr, _ := store.GetProxyState(lastAtKey)
+			useFull := true
+			if lastAtStr != "" {
+				if lastAt, err := time.Parse(time.RFC3339, lastAtStr); err == nil {
+					if time.Since(lastAt) < 4*time.Hour {
+						useFull = false
+					}
+				}
+			}
+			if useFull && s.OpenWorkRemind != "" {
+				text += "\n\n" + fmt.Sprintf(s.OpenWorkRemind, projectShort) + "\n"
+				store.SetProxyState(lastAtKey, time.Now().Format(time.RFC3339))
+			} else if !useFull && s.OpenWorkRemindAsk != "" {
+				text += "\n\n" + fmt.Sprintf(s.OpenWorkRemindAsk, projectShort) + "\n"
+			}
 		}
 	}
 	out := map[string]any{
@@ -120,14 +136,10 @@ func runBriefingHook() {
 		hooks.WritePIDFile(dataDir, hookInput.SessionID, ppid)
 	}
 
-	out := map[string]any{
-		"hookSpecificOutput": map[string]any{
-			"hookEventName":     "SessionStart",
-			"additionalContext": "Your full session briefing has been injected as a conversation turn by the proxy. Read it carefully before responding.",
-		},
-	}
-	jsonOut, _ := json.Marshal(out)
-	fmt.Print(string(jsonOut))
+	// No additionalContext: proxy already injects briefing as user/assistant turns.
+	// Returning additionalContext here caused Claude Code to store a role:system message
+	// in conversation history, which Anthropic's API rejects with 400.
+	fmt.Print("{}")
 }
 
 // runCodemapHook generates only the Code Map as a separate SessionStart attachment.

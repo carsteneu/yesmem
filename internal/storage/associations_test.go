@@ -302,3 +302,44 @@ func TestGetContradictingPairs_Empty(t *testing.T) {
 		t.Errorf("expected 0, got %d", len(pairs))
 	}
 }
+
+// A typed edge A->B is stored single-directed. The neighbor surfacing path
+// must find it from both endpoints, otherwise relate_learnings(A,B) is
+// invisible when recall starts from B.
+func TestGetAssociationNeighbors_Bidirectional(t *testing.T) {
+	s := mustOpen(t)
+
+	idA := insertTestLearning(s, "neighbor bidi learning A")
+	idB := insertTestLearning(s, "neighbor bidi learning B")
+	if err := s.InsertTypedAssociation(idA, idB, "supports"); err != nil {
+		t.Fatalf("InsertTypedAssociation: %v", err)
+	}
+
+	aStr := fmt.Sprintf("%d", idA)
+	bStr := fmt.Sprintf("%d", idB)
+
+	hasNeighbor := func(edges []models.Association, want string) bool {
+		for _, e := range edges {
+			if e.TargetID == want {
+				return true
+			}
+		}
+		return false
+	}
+
+	out, err := s.GetAssociationNeighbors([]string{aStr}, 10)
+	if err != nil {
+		t.Fatalf("neighbors(A): %v", err)
+	}
+	if !hasNeighbor(out[aStr], bStr) {
+		t.Fatalf("from A: expected neighbor %s, got %+v", bStr, out[aStr])
+	}
+
+	in, err := s.GetAssociationNeighbors([]string{bStr}, 10)
+	if err != nil {
+		t.Fatalf("neighbors(B): %v", err)
+	}
+	if !hasNeighbor(in[bStr], aStr) {
+		t.Fatalf("from B: expected reverse neighbor %s, got %+v", aStr, in[bStr])
+	}
+}

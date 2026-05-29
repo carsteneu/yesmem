@@ -26,6 +26,8 @@ type TimestampMeta struct {
 	ThinkReminder  string `json:"tr,omitempty"` // think-reminder text (stored once, replayed idempotent)
 	SkillEval      string `json:"se,omitempty"` // skill-eval text (stored once, replayed idempotent)
 	Rules          string `json:"ru,omitempty"` // rules reminder text (stored once, replayed idempotent)
+	AssocContext   string `json:"ac,omitempty"` // associative context from hybrid_search (stored once, replayed idempotent)
+	DocContext     string `json:"dc,omitempty"` // doc context from docs_search (stored once, replayed idempotent)
 }
 
 // TimestampHint is prepended once as a system-prompt block explaining the
@@ -143,6 +145,12 @@ func BuildMeta(msgN int, meta *TimestampMeta) string {
 		}
 		if meta.Rules != "" {
 			parts = append(parts, "[rules] "+meta.Rules)
+		}
+		if meta.AssocContext != "" {
+			parts = append(parts, "[assoc-context] "+meta.AssocContext)
+		}
+		if meta.DocContext != "" {
+			parts = append(parts, "[doc-context] "+meta.DocContext)
 		}
 	}
 

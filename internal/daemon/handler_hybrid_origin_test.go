@@ -26,9 +26,6 @@ func mustHandlerWithEmbeddingFile(t *testing.T) (*Handler, *storage.Store) {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { s.Close() })
-	if _, err := s.DB().Exec(`ALTER TABLE learnings ADD COLUMN embedding_vector BLOB`); err != nil {
-		t.Fatalf("add embedding_vector: %v", err)
-	}
 	h := NewHandler(s, nil)
 	h.dataDir = dir
 	return h, s

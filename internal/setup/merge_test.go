@@ -40,7 +40,7 @@ func TestDeepMergeJSON_NestedMerge(t *testing.T) {
 			"deepseek": map[string]any{
 				"options": map[string]any{
 					"baseURL": "http://localhost:9099/v1",
-					"timeout": 30000,
+									"timeout": 60000,
 				},
 				"models": map[string]any{
 					"deepseek-chat": "chat-model",
@@ -62,7 +62,7 @@ func TestDeepMergeJSON_NestedMerge(t *testing.T) {
 		t.Errorf("existing deepseek baseURL was overwritten: %v", dsOpts["baseURL"])
 	}
 	// New deepseek.timeout should be added
-	if dsOpts["timeout"] != 30000 {
+	if dsOpts["timeout"] != 60000 {
 		t.Errorf("new deepseek timeout not added: %v", dsOpts["timeout"])
 	}
 	// New deepseek.models should be added
@@ -217,7 +217,7 @@ func TestDeepMergeJSON_PreservesOpenCodeScenario(t *testing.T) {
 				"type": "local",
 				"command": ["yesmem", "mcp"],
 				"enabled": true,
-				"timeout": 30000
+								"timeout": 60000
 			}
 		},
 		"compaction": {

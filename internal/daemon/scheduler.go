@@ -21,10 +21,11 @@ type ScheduledJob struct {
 	AutoCorrect bool    `json:"auto_correct"`
 	AllowedPorts string         `json:"allowed_ports,omitempty"`
 	Sandbox      SandboxProfile `json:"sandbox"`
-	IntervalSeconds int          `json:"interval_seconds,omitempty"`
-	Model           string       `json:"model,omitempty"`
-	LastRun   time.Time `json:"last_run,omitempty"`
-	NextRun   time.Time `json:"next_run,omitempty"`
+	IntervalSeconds int           `json:"interval_seconds,omitempty"`
+	Model           string        `json:"model,omitempty"`
+	Backend         string        `json:"backend,omitempty"`
+	LastRun         time.Time     `json:"last_run,omitempty"`
+	NextRun         time.Time     `json:"next_run,omitempty"`
 }
 
 type JobExecutor func(job ScheduledJob)

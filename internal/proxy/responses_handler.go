@@ -60,6 +60,15 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	ctx := s.prepareOpenAIRequestContext(anthReq, reqIdx, r.Header.Get("X-Claude-Code-Session-Id"), ocSessionID, r.Header.Get("User-Agent"))
 	ctx.Model = model
 
+	// Persist active opencode session so whoami can resolve it.
+	// OpenCode has no hooks — the proxy is the only source of session identity.
+	if ocSessionID != "" {
+		s.queryDaemon("set_proxy_state", map[string]any{
+			"key":   "active_session_opencode",
+			"value": "opencode:" + ocSessionID,
+		})
+	}
+
 	// Non-interactive requests (CLI tools, extraction pipeline) have no session headers.
 	// Skip the entire proxy pipeline — no MCP calls, no associative context, no system blocks.
 	headerClaudeSession := r.Header.Get("X-Claude-Code-Session-Id")

@@ -21,7 +21,8 @@ type Strings struct {
 	RecentSessions  string `yaml:"recent_sessions"`
 	OpenWork        string `yaml:"open_work"`
 	UserReminder    string `yaml:"user_reminder"`
-	OpenWorkRemind  string `yaml:"open_work_remind"`
+	OpenWorkRemind    string `yaml:"open_work_remind"`
+	OpenWorkRemindAsk string `yaml:"open_work_remind_ask"`
 	GapAwareness    string `yaml:"gap_awareness"`
 	Recurrence      string `yaml:"recurrence"`
 	Milestones      string `yaml:"milestones"`
@@ -107,7 +108,8 @@ func DefaultStrings() Strings {
 		RecentSessions:  "My recent sessions here:",
 		OpenWork:        "What I haven't finished yet:",
 		UserReminder:    "Reminder for you — what's still open:",
-		OpenWorkRemind:  "IMPORTANT: There are open tasks and deadlines for the user in this project. On your FIRST response call get_learnings(category=\"unfinished\", project=\"%s\"). Then tell the user the 3-5 most important open items — with concrete content, not just statistics. Prioritize by deadline proximity and importance.",
+		OpenWorkRemind:    "IMPORTANT: There are open tasks and deadlines for the user in this project. On your FIRST response call get_learnings(category=\"unfinished\", project=\"%s\"). Then tell the user the 3-5 most important open items — with concrete content, not just statistics. Prioritize by deadline proximity and importance.",
+		OpenWorkRemindAsk: "There are open tasks (get_learnings(category=\"unfinished\", project=\"%s\")) for this project. Ask the user first: 'Shall I look up the open tasks?' Only fetch them if they say yes.",
 		GapAwareness:    "There's more in me:",
 		Recurrence:      "Recurring patterns:",
 		Milestones:      "Milestones we've reached together!",

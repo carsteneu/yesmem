@@ -67,7 +67,19 @@ func gateForFeature(g *config.FeatureGates, feature string) bool {
 		return g.ThinkReminder
 	case "timestamps":
 		return g.Timestamps
+	case "assoc_context":
+		return g.AssocContext
 	default:
 		return false
 	}
+}
+
+// resolveThinkReminderMinChars returns the minimum user text length required to trigger
+// the think_reminder. Resolution: per-model FeatureGates → FeatureDefaults → 0 (always).
+func resolveThinkReminderMinChars(cfg *Config, model string) int {
+	gate := resolveFeatureGate(cfg, model)
+	if gate != nil && gate.ThinkReminderMinChars > 0 {
+		return gate.ThinkReminderMinChars
+	}
+	return 0
 }

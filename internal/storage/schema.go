@@ -425,6 +425,7 @@ var migrations = []string{
 	`ALTER TABLE scheduled_jobs ADD COLUMN sandbox TEXT NOT NULL DEFAULT 'standard'`,
 	`ALTER TABLE scheduled_jobs ADD COLUMN interval_seconds INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE scheduled_jobs ADD COLUMN model TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE scheduled_jobs ADD COLUMN backend TEXT NOT NULL DEFAULT ''`,
 	// v0.57: bundle caps — disambiguate which Scripts[] entry a job uses
 	`ALTER TABLE scheduled_jobs ADD COLUMN script_name TEXT NOT NULL DEFAULT ''`,
 	`CREATE TABLE IF NOT EXISTS bash_job_runs (
@@ -526,6 +527,7 @@ const tableLearnings = `CREATE TABLE IF NOT EXISTS learnings (
 	domain              TEXT DEFAULT 'code',
 	trigger_rule        TEXT DEFAULT '',
 	embedding_text      TEXT DEFAULT '',
+	embedding_vector    BLOB,
 	embedding_status    TEXT DEFAULT 'done',
 	embedding_content_hash TEXT DEFAULT '',
 	embedded_at         TEXT,
@@ -882,6 +884,7 @@ const tableScheduledJobs = `CREATE TABLE IF NOT EXISTS scheduled_jobs (
 	sandbox      TEXT NOT NULL DEFAULT 'standard',
 	interval_seconds INTEGER NOT NULL DEFAULT 0,
 	model        TEXT NOT NULL DEFAULT '',
+	backend      TEXT NOT NULL DEFAULT '',
 	last_run     DATETIME,
 	created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
 )`

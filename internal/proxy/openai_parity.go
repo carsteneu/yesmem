@@ -594,19 +594,24 @@ func (s *Server) annotateOpenAIMessageMetadata(req map[string]any, ctx *openAIRe
 					entry.Delta = formatDelta(now.Sub(respTime))
 				}
 				// Stable injects frozen once per msg:N (idempotent via TimestampStore)
-				if isFeatureEnabled(&s.cfg, model, "think_reminder") && ctx.ThreadID != "" {
+	if isFeatureEnabled(&s.cfg, model, "think_reminder") && ctx.ThreadID != "" && lastUserTextLen(messages) >= resolveThinkReminderMinChars(&s.cfg, model) {
 					entry.ThinkReminder = s.buildThinkReminder(ctx.ThreadID, ctx.SessionID, true)
 				}
 				if isFeatureEnabled(&s.cfg, model, "skill_eval") && ctx.ThreadID != "" && ctx.Project != "" && isUserInputTurn(messages) && s.skillTracker != nil {
 					s.syncSkillActivations(messages, ctx.Project, ctx.ThreadID)
 					entry.SkillEval = buildSkillEvalBlock(s.cfg.SkillEvalInject)
 				}
-				if isFeatureEnabled(&s.cfg, model, "rules_reminder") {
-					if rulesBlock := s.rulesInject(ctx.ThreadID, totalTokens, ctx.Project); rulesBlock != "" {
-						entry.Rules = s.formatRulesReminder(rulesBlock, ctx.Project, true)
-					}
+			if isFeatureEnabled(&s.cfg, model, "rules_reminder") {
+				if rulesBlock := s.rulesInject(ctx.ThreadID, totalTokens, ctx.Project); rulesBlock != "" {
+					entry.Rules = s.formatRulesReminder(rulesBlock, ctx.Project, true)
 				}
-				s.timestampStore.Store(threadID, ctx.RawMsgCount, entry)
+			}
+			if isFeatureEnabled(&s.cfg, model, "assoc_context") && ctx.UserQuery != "" {
+				if ac := s.findAssociativeContextFor(ctx.UserQuery, ctx.Project, ctx.ThreadID, messages); ac != "" {
+					entry.AssocContext = ac
+				}
+			}
+			s.timestampStore.Store(threadID, ctx.RawMsgCount, entry)
 				if isFeatureEnabled(&s.cfg, model, "timestamps") {
 					prependMeta(lastMsg, BuildMeta(ctx.RawMsgCount, entry))
 				}

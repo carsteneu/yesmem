@@ -7,8 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Inject associative context in OpenAI path via TimestampStore freeze-replay
+- Add backend field to scheduled jobs
+- Auto-discover DeepSeek API key from auth.json + default to openai_compatible
+- Prompt for DeepSeek/OpenAI API key when model requires it
+- Gate think_reminder and OpenWorkRemind with per-model cooldowns
+
 ### Changed
 
+- Sync CHANGELOG and reddit launch title tweaks
+- Add mcp-tools-reference.md to public sync allowlist
+
+### Fixed
+
+- Filter role:system messages from Anthropic messages array
+- Remove auditCapExecution — stop logging cap calls as learnings
+- Surface association neighbors bidirectionally
+- Prevent nil formatter panic in proxyCallFormat
+- Prevent nil formatter panic in proxyCallFormat
+- Strip role:system from messages array, remove briefing-hook additionalContext
+- Remove redundant ALTER TABLE embedding_vector from hybrid origin test
+- FormatSignature used 'method' prefix — broke extractNameFromSig and lost all Method nodes from search_code_index
+- Add Chat Completions support to OpenAIClient for openai_compatible provider
+- Inject 'no tools' system prompt for opencode llm_complete calls
+- Use full binary path in opencode MCP command
+- Add embedding_vector to CREATE TABLE learnings for fresh installs
+- Resolve OpenCode session identity via proxy-persisted active_session_opencode
+- Increase yesmem MCP timeout 30s→60s for LLM-heavy caps
+- Suppress MCP tools in opencode subprocess via OPENCODE_CONFIG_CONTENT
+- Add cap execution timeout + YESMEM_SOCK for REPL runtime
+- Add llm() polyfill to REPL runtime + shQuote fix + reddit_search after pagination
+
+### Testing
+
+- Add regression tests for formatSignature, extractNameFromSig, and BuildFromScanResult with Methods
+
+## [2.1.5] - 2026-05-27
+
+### Changed
+
+- Also exclude SYSTEM.md from public repo sync
 - Exclude RULES.md from public repo sync
 - Regenerate CHANGELOG.md (26 release sections)
 
@@ -2644,7 +2684,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add comprehensive tests for generator and storage
 
 
-[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.1.4...HEAD
+[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.1.5...HEAD
+[2.1.5]: https://github.com/carsteneu/yesmem/compare/v2.1.4...v2.1.5
 [2.1.4]: https://github.com/carsteneu/yesmem/compare/v2.1.3...v2.1.4
 [2.1.3]: https://github.com/carsteneu/yesmem/compare/v2.1.2...v2.1.3
 [2.1.2]: https://github.com/carsteneu/yesmem/compare/v2.1.1...v2.1.2

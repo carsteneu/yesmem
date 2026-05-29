@@ -47,7 +47,7 @@ func defaultOpencodeSettings() map[string]any {
 				"type":    "local",
 				"command": []any{"yesmem", "mcp"},
 				"enabled": true,
-				"timeout": 30000,
+				"timeout": 60000,
 				"environment": map[string]any{
 					"YESMEM_SOURCE_AGENT": "opencode",
 				},
@@ -65,10 +65,10 @@ func opencodeConfigPath(home string) string {
 }
 
 func mergeOpencodeSettings(home string) error {
-	return mergeOpencodeSettingsWith(home, "", "")
+	return mergeOpencodeSettingsWith(home, "", "", "")
 }
 
-func mergeOpencodeSettingsWith(home, model, smallModel string) error {
+func mergeOpencodeSettingsWith(home, model, smallModel, binaryPath string) error {
 	cfgPath := opencodeConfigPath(home)
 
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0755); err != nil {
@@ -92,6 +92,15 @@ func mergeOpencodeSettingsWith(home, model, smallModel string) error {
 	}
 	if smallModel != "" {
 		defaults["small_model"] = smallModel
+	}
+	// Use full binary path for the MCP command so opencode finds yesmem
+	// even when ~/.local/bin is not yet in the PATH.
+	if binaryPath != "" {
+		if mcp, ok := defaults["mcp"].(map[string]any); ok {
+			if yesmem, ok := mcp["yesmem"].(map[string]any); ok {
+				yesmem["command"] = []any{binaryPath, "mcp"}
+			}
+		}
 	}
 	deepMergeJSON(cfg, defaults)
 
@@ -117,7 +126,7 @@ func upgradeOpencodeTimeout(cfg map[string]any) {
 	}
 	timeout, ok := yesmem["timeout"].(float64)
 	if ok && timeout == 10000 {
-		yesmem["timeout"] = float64(30000)
+		yesmem["timeout"] = float64(60000)
 	}
 }
 

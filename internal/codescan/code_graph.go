@@ -285,7 +285,7 @@ func BuildCodeGraph(result *ScanResult) *CodeGraph {
 
 // extractNameFromSig extracts the symbol name from a signature string.
 func extractNameFromSig(sig string) string {
-	for _, prefix := range []string{"func ", "type ", "class ", "struct ", "def ", "interface ", "trait ", "pub fn ", "fn "} {
+	for _, prefix := range []string{"func ", "type ", "class ", "struct ", "def ", "interface ", "trait ", "pub fn ", "fn ", "method "} {
 		if strings.HasPrefix(sig, prefix) {
 			rest := sig[len(prefix):]
 			if strings.HasPrefix(rest, "(") {

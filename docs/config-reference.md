@@ -163,6 +163,31 @@ Replaces the default system prompt with the SYSTEM.md template for supported pip
 | `custom_system_prompt.enabled_codex` | bool | `true` | Inject SYSTEM.md for Codex pipeline. |
 | `custom_system_prompt.template_path` | string | `~/.claude/yesmem/SYSTEM.md` | Path to the system prompt template file. |
 
+### Per-Model Feature Gates
+
+Control which yesmem behavioral features are active per model/provider. Keys under `model_features` are model name prefixes matched case-insensitively (longest wins). Models not listed fall back to `feature_defaults`.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `model_features.<model>.skill_eval` | bool | `true` | Inject [skill-eval] instruction block. |
+| `model_features.<model>.briefing` | bool | `true` | Inject yesmem briefing at session start. |
+| `model_features.<model>.rules_reminder` | bool | `true` | Periodic reminder of project rules/guidelines. |
+| `model_features.<model>.plan_checkpoint` | bool | `true` | Inject plan checkpoint reminders during long sessions. |
+| `model_features.<model>.think_reminder` | bool | `true` | Inject hybrid_search() hint to check memory before assuming. |
+| `model_features.<model>.think_reminder_min_chars` | int | `0` | Min user text length to trigger think_reminder. `0` = always. Set to `10` to skip short messages like "hi" or "ok". |
+| `model_features.<model>.timestamps` | bool | `true` | Inject [HH:MM:SS] [msg:N] [+Δ] markers for temporal awareness. |
+| `feature_defaults.<key>` | — | — | Same keys as above, used as fallback for unlisted models. |
+
+Example: per-model gates for DeepSeek with think_reminder gated at 10+ chars:
+
+```yaml
+proxy:
+  model_features:
+    deepseek:
+      think_reminder: true
+      think_reminder_min_chars: 10
+```
+
 ---
 
 ## embedding — Semantic Search

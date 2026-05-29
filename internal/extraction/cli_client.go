@@ -182,6 +182,19 @@ func (c *CLIClient) runStdin(ctx context.Context, system, userMsg string, schema
 	cmd := exec.CommandContext(ctx, cmdName, cmdArgs...)
 	cmd.Env = filterEnv(os.Environ(), "ANTHROPIC_BASE_URL", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
 	cmd.Env = append(cmd.Env, "TERM=dumb", "NO_COLOR=1", "YESMEM_DAEMON_CHILD=1")
+	// Suppress MCP + route directly to upstream API in opencode subprocess.
+	// Without this, opencode inherits MCP tools from ~/.config/opencode/opencode.json
+	// AND routes through the yesmem proxy (all provider baseURLs point to localhost:9099).
+	// The proxy injects CUSTOM-SYSTEM (SYSTEM.md + skills) which advertises yesmem MCP
+	// tools to the LLM. The LLM then makes tool calls instead of producing text →
+	// parseOpencodeOutput sees zero text events → "opencode emitted no text events".
+	//
+	// Fix: clear MCP servers AND redirect the deepseek provider to the real API endpoint.
+	// opencode reads its API key from ~/.local/share/opencode/auth.json (needs HOME set).
+	// The daemon process inherits HOME from systemd, so auth.json is accessible.
+	if c.sourceAgent == models.SourceAgentOpencode {
+		cmd.Env = append(cmd.Env, `OPENCODE_CONFIG_CONTENT={"mcp":{},"provider":{"deepseek":{"options":{"baseURL":"https://api.deepseek.com/v1"}}}}`)
+	}
 
 	// Use StdinPipe and explicitly close after a short delay to ensure
 	// the child process has time to read the full prompt before EOF.
