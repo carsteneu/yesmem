@@ -295,6 +295,12 @@ func (c *OpenAIClient) doChatRequest(system, userMessage string, schema map[stri
 	return result, nil
 }
 
+// normalizeOpenAIResponsesURL normalizes a base URL for the Responses API.
+// This is a convenience wrapper around normalizeOpenAIURL with useChatCompletions=false.
+func normalizeOpenAIResponsesURL(baseURL string) string {
+	return normalizeOpenAIURL(baseURL, false)
+}
+
 func normalizeOpenAIURL(baseURL string, useChatCompletions bool) string {
 	baseURL = strings.TrimSpace(baseURL)
 	if baseURL == "" {
