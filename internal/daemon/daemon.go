@@ -286,7 +286,7 @@ func Run(cfg Config) error {
 				ID: dj.ID, Name: dj.Name, Cron: dj.Cron,
 				Prompt: dj.Prompt, Enabled: dj.Enabled, Recurring: dj.Recurring, Mode: dj.Mode,
 				CapName: dj.CapName, ScriptName: dj.ScriptName, AutoCorrect: dj.AutoCorrect, AllowedPorts: dj.AllowedPorts,
-				Sandbox: sbProfile, IntervalSeconds: dj.IntervalSeconds, Model: dj.Model, LastRun: dj.LastRun,
+				Sandbox: sbProfile, IntervalSeconds: dj.IntervalSeconds, Backend: dj.Backend, Model: dj.Model, LastRun: dj.LastRun,
 			})
 		}
 		if len(dbJobs) > 0 {
