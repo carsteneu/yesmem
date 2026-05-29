@@ -122,8 +122,8 @@ func TestNewLLMClientOpenAICompatible(t *testing.T) {
 	if oc.Name() != "openai_compatible" {
 		t.Fatalf("Name() = %q, want openai_compatible", oc.Name())
 	}
-	if oc.endpoint != "https://gateway.example/v1/responses" {
-		t.Fatalf("endpoint = %q", oc.endpoint)
+	if oc.endpoint != "https://gateway.example/v1/chat/completions" {
+		t.Fatalf("endpoint = %q, want %q", oc.endpoint, "https://gateway.example/v1/chat/completions")
 	}
 }
 

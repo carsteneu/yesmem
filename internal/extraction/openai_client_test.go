@@ -53,7 +53,7 @@ func TestOpenAIClientCompleteJSON(t *testing.T) {
 		usageOut = outputTokens
 	}
 
-	client := NewOpenAIClient("sk-openai", "gpt-5-mini", srv.URL, "openai_compatible")
+	client := NewOpenAIClient("sk-openai", "gpt-5-mini", srv.URL, "openai")
 	schema := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
