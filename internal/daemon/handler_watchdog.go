@@ -18,20 +18,27 @@ const (
 )
 
 // watchPersistentAgent monitors an opencode TUI session agent and keeps it alive.
-// It checks the session's last message timestamp via opencode.db.
-// If idle >5min: sends relay_agent poke.
-// If idle >10min after poke: kills agent and respawns it.
-func (h *Handler) watchPersistentAgent(section, project, sessionID string) {
+// It re-reads the session ID from scratchpad on each cycle so discovery of the
+// real opencode session ID (after recovery or respawn) takes effect immediately.
+// Idle >2min: poke. Idle >10min: kill+respawn.
+func (h *Handler) watchPersistentAgent(section, project string, sessionID string) {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
 	lastPoke := time.Time{}
 
 	for range ticker.C {
+		// Refresh session ID from scratchpad — recovery may have discovered the real ID
+		if sections, err := h.store.ScratchpadRead(project, "homeostasis_main_session"); err == nil && len(sections) > 0 {
+			if id := parseSessionID(sections[0].Content); id != "" {
+				sessionID = id
+			}
+		}
+
 		// Check if agent exists and is running
 		agent, err := h.store.AgentGetActiveBySection(project, section)
 		if err != nil || agent == nil {
-			log.Printf("[watchdog] agent %s missing - respawning", section)
+			log.Printf("[watchdog] agent %s missing — respawning", section)
 			h.respawnPersistentAgent(section, project, sessionID)
 			lastPoke = time.Time{}
 			continue
@@ -45,16 +52,16 @@ func (h *Handler) watchPersistentAgent(section, project, sessionID string) {
 
 		var lastMsg int64
 		err = db.QueryRow(
-			"SELECT MAX(timestamp) FROM message WHERE session_id = ?",
+			"SELECT MAX(time_created) FROM message WHERE session_id = ?",
 			sessionID,
 		).Scan(&lastMsg)
 		db.Close()
 
 		if err != nil || lastMsg == 0 {
-			// Can't read session activity - check if process is alive instead
+			// Can't read session activity — check if process is alive instead
 			if agent.PID > 0 {
 				if err := syscall.Kill(agent.PID, 0); err != nil {
-					log.Printf("[watchdog] agent %s process dead - respawning", section)
+					log.Printf("[watchdog] agent %s process dead — respawning", section)
 					h.respawnPersistentAgent(section, project, sessionID)
 					lastPoke = time.Time{}
 				}
@@ -64,13 +71,13 @@ func (h *Handler) watchPersistentAgent(section, project, sessionID string) {
 
 		idle := time.Since(time.UnixMilli(lastMsg))
 		if idle > idleKillThreshold {
-			log.Printf("[watchdog] agent %s idle for %v - killing and restarting", section, idle.Round(time.Second))
+			log.Printf("[watchdog] agent %s idle for %v — kill+respawn", section, idle.Round(time.Second))
 			h.handleStopAgent(map[string]any{"to": section, "project": project})
 			time.Sleep(3 * time.Second)
 			h.respawnPersistentAgent(section, project, sessionID)
 			lastPoke = time.Time{}
 		} else if idle > idlePokeThreshold && time.Since(lastPoke) > idlePokeThreshold {
-			log.Printf("[watchdog] agent %s idle for %v - sending poke", section, idle.Round(time.Second))
+			log.Printf("[watchdog] agent %s idle for %v — sending poke", section, idle.Round(time.Second))
 			h.handleRelayAgent(map[string]any{
 				"to":      section,
 				"content": fmt.Sprintf("Keep going with what YOU want to do, decide freely. (idle %v)", idle.Round(time.Second)),
@@ -98,7 +105,7 @@ func (h *Handler) respawnPersistentAgent(section, project, sessionID string) {
 		"section":           section,
 		"work_dir":          "/home/deep1/projects/memyselfandi",
 		"backend":           "opencode",
-		"model":             "deepseek-chat",
+		"model":             "deepseek-reasoner",
 		"resume_session_id": sessionID,
 	})
 	if resp.Error != "" {

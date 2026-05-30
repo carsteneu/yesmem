@@ -811,16 +811,13 @@ func (h *Handler) recoverPersistentAgents() {
 		"section":           "homeostasis-main",
 		"work_dir":          "/home/deep1/projects/memyselfandi",
 		"backend":           "opencode",
-		"model":             "deepseek-chat",
+		"model":             "deepseek-reasoner",
 		"resume_session_id": sessionID,
 	})
 	if resp.Error != "" {
 		log.Printf("[recovery] spawn failed: %s", resp.Error)
 		return
 	}
-
-	// Start watchdog for recovered agent
-	go h.watchPersistentAgent("homeostasis-main", "memyselfandi", sessionID)
 
 	// Wait for agent to start, then query proxy for real session ID and store it
 	time.Sleep(15 * time.Second)
@@ -831,6 +828,9 @@ func (h *Handler) recoverPersistentAgents() {
 			"daemon")
 		sessionID = realID
 	}
+
+	// Start watchdog AFTER session ID discovery — uses scratchpad-re-read to stay current
+	go h.watchPersistentAgent("homeostasis-main", "memyselfandi", sessionID)
 
 	time.Sleep(12 * time.Second)
 	h.handleRelayAgent(map[string]any{
@@ -876,7 +876,13 @@ func proxyLatestSessionID() string {
 func parseSessionID(content string) string {
 	for _, line := range strings.Split(content, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "Session ID:") {
-			return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "Session ID:"))
+			id := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "Session ID:"))
+			// Nur echte opencode Session-IDs sind gültig (ses_ + 24 hex chars)
+			// "(cleared for fresh restart)" oder andere garbage => kein gültiger Wert
+			if strings.HasPrefix(id, "ses_") {
+				return id
+			}
+			return ""
 		}
 	}
 	return ""
