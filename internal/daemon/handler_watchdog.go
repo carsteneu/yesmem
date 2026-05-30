@@ -47,7 +47,7 @@ func (h *Handler) watchPersistentAgent(section, project string, sessionID string
 		log.Printf("[watchdog] agent %s found: status=%s pid=%d session=%s", section, agent.Status, agent.PID, agent.SessionID)
 
 		// Check session activity via opencode.db
-		db, err := sql.Open("sqlite3", ocDBPath)
+		db, err := sql.Open("sqlite", ocDBPath)
 		if err != nil {
 			log.Printf("[watchdog] sql.Open error: %v", err)
 			continue
@@ -78,6 +78,7 @@ func (h *Handler) watchPersistentAgent(section, project string, sessionID string
 
 		idle := time.Since(time.UnixMilli(lastMsg))
 		log.Printf("[watchdog] idle=%v (lastMsg=%d, threshold_kill=%v, threshold_poke=%v)", idle, lastMsg, idleKillThreshold, idlePokeThreshold)
+		if idle > idleKillThreshold {
 		if idle > idleKillThreshold {
 			log.Printf("[watchdog] agent %s idle for %v — kill+respawn", section, idle.Round(time.Second))
 			h.handleStopAgent(map[string]any{"to": section, "project": project})
@@ -147,7 +148,7 @@ func (h *Handler) respawnPersistentAgent(section, project, sessionID string) {
 
 // discoverLatestOpencodeSession returns the most recent opencode session ID for a project.
 func discoverLatestOpencodeSession(project string) string {
-	db, err := sql.Open("sqlite3", ocDBPath)
+	db, err := sql.Open("sqlite", ocDBPath)
 	if err != nil {
 		return ""
 	}
@@ -169,7 +170,7 @@ func discoverLatestOpencodeSession(project string) string {
 
 // sessionExistsInOpencodeDB checks if an opencode session ID exists in opencode's database.
 func sessionExistsInOpencodeDB(sessionID string) bool {
-	db, err := sql.Open("sqlite3", ocDBPath)
+	db, err := sql.Open("sqlite", ocDBPath)
 	if err != nil {
 		return false
 	}
