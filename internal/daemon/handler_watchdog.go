@@ -22,12 +22,14 @@ const (
 // real opencode session ID (after recovery or respawn) takes effect immediately.
 // Idle >2min: poke. Idle >10min: kill+respawn.
 func (h *Handler) watchPersistentAgent(section, project string, sessionID string) {
+	log.Printf("[watchdog] STARTED for %s/%s (session %s)", project, section, sessionID)
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
 	lastPoke := time.Time{}
 
 	for range ticker.C {
+		log.Printf("[watchdog] CYCLE for %s/%s (session %s)", project, section, sessionID)
 		// Refresh session ID from scratchpad — recovery may have discovered the real ID
 		if sections, err := h.store.ScratchpadRead(project, "homeostasis_main_session"); err == nil && len(sections) > 0 {
 			if id := parseSessionID(sections[0].Content); id != "" {
