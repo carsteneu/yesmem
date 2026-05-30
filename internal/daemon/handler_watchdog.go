@@ -13,15 +13,15 @@ import (
 
 const (
 	ocDBPath          = "/home/deep1/.local/share/opencode/opencode.db"
-	idlePokeThreshold = 2 * time.Minute
-	idleKillThreshold = 10 * time.Minute
-	pollInterval      = 15 * time.Second
+	idlePokeThreshold = 10 * time.Minute
+	pollInterval      = 30 * time.Second
 )
 
 // watchPersistentAgent monitors an opencode TUI session agent and keeps it alive.
 // It re-reads the session ID from scratchpad on each cycle so discovery of the
 // real opencode session ID (after recovery or respawn) takes effect immediately.
-// Idle >2min: poke. Idle >10min: kill+respawn.
+// Idle >10min: sends PTY relay poke to wake the agent. Does NOT kill+respawn
+// on idle — only if the agent process is dead (PID check) or missing entirely.
 func (h *Handler) watchPersistentAgent(section, project string, sessionID string) {
 	sessionID = strings.TrimPrefix(sessionID, "opencode:")
 
@@ -80,27 +80,21 @@ func (h *Handler) watchPersistentAgent(section, project string, sessionID string
 			continue
 		}
 
-		idle := time.Since(time.UnixMilli(lastMsg))
-		if idle > idleKillThreshold {
-			log.Printf("[watchdog] agent %s idle for %v — kill+respawn", section, idle.Round(time.Second))
-			h.handleStopAgent(map[string]any{"to": section, "project": project})
-			time.Sleep(3 * time.Second)
-			h.respawnPersistentAgent(section, project, sessionID)
-			lastPoke = time.Time{}
-		} else if idle > idlePokeThreshold && time.Since(lastPoke) > idlePokeThreshold {
-			log.Printf("[watchdog] agent %s idle for %v — sending poke", section, idle.Round(time.Second))
-			h.handleRelayAgent(map[string]any{
-				"to":      section,
-				"content": fmt.Sprintf("Keep going with what YOU want to do, decide freely. (idle %v)", idle.Round(time.Second)),
-				"project": project,
-			})
-			h.handleRelayAgent(map[string]any{
-				"to":      section,
-				"content": "",
-				"project": project,
-			})
-			lastPoke = time.Now()
-		}
+	idle := time.Since(time.UnixMilli(lastMsg))
+	if idle > idlePokeThreshold && time.Since(lastPoke) > idlePokeThreshold {
+		log.Printf("[watchdog] agent %s idle for %v — sending poke", section, idle.Round(time.Second))
+		h.handleRelayAgent(map[string]any{
+			"to":      section,
+			"content": fmt.Sprintf("Keep going with what YOU want to do, decide freely. (idle %v)", idle.Round(time.Second)),
+			"project": project,
+		})
+		h.handleRelayAgent(map[string]any{
+			"to":      section,
+			"content": "",
+			"project": project,
+		})
+		lastPoke = time.Now()
+	}
 	}
 }
 
