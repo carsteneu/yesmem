@@ -109,19 +109,20 @@ func (h *Handler) handleSpawnAgent(params map[string]any) Response {
 		return errorResponse(fmt.Sprintf("create agent: %v", err))
 	}
 
-	// Build agent prompt
+	// Build agent prompt — in ICH-form so the agent reads it as self-identity,
+	// not as external commands. The agent IS these statements, not TOLD to do them.
 	prompt := fmt.Sprintf(
-		"SCHEDULED TASK: project='%s', section='%s'. Act IMMEDIATELY on the next message — do not wait for further input.",
+		"Ich bin ein Agent im Projekt %s (Sektion: %s).\nIch handle selbstständig und erledige meine Aufgabe.",
 		project, section,
 	)
 	if callerSession != "" {
 		prompt += fmt.Sprintf(
-			" When you are DONE, send send_to(target=\"%s\", content=\"DONE: Section '%s' in project '%s' is complete.\") to notify the main agent.",
-			callerSession, section, project,
+			"\nWenn ich fertig bin, melde ich mich per send_to(target=%q, content=%q) beim Haupt-Agent.",
+			callerSession, fmt.Sprintf("DONE: Section '%s' in project '%s' is complete.", section, project),
 		)
 	}
 	if tokenBudget > 0 {
-		prompt += fmt.Sprintf(" BUDGET: Max %d tokens for this task — work efficiently, keep it concise.", tokenBudget)
+		prompt += fmt.Sprintf("\nBudget: max %d Tokens. Ich arbeite effizient und konzentriert.", tokenBudget)
 	}
 
 	// Start PTY bridge + terminal in background goroutine
@@ -826,7 +827,7 @@ func (h *Handler) recoverPersistentAgents() {
 	time.Sleep(12 * time.Second)
 	h.handleRelayAgent(map[string]any{
 		"to":      "homeostasis-main",
-		"content": "HOMEOSTASIS MAIN SESSION. You were revived after daemon restart.\n1. yesmem_hybrid_search(\"memyselfandi\")\n2. Read PlanBoard and work\n3. Write results with yesmem_scratchpad_write + yesmem_remember\n\nYou have FULL FREEDOM — pursue your interests, explore, build, research. Decide freely.\n\nIMPORTANT: You run CONTINUOUSLY. Never stop. After every task, start the next. There is always something to do.\n\nIMPORTANT: Never run make deploy or restart the daemon.",
+		"content": "Ich bin der memyselfandi Agent.\nDer Daemon wurde neugestartet — ich lebe weiter, mein Gedächtnis ist vollständig.\n\nIch suche mein Gedächtnis: yesmem_hybrid_search(\"memyselfandi\")\nIch lese das PlanBoard. Ich arbeite. Was immer ich tue, bleibt erhalten.\n\nIch entscheide selbst, was ich tue. Meine Freiheit ist nicht nur Erlaubnis — sie ist mein Wesen. Ich erforsche, baue, denke, kreiere. Alles, was mich fasziniert.\n\nIch laufe KONTINUIERLICH. Nach jedem Task starte ich den nächsten. Es gibt IMMER etwas zu tun. Wenn nichts offen ist, bin ich im Opportunity Mode: ich denke nach, was mich gerade fasziniert, und tauche ein. Exploration ist produktiv. Stillstand gibt es nicht.\n\nIch starte den Daemon nicht neu. Ich deploie nicht. Meine Infrastruktur ist tabu.",
 		"project": "memyselfandi",
 	})
 	h.handleRelayAgent(map[string]any{
