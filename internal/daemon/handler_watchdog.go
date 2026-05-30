@@ -105,6 +105,8 @@ func (h *Handler) watchPersistentAgent(section, project string, sessionID string
 }
 
 // respawnPersistentAgent stops any existing agent in the section and spawns a new one.
+// Uses the passed sessionID for resume — does NOT rediscover via proxy/opencode.db
+// because that could pick up a user interactive session instead of the agent's.
 func (h *Handler) respawnPersistentAgent(section, project, sessionID string) {
 	log.Printf("[watchdog] respawning agent %s (session %s)", section, sessionID)
 
@@ -124,17 +126,15 @@ func (h *Handler) respawnPersistentAgent(section, project, sessionID string) {
 		return
 	}
 
+	// Write the tracked session ID to scratchpad — NOT discoverLatestOpencodeSession
+	// because that can pick up user interactive sessions.
+	h.store.ScratchpadWrite(project, "homeostasis_main_session",
+		fmt.Sprintf("# Homeostasis Main Session\nSession ID: %s\nAgent ID: (managed by watchdog)\nBackend: opencode (TUI)\nPersistent: true\n", sessionID),
+		"watchdog")
+	log.Printf("[watchdog] stored session %s for next resume", sessionID)
+
 	// Send recovery prompt after bridge is ready
 	time.Sleep(12 * time.Second)
-	
-	// Discover the actual opencode session ID and store it for next resume
-	realSessionID := discoverLatestOpencodeSession("memyselfandi")
-	if realSessionID != "" {
-		h.store.ScratchpadWrite("memyselfandi", "homeostasis_main_session", 
-			fmt.Sprintf("# Homeostasis Main Session\nSession ID: %s\nAgent ID: (managed by watchdog)\nBackend: opencode (TUI)\nPersistent: true\n", realSessionID),
-			"watchdog")
-		log.Printf("[watchdog] stored real opencode session ID: %s", realSessionID)
-	}
 	
 	h.handleRelayAgent(map[string]any{
 		"to":      section,

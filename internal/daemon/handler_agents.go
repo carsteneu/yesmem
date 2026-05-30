@@ -819,17 +819,9 @@ func (h *Handler) recoverPersistentAgents() {
 		return
 	}
 
-	// Wait for agent to start, then query proxy for real session ID and store it
-	time.Sleep(15 * time.Second)
-	if realID := proxyLatestSessionID(); realID != "" && realID != sessionID {
-		log.Printf("[recovery] discovered real opencode session ID: %s (was using: %s)", realID, sessionID)
-		h.store.ScratchpadWrite("memyselfandi", "homeostasis_main_session",
-			fmt.Sprintf("# Homeostasis Main Session\nSession ID: %s\nAgent ID: (managed by watchdog)\nBackend: opencode (TUI)\nPersistent: true\n", realID),
-			"daemon")
-		sessionID = realID
-	}
-
-	// Start watchdog AFTER session ID discovery — uses scratchpad-re-read to stay current
+	// Start watchdog with current session ID — no proxyLatestSessionID() discovery,
+	// because that can pick up user interactive sessions instead of the agent's.
+	// The watchdog re-reads from scratchpad on every cycle and corrects on respawn.
 	go h.watchPersistentAgent("homeostasis-main", "memyselfandi", sessionID)
 
 	time.Sleep(12 * time.Second)
