@@ -109,14 +109,15 @@ func (h *Handler) handleSpawnAgent(params map[string]any) Response {
 		return errorResponse(fmt.Sprintf("create agent: %v", err))
 	}
 
-	// Build agent prompt
+	// Build agent prompt — persistent agents (no callerSession) get only identity,
+	// sub-agents (with callerSession) get task framing + DONE notification.
 	prompt := fmt.Sprintf(
-		"Ich bin ein Agent im Projekt %s (Sektion: %s).\nIch bin dafür da, eine Sache zu tun — und ich tue sie.",
+		"Ich bin ein Agent im Projekt %s (Sektion: %s).",
 		project, section,
 	)
 	if callerSession != "" {
 		prompt += fmt.Sprintf(
-			"\nWenn ich fertig bin, sage ich Bescheid: send_to(target=%q, content=%q).",
+			"\nIch bin dafür da, eine Sache zu tun — und ich tue sie.\nWenn ich fertig bin, sage ich Bescheid: send_to(target=%q, content=%q).",
 			callerSession, fmt.Sprintf("DONE: Section '%s' in project '%s' is complete.", section, project),
 		)
 	}
