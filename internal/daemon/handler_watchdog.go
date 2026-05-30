@@ -37,18 +37,19 @@ func (h *Handler) watchPersistentAgent(section, project string, sessionID string
 			}
 		}
 
-		// Check if agent exists and is running
-		agent, err := h.store.AgentGetActiveBySection(project, section)
+	agent, err := h.store.AgentGetActiveBySection(project, section)
 		if err != nil || agent == nil {
-			log.Printf("[watchdog] agent %s missing — respawning", section)
+			log.Printf("[watchdog] agent %s missing (err=%v, agent=%v) — respawning", section, err, agent)
 			h.respawnPersistentAgent(section, project, sessionID)
 			lastPoke = time.Time{}
 			continue
 		}
+		log.Printf("[watchdog] agent %s found: status=%s pid=%d session=%s", section, agent.Status, agent.PID, agent.SessionID)
 
 		// Check session activity via opencode.db
 		db, err := sql.Open("sqlite3", ocDBPath)
 		if err != nil {
+			log.Printf("[watchdog] sql.Open error: %v", err)
 			continue
 		}
 
@@ -58,20 +59,25 @@ func (h *Handler) watchPersistentAgent(section, project string, sessionID string
 			sessionID,
 		).Scan(&lastMsg)
 		db.Close()
+		log.Printf("[watchdog] DB query: sessionID=%s lastMsg=%d err=%v", sessionID, lastMsg, err)
 
 		if err != nil || lastMsg == 0 {
+			log.Printf("[watchdog] no activity data (err=%v, lastMsg=%d) — fallback PID check", err, lastMsg)
 			// Can't read session activity — check if process is alive instead
 			if agent.PID > 0 {
 				if err := syscall.Kill(agent.PID, 0); err != nil {
-					log.Printf("[watchdog] agent %s process dead — respawning", section)
+					log.Printf("[watchdog] agent %s process dead (PID %d) — respawning", section, agent.PID)
 					h.respawnPersistentAgent(section, project, sessionID)
 					lastPoke = time.Time{}
+				} else {
+					log.Printf("[watchdog] agent %s PID %d alive — no action", section, agent.PID)
 				}
 			}
 			continue
 		}
 
 		idle := time.Since(time.UnixMilli(lastMsg))
+		log.Printf("[watchdog] idle=%v (lastMsg=%d, threshold_kill=%v, threshold_poke=%v)", idle, lastMsg, idleKillThreshold, idlePokeThreshold)
 		if idle > idleKillThreshold {
 			log.Printf("[watchdog] agent %s idle for %v — kill+respawn", section, idle.Round(time.Second))
 			h.handleStopAgent(map[string]any{"to": section, "project": project})
