@@ -79,7 +79,6 @@ func (h *Handler) watchPersistentAgent(section, project string, sessionID string
 		idle := time.Since(time.UnixMilli(lastMsg))
 		log.Printf("[watchdog] idle=%v (lastMsg=%d, threshold_kill=%v, threshold_poke=%v)", idle, lastMsg, idleKillThreshold, idlePokeThreshold)
 		if idle > idleKillThreshold {
-		if idle > idleKillThreshold {
 			log.Printf("[watchdog] agent %s idle for %v — kill+respawn", section, idle.Round(time.Second))
 			h.handleStopAgent(map[string]any{"to": section, "project": project})
 			time.Sleep(3 * time.Second)
