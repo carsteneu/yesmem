@@ -792,30 +792,40 @@ func (h *Handler) recoverPersistentAgents() {
 	}
 
 	// Read session ID from scratchpad — this is the authoritative source.
-	// proxyLatestSessionID() is NOT used as fallback because it can pick up
-	// user interactive sessions instead of the agent's.
 	sessionID := parseSessionID(content)
-	if sessionID == "" {
-		sessionID = "ses_c1389cd7fb25cbf282a4a8ad"
-	}
 
 	log.Printf("[recovery] respawning persistent agent (session %s)", sessionID)
-	resp := h.handleSpawnAgent(map[string]any{
-		"project":           "memyselfandi",
-		"section":           "explorer-main",
-		"work_dir":          "/home/deep1/projects/memyselfandi",
-		"backend":           "opencode",
-		"model":             "deepseek-reasoner",
-		"resume_session_id": sessionID,
-	})
+
+	spawnParams := map[string]any{
+		"project":  "memyselfandi",
+		"section":  "explorer-main",
+		"work_dir": "/home/deep1/projects/memyselfandi",
+		"backend":  "opencode",
+		"model":    "deepseek-reasoner",
+	}
+	// Nur resume wenn eine gültige Session-ID existiert — sonst frisch starten
+	if sessionID != "" {
+		spawnParams["resume_session_id"] = sessionID
+	}
+	resp := h.handleSpawnAgent(spawnParams)
 	if resp.Error != "" {
 		log.Printf("[recovery] spawn failed: %s", resp.Error)
 		return
 	}
 
-	// Start watchdog with current session ID — no proxyLatestSessionID() discovery,
-	// because that can pick up user interactive sessions instead of the agent's.
-	// The watchdog re-reads from scratchpad on every cycle and corrects on respawn.
+	// Wenn kein Session-ID im Scratchpad war: discover die echte Session nach dem Spawn
+	if sessionID == "" {
+		time.Sleep(6 * time.Second)
+		if realID := discoverLatestOpencodeSession("memyselfandi"); realID != "" {
+			sessionID = realID
+			h.store.ScratchpadWrite("memyselfandi", "homeostasis_main_session",
+				fmt.Sprintf("# Explorer Main Session\nSession ID: %s\nAgent ID: (managed by watchdog)\nBackend: opencode (TUI)\nPersistent: true\n", sessionID),
+				"daemon")
+			log.Printf("[recovery] discovered real opencode session ID: %s", sessionID)
+		}
+	}
+
+	// Start watchdog — re-reads session ID from scratchpad on every cycle
 	go h.watchPersistentAgent("explorer-main", "memyselfandi", sessionID)
 
 	time.Sleep(12 * time.Second)

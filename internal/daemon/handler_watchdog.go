@@ -75,6 +75,8 @@ func (h *Handler) watchPersistentAgent(section, project string, sessionID string
 					log.Printf("[watchdog] agent %s process dead — respawning", section)
 					h.respawnPersistentAgent(section, project, sessionID)
 					lastPoke = time.Time{}
+				} else {
+					log.Printf("[watchdog] agent %s PID %d alive but session %s has no messages — stille Schleife", section, agent.PID, sessionID)
 				}
 			}
 			continue
