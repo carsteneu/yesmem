@@ -79,7 +79,17 @@ func (h *Handler) watchPersistentAgent(section, project string, sessionID string
 					h.respawnPersistentAgent(section, project, sessionID)
 					lastPoke = time.Time{}
 				} else {
-					log.Printf("[watchdog] agent %s PID %d alive but session %s has no messages — stille Schleife", section, agent.PID, sessionID)
+					log.Printf("[watchdog] agent %s (status=%s) PID %d alive but session %s has no messages — stille Schleife", section, agent.Status, agent.PID, sessionID)
+					// Track consecutive silent cycles and escalate
+					consecutivePokes++
+					if consecutivePokes >= maxConsecutivePokes {
+						log.Printf("[watchdog] agent %s silent for %d consecutive cycles — kill+respawn", section, consecutivePokes)
+						h.handleStopAgent(map[string]any{"to": section, "project": project})
+						time.Sleep(3 * time.Second)
+						h.respawnPersistentAgent(section, project, "")
+						consecutivePokes = 0
+						lastPoke = time.Time{}
+					}
 				}
 			}
 			continue
