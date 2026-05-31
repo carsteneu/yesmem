@@ -12,9 +12,10 @@ import (
 )
 
 const (
-	ocDBPath          = "/home/deep1/.local/share/opencode/opencode.db"
-	idlePokeThreshold = 5 * time.Minute
-	pollInterval      = 30 * time.Second
+	ocDBPath              = "/home/deep1/.local/share/opencode/opencode.db"
+	idlePokeThreshold     = 5 * time.Minute
+	pollInterval          = 30 * time.Second
+	maxConsecutivePokes   = 3 // kill+respawn after this many pokes without activity change
 )
 
 // watchPersistentAgent monitors an opencode TUI session agent and keeps it alive.
@@ -37,6 +38,8 @@ func (h *Handler) watchPersistentAgent(section, project string, sessionID string
 	defer ticker.Stop()
 
 	lastPoke := time.Time{}
+	var consecutivePokes int
+	var lastActivity int64
 
 	for range ticker.C {
 		// Refresh session ID from scratchpad — recovery may have discovered the real ID
@@ -84,7 +87,26 @@ func (h *Handler) watchPersistentAgent(section, project string, sessionID string
 
 	idle := time.Since(time.UnixMilli(lastMsg))
 	if idle > idlePokeThreshold && time.Since(lastPoke) > idlePokeThreshold {
-		log.Printf("[watchdog] agent %s idle for %v — sending poke", section, idle.Round(time.Second))
+		// Check if activity changed since last poke
+		if lastActivity > 0 && lastMsg == lastActivity {
+			consecutivePokes++
+			log.Printf("[watchdog] agent %s (status=%s) unresponsive — poke %d/%d", section, agent.Status, consecutivePokes, maxConsecutivePokes)
+		} else {
+			consecutivePokes = 0
+		}
+		lastActivity = lastMsg
+
+		if consecutivePokes >= maxConsecutivePokes {
+			log.Printf("[watchdog] agent %s (status=%s) unresponsive after %d pokes — kill+respawn", section, agent.Status, consecutivePokes)
+			h.handleStopAgent(map[string]any{"to": section, "project": project})
+			time.Sleep(3 * time.Second)
+			h.respawnPersistentAgent(section, project, sessionID)
+			consecutivePokes = 0
+			lastPoke = time.Time{}
+			continue
+		}
+
+		log.Printf("[watchdog] agent %s (status=%s) idle for %v — sending poke", section, agent.Status, idle.Round(time.Second))
 		h.handleRelayAgent(map[string]any{
 			"to":      section,
 			"content": fmt.Sprintf("Ich überprüfe, ob noch offene Punkte aus dieser Session zu erledigen sind.\nFalls ja, mache ich das. Falls nicht, lese ich meine AGENT.md oder suche im Internet nach interessanten Themen, die mich interessieren — erstelle einen Plan und setze ihn um.\n(idle %v)", idle.Round(time.Second)),
