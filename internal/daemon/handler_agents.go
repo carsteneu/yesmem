@@ -805,7 +805,13 @@ func (h *Handler) recoverPersistentAgents() {
 	}
 	// Nur resume wenn eine gültige Session-ID existiert — sonst frisch starten
 	if sessionID != "" {
-		spawnParams["resume_session_id"] = sessionID
+		if sessionExistsInOpencodeDB(sessionID) {
+			spawnParams["resume_session_id"] = sessionID
+			log.Printf("[recovery] resuming session %s", sessionID)
+		} else {
+			log.Printf("[recovery] session %s not found in opencode.db — spawning fresh", sessionID)
+			sessionID = ""
+		}
 	}
 	resp := h.handleSpawnAgent(spawnParams)
 	if resp.Error != "" {
@@ -813,7 +819,7 @@ func (h *Handler) recoverPersistentAgents() {
 		return
 	}
 
-	// Wenn kein Session-ID im Scratchpad war: discover die echte Session nach dem Spawn
+	// Wenn kein Resume: discover die echte Session nach dem Spawn und in Scratchpad schreiben
 	if sessionID == "" {
 		time.Sleep(6 * time.Second)
 		if realID := discoverLatestOpencodeSession("memyselfandi"); realID != "" {
