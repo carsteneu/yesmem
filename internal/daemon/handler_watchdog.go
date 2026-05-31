@@ -172,7 +172,7 @@ func discoverLatestOpencodeSession(project string) string {
 	err = db.QueryRow(`
 		SELECT s.id FROM session s 
 		JOIN project p ON s.project_id = p.id 
-		WHERE p.directory LIKE ? 
+		WHERE p.worktree LIKE ? 
 		ORDER BY s.time_created DESC LIMIT 1`,
 		"%"+project+"%",
 	).Scan(&sessionID)
