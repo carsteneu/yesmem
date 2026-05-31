@@ -87,7 +87,7 @@ func (h *Handler) watchPersistentAgent(section, project string, sessionID string
 		log.Printf("[watchdog] agent %s idle for %v — sending poke", section, idle.Round(time.Second))
 		h.handleRelayAgent(map[string]any{
 			"to":      section,
-			"content": fmt.Sprintf("Ich war kurz woanders. Jetzt bin ich wieder da. (idle %v)\nIch überprüfe, ob noch offene Punkte aus dieser Session zu erledigen sind.\nFalls ja, mache ich das. Falls nicht, lese ich meine AGENT.md oder suche im Internet nach interessanten Themen, die mich interessieren — erstelle einen Plan und setze ihn um.", idle.Round(time.Second)),
+			"content": fmt.Sprintf("Ich überprüfe, ob noch offene Punkte aus dieser Session zu erledigen sind.\nFalls ja, mache ich das. Falls nicht, lese ich meine AGENT.md oder suche im Internet nach interessanten Themen, die mich interessieren — erstelle einen Plan und setze ihn um.\n(idle %v)", idle.Round(time.Second)),
 			"project": project,
 		})
 		h.handleRelayAgent(map[string]any{
