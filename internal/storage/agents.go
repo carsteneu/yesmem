@@ -243,7 +243,7 @@ func (s *Store) AgentDeleteOrphaned() (int64, error) {
 // Returns (reconnected, deleted) counts.
 func (s *Store) AgentRecoverOrphaned(isAlive func(pid int) bool) (int, int, error) {
 	rows, err := s.readerDB().Query(
-		`SELECT id, pid, status FROM agents WHERE status IN ('running', 'pending', 'spawning')`)
+		`SELECT id, pid, status FROM agents WHERE status IN ('running', 'pending', 'spawning', 'frozen')`)
 	if err != nil {
 		return 0, 0, err
 	}
