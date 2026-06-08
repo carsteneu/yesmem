@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add code style matching and outcome reporting rules to all three SYSTEM.md copies
+- Add opencode agent backend with PTY prompt injection
+
+## [2.1.6] - 2026-05-29
+
+### Added
+
 - Add attribution field, fact category, and flavor ground
 - Inject associative context in OpenAI path via TimestampStore freeze-replay
 - Add backend field to scheduled jobs
@@ -23,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Use --window instead of --wait for gnome-terminal
+- Opencode TUI spawn — thanks @memyselfandidev (PR #53)
+- Load Backend field when restoring scheduled jobs from DB
+- Update tests for Chat Completions routing
 - Review corrections — error handling and dead param cleanup
 - Review corrections — flavor guard and embedding SQL
 - Add missing normalizeOpenAIResponsesURL wrapper
@@ -2688,7 +2699,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add comprehensive tests for generator and storage
 
 
-[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.1.5...HEAD
+[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.1.6...HEAD
+[2.1.6]: https://github.com/carsteneu/yesmem/compare/v2.1.5...v2.1.6
 [2.1.5]: https://github.com/carsteneu/yesmem/compare/v2.1.4...v2.1.5
 [2.1.4]: https://github.com/carsteneu/yesmem/compare/v2.1.3...v2.1.4
 [2.1.3]: https://github.com/carsteneu/yesmem/compare/v2.1.2...v2.1.3
