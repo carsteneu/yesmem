@@ -74,27 +74,34 @@ func (h *Handler) getCodeGraph(project string, params ...map[string]any) *codesc
 }
 
 // resolveProjectDir returns the filesystem path for a project name.
-// Prefers explicit project_dir or _cwd from params (worktree-aware) over stored path.
+// Prefers explicit project_dir, then the project parameter, then _cwd from params (worktree-aware).
 // If project is already a valid absolute directory path, returns it directly.
 func (h *Handler) resolveProjectDir(project string, params ...map[string]any) string {
 	if len(params) > 0 && params[0] != nil {
 		if dir, _ := params[0]["project_dir"].(string); dir != "" {
 			return dir
 		}
+	}
+	// Project parameter takes priority over _cwd — the agent explicitly
+	// requested this project (e.g. cross-project code intelligence).
+	if project != "" {
+		if len(project) > 0 && project[0] == '/' {
+			if info, err := os.Stat(project); err == nil && info.IsDir() {
+				return project
+			}
+		}
+		if resolved := h.store.ResolveProjectPath(project); resolved != "" {
+			return resolved
+		}
+	}
+	// _cwd as fallback: the session's working directory (worktree-aware).
+	// Used when no explicit project is requested — the common case.
+	if len(params) > 0 && params[0] != nil {
 		if cwd, _ := params[0]["_cwd"].(string); cwd != "" {
 			return cwd
 		}
 	}
-	if project == "" {
-		return ""
-	}
-	// If project looks like an absolute path and exists, use it directly.
-	if len(project) > 0 && project[0] == '/' {
-		if info, err := os.Stat(project); err == nil && info.IsDir() {
-			return project
-		}
-	}
-	return h.store.ResolveProjectPath(project)
+	return ""
 }
 
 // handleSearchCodeIndex searches the code graph for symbols by pattern.

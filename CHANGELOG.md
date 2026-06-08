@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add code style matching and outcome reporting rules to all three SYSTEM.md copies
 - Add opencode agent backend with PTY prompt injection
 
+### Fixed
+
+- ResolveProjectDir — check project parameter before _cwd
+
 ## [2.1.6] - 2026-05-29
 
 ### Added
