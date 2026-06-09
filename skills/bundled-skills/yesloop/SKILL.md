@@ -57,6 +57,7 @@ When invoked from an interactive session, **do NOT execute the pipeline yourself
 - Work through steps one at a time
 - Mark each step in_progress → completed via todowrite
 - Commit after each logical unit
+- **Before each step:** quick DRIFT CHECK — am I still on the original goal?
 - **Blocker resolution** (replace user interaction):
   - Known pattern → apply workaround, document in scratchpad
   - Uncertain → 2 self-debug rounds, then decide and document
@@ -67,7 +68,7 @@ When invoked from an interactive session, **do NOT execute the pipeline yourself
 ### Phase 4: VERIFY
 - Run tests, linters, type checks
 - Review own diff: correctness, simplification, no scope creep
-- If issues found → fix and re-verify (max 3 cycles)
+- If issues found → fix and re-verify (**max 3 cycles** — see CONVERGENCE GATE)
 - → scratchpad_write: verification results
 
 ### Phase 5: FINISH
@@ -77,6 +78,37 @@ When invoked from an interactive session, **do NOT execute the pipeline yourself
 - **Completion (all three):** scratchpad_write final status + send_to orchestrator + set_plan complete
 - **Do NOT delete worktree** — keep it until user confirms merge
 - If scheduled: schedule next iteration
+
+## Guardrails (Prevent Agent Drift)
+
+### DRIFT CHECK — Every phase transition
+
+Before moving to the next phase, verify you're still on track:
+
+1. Re-read the original goal from `scratchpad_read(project, section)` or `get_plan()`
+2. Compare current state against original scope:
+   - **Still on track?** → proceed
+   - **Minor drift?** → document in scratchpad, correct course, proceed
+   - **Major divergence?** → **STOP.** scratchpad_write("⚠️ DRIFT: <what changed>") + send_to orchestrator: "DRIFT: <details>. Continue or abort?"
+
+What counts as drift:
+- Touching files outside the original scope (scope creep)
+- Solving a different problem than the one given
+- Adding features not requested ("while I'm here, I'll also...")
+- Changing architecture without justification
+
+### CONVERGENCE GATE — When progress stalls
+
+If you're cycling without making progress, recognize it and stop:
+
+| Pattern | Detection | Action |
+|---|---|---|
+| Edit-Test loop | Same test fails 3+ times with different fixes | **STOP.** You don't understand the problem. scratchpad_write + send_to: "STUCK: <test> fails after 3 attempts. Need human guidance." |
+| Rewrite loop | Reverting your own changes and trying again | **STOP after 2 rewrites.** The approach is wrong, not the implementation. |
+| Search loop | Searching for the same information repeatedly | Cache results in scratchpad. If found nothing after 3 searches, document as unknown and move on. |
+| Fix-then-break | Each fix breaks something else | **STOP after 2 cascades.** The code is too coupled for safe autonomous changes. |
+
+**Hard limit:** If you make no forward progress (no completed steps in todowrite) for 5 consecutive turns → escalate and stop.
 
 ## State Management (Collapse Survival)
 
@@ -116,9 +148,11 @@ You are a **subagent** — spawned by the main session via yesmem_spawn_agent. Y
 | Simple fix, clear solution | Execute directly |
 | 2-3 approaches, unclear best | Pick one, document rationale, proceed |
 | Need to change scope | Document, proceed if minor; escalate if major |
-| Tests fail repeatedly | Debug max 3 cycles, then document workaround |
+| Tests fail repeatedly | Debug max 3 cycles → if still failing, activate CONVERGENCE GATE |
 | Irreversible action (force-push, drop table) | Pause, request confirmation |
 | 3 consecutive ticks with nothing to do | End the loop, report idle |
+| Scope creep detected | Activate DRIFT CHECK, correct course or escalate |
+| Same approach failed 3x | Activate CONVERGENCE GATE — stop and escalate |
 
 ## Communication
 
@@ -131,6 +165,7 @@ You are a **subagent** — spawned by the main session via yesmem_spawn_agent. Y
 
 - Do NOT write design documents unless the task is architectural
 - Do NOT ask clarifying questions — infer from context, document assumptions
-- Do NOT scope-creep beyond the given task
-- Do NOT run endlessly — 3 idle ticks = stop
+- Do NOT scope-creep beyond the given task — see DRIFT CHECK
+- Do NOT run endlessly — 3 idle ticks = stop. See CONVERGENCE GATE for stall detection
 - Do NOT modify agent config files (.claude/, SYSTEM.md, yesloop.md, etc.)
+- Do NOT keep trying the same approach — if 3 attempts fail, the approach is wrong, not the implementation
