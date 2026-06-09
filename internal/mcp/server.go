@@ -735,7 +735,10 @@ func (s *Server) proxyCallFormat(method string, formatter func(json.RawMessage) 
 			return mcplib.NewToolResultText(fmt.Sprintf("Error: %v", err)), nil
 		}
 
-		return mcplib.NewToolResultText(formatter(result)), nil
+		if formatter != nil {
+			return mcplib.NewToolResultText(formatter(result)), nil
+		}
+		return mcplib.NewToolResultText(string(result)), nil
 	}
 }
 
