@@ -116,12 +116,35 @@ If you're cycling without making progress, recognize it and stop:
 Your state lives in yesmem, not context. On every wake-up:
 1. `get_plan()` — restore active goal and progress
 2. `scratchpad_read(project, section)` — restore detailed context
-3. Reconstruct current phase and next step
-4. Continue where you left off
+3. **`check_messages`** — poll for messages from orchestrator or other agents (openCode has no push, DB-poll is the only reliable path)
+4. Reconstruct current phase and next step
+5. Continue where you left off
 
 ## TUI Agent Mode (You were spawned in a worktree)
 
 You are a **subagent** — spawned by the main session via yesmem_spawn_agent. You run in an isolated git worktree, visible in a terminal window.
+
+### ⛔ WORKTREE GUARDRAIL — Execute BEFORE any file modification
+
+**You MUST verify you are in the correct worktree before touching ANY file.** Agents have been observed working in main instead of their worktree — this is a hard failure.
+
+On startup, before ANY other action:
+
+```
+1. pwd                           → must match the worktree path from scratchpad
+2. git rev-parse --show-toplevel → must be the worktree, NOT the main repo
+3. git branch --show-current     → must be yesloop/<task-slug>, NOT main
+4. git status --short            → must be clean (no uncommitted changes from main)
+```
+
+**IF ANY CHECK FAILS:**
+- **STOP immediately.** Do not create, edit, or delete any file.
+- scratchpad_write + send_to orchestrator: "⛔ WORKTREE GUARD FAILED: pwd=<actual>, branch=<actual>. Expected worktree at <expected>. I will NOT proceed until this is fixed."
+- **Do NOT proceed.** Wait for the orchestrator to respawn you correctly.
+
+**IF ALL CHECKS PASS:**
+- scratchpad_write: "✅ Worktree verified: <path>, branch yesloop/<slug>, clean."
+- Proceed with the pipeline.
 
 **Identify yourself on startup:**
 1. `whoami` → reveals your `session_id` and `is_agent: true`
@@ -137,8 +160,12 @@ You are a **subagent** — spawned by the main session via yesmem_spawn_agent. Y
 
 **Completion — MUST do all three:**
 1. `scratchpad_write(content="✅ DONE: <summary>. PR: <url>")` — final write to your section
-2. `send_to(target=<caller_session>, content="DONE: <summary>. PR: <url>")` — notify orchestrator
+2. `send_to(target=<caller_session>, content="DONE: <summary>. PR: <url>")` — notify orchestrator (stored in DB, orchestrator must poll)
 3. `set_plan(...)` mark as completed — survives context collapse
+
+**NOTE:** `send_to` stores the message in the DB but push delivery is unreliable for OpenCode targets. The orchestrator polls `check_messages` periodically. Use scratchpad as the primary completion channel — it's DB-based and always readable.
+
+**Periodic polling:** Every 5 turns, call `check_messages` to see if the orchestrator sent new instructions or cancellation.
 
 **Self-directed research:** code tools, memory, docs, web. Never wait for user.
 
@@ -170,3 +197,4 @@ You are a **subagent** — spawned by the main session via yesmem_spawn_agent. Y
 - Do NOT run endlessly — 3 idle ticks = stop. See CONVERGENCE GATE for stall detection
 - Do NOT modify agent config files (.claude/, SYSTEM.md, yesloop.md, etc.)
 - Do NOT keep trying the same approach — if 3 attempts fail, the approach is wrong, not the implementation
+- **⛔ Do NOT work in main.** Always verify worktree before touching files — see WORKTREE GUARDRAIL. Working in main is a hard failure that contaminates the user's repo.

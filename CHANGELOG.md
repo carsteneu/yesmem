@@ -9,10 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Yesloop — worktree guardrail (⛔ prevent working in main)
 - Yesloop — drift detection and convergence gate guardrails
+
+### Changed
+
+- Update CHANGELOG.md
+- Add untracked yesdocs files
 
 ### Fixed
 
+- Yesloop — remove xdotool reference (doesn't work)
+- Yesloop — add check_messages polling for inter-agent comm
 - Simplify PTY injection — uniform 15s sleep before inject
 - Increase PTY injection delays for opencode TUI
 
