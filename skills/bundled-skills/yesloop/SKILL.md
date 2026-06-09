@@ -20,7 +20,8 @@ When invoked from an interactive session, **do NOT execute the pipeline yourself
    - Easy cleanup: delete worktree + branch if abandoned
 2. Write the task to scratchpad with worktree path: `scratchpad_write(project="<project>", section="yesloop-<task-slug>", content="Worktree: <path>\nTask: <description>\n\nUse the yesloop autonomous pipeline (5 phases). Report to scratchpad.")`
 3. Spawn TUI agent: `yesmem_spawn_agent(project="<project>", section="yesloop-<task-slug>", backend="opencode", work_dir="<worktree-path>")`
-4. Wait 8s for PTY injection, then relay backup: `yesmem_relay_agent(to="<agent-id>", content="Read scratchpad and begin yesloop pipeline.")`
+4. Wait 15s for opencode TUI to load + PTY injection to deliver the startup prompt
+5. **Relay kick (backup):** `yesmem_relay_agent(to="<agent-id>", content="Read scratchpad and begin yesloop pipeline.")` — backup if PTY is slow
 5. Confirm: "Agent spawned in worktree — sichtbar im Terminal."
 
 **Only run inline if:** user explicitly says `--inline` or task is < 2 min trivial.

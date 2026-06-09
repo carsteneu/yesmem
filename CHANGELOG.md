@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Yesloop — drift detection and convergence gate guardrails
 
+### Fixed
+
+- Simplify PTY injection — uniform 15s sleep before inject
+- Increase PTY injection delays for opencode TUI
+
 ## [2.1.8] - 2026-06-09
 
 ### Added
