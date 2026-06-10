@@ -311,6 +311,8 @@ type LLMConfig struct {
 	DailyBudgetExtractUSD float64 `yaml:"daily_budget_extract_usd"` // extraction (Haiku/Sonnet), 0 = unlimited
 	DailyBudgetQualityUSD float64 `yaml:"daily_budget_quality_usd"` // narratives/persona (Opus), 0 = unlimited
 	MaxBudgetPerCallUSD   float64 `yaml:"max_budget_per_call_usd"`  // per-call safety net (CLI: --max-budget-usd), 0 = no limit
+	OpenAIBaseURL         string  `yaml:"openai_base_url"`          // override for llm_complete RPC (e.g. proxy), empty = use api.openai_base_url
+	CompleteProvider      string  `yaml:"complete_provider"`        // override provider for llm_complete RPC (e.g. opencode), empty = use provider
 }
 
 // EvolutionConfig controls knowledge evolution behavior.

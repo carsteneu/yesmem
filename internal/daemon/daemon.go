@@ -739,8 +739,12 @@ func Run(cfg Config) error {
 			// regardless of extraction mode.
 			handler.QualityClient = qualityClient
 			handler.LLMProvider = ac.LLM.Provider
+			handler.LLMCompleteProvider = ac.LLM.CompleteProvider
 			handler.LLMAPIKey = apiKey
 			handler.LLMBaseURL = baseURL
+			if ac.LLM.OpenAIBaseURL != "" {
+				handler.LLMBaseURL = ac.LLM.OpenAIBaseURL
+			}
 
 			extMu.Lock()
 			extractor = ext

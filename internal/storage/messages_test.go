@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -239,5 +240,108 @@ func TestSearchMessagesDeepCtx_NarrowWindowSparseTextDoesNotCollapse(t *testing.
 	}
 	if hits[0].MessageType != "text" {
 		t.Fatalf("expected text hit, got message_type=%q", hits[0].MessageType)
+	}
+}
+
+func TestSearchMessagesDeepCtx_DateBoundsBypassRecencyPath(t *testing.T) {
+	s := mustOpen(t)
+	sess := &models.Session{
+		ID:        "test-recency-bypass",
+		Project:   "/proj",
+		StartedAt: time.Date(2026, 6, 8, 0, 0, 0, 0, time.UTC),
+		IndexedAt: time.Now().UTC(),
+	}
+	if err := s.UpsertSession(sess); err != nil {
+		t.Fatalf("upsert session: %v", err)
+	}
+	msgs := make([]models.Message, 0, deepSearchGlobalBM25Threshold+2)
+	msgs = append(msgs, models.Message{
+		SessionID:   sess.ID,
+		Role:        "user",
+		MessageType: "text",
+		Content:     "needle_window april original",
+		Timestamp:   time.Date(2026, 4, 15, 10, 0, 0, 0, time.UTC),
+		Sequence:    1,
+	})
+	for i := 0; i < deepSearchGlobalBM25Threshold+1; i++ {
+		msgs = append(msgs, models.Message{
+			SessionID:   sess.ID,
+			Role:        "user",
+			MessageType: "text",
+			Content:     "needle_window june filler",
+			Timestamp:   time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC),
+			Sequence:    i + 2,
+		})
+	}
+	if err := s.InsertMessages(msgs); err != nil {
+		t.Fatalf("insert messages: %v", err)
+	}
+
+	hits, err := s.SearchMessagesDeepCtx("needle_window", false, false, "2026-04-01", "2026-05-01", 10)
+	if err != nil {
+		t.Fatalf("deep search: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("expected 1 hit in April window, got %d", len(hits))
+	}
+	if !strings.HasPrefix(hits[0].Timestamp, "2026-04") {
+		t.Fatalf("expected April hit, got timestamp %q", hits[0].Timestamp)
+	}
+}
+
+func TestSearchMessagesDeepCtx_EmptyWindowReturnsNoHits(t *testing.T) {
+	s := mustOpen(t)
+	seedSearchMessages(t, s)
+
+	hits, err := s.SearchMessagesDeepCtx("needle_xyz", false, false, "2027-01-01", "2027-02-01", 10)
+	if err != nil {
+		t.Fatalf("deep search: %v", err)
+	}
+	if len(hits) != 0 {
+		t.Fatalf("expected no hits in empty window, got %d", len(hits))
+	}
+}
+
+func TestSearchMessagesDeepCtx_BackfilledIDsStayExact(t *testing.T) {
+	s := mustOpen(t)
+	sess := &models.Session{
+		ID:        "test-backfill-exact",
+		Project:   "/proj",
+		StartedAt: time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC),
+		IndexedAt: time.Now().UTC(),
+	}
+	if err := s.UpsertSession(sess); err != nil {
+		t.Fatalf("upsert session: %v", err)
+	}
+	mk := func(seq int, ts time.Time) models.Message {
+		return models.Message{
+			SessionID:   sess.ID,
+			Role:        "user",
+			MessageType: "text",
+			Content:     "needle_backfill entry",
+			Timestamp:   ts,
+			Sequence:    seq,
+		}
+	}
+	msgs := []models.Message{
+		mk(1, time.Date(2026, 4, 10, 10, 0, 0, 0, time.UTC)),
+		mk(2, time.Date(2026, 6, 5, 10, 0, 0, 0, time.UTC)),
+		mk(3, time.Date(2026, 4, 20, 10, 0, 0, 0, time.UTC)),
+	}
+	if err := s.InsertMessages(msgs); err != nil {
+		t.Fatalf("insert messages: %v", err)
+	}
+
+	hits, err := s.SearchMessagesDeepCtx("needle_backfill", false, false, "2026-04-01", "2026-05-01", 10)
+	if err != nil {
+		t.Fatalf("deep search: %v", err)
+	}
+	if len(hits) != 2 {
+		t.Fatalf("expected 2 April hits, got %d", len(hits))
+	}
+	for _, h := range hits {
+		if !strings.HasPrefix(h.Timestamp, "2026-04") {
+			t.Fatalf("expected only April hits, got timestamp %q", h.Timestamp)
+		}
 	}
 }

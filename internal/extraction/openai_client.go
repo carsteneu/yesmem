@@ -255,6 +255,9 @@ func (c *OpenAIClient) doChatRequest(system, userMessage string, schema map[stri
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	if o.sessionID != "" {
+		req.Header.Set("x-opencode-session", o.sessionID)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

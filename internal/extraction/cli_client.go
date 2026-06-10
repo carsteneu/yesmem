@@ -179,23 +179,17 @@ func (c *CLIClient) runStdin(ctx context.Context, system, userMsg string, schema
 	cmdName := c.binary
 	cmdArgs := c.stdinArgs(o.sessionID)
 
-	cmd := exec.CommandContext(ctx, cmdName, cmdArgs...)
-	cmd.Env = filterEnv(os.Environ(), "ANTHROPIC_BASE_URL", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
-	cmd.Env = append(cmd.Env, "TERM=dumb", "NO_COLOR=1", "YESMEM_DAEMON_CHILD=1")
-	// Suppress MCP + route directly to upstream API in opencode subprocess.
-	// Without this, opencode inherits MCP tools from ~/.config/opencode/opencode.json
-	// AND routes through the yesmem proxy (all provider baseURLs point to localhost:9099).
-	// The proxy injects CUSTOM-SYSTEM (SYSTEM.md + skills) which advertises yesmem MCP
-	// tools to the LLM. The LLM then makes tool calls instead of producing text →
-	// parseOpencodeOutput sees zero text events → "opencode emitted no text events".
-	//
-	// Fix: clear MCP servers AND redirect the deepseek provider to the real API endpoint.
-	// opencode reads its API key from ~/.local/share/opencode/auth.json (needs HOME set).
-	// The daemon process inherits HOME from systemd, so auth.json is accessible.
+	baseEnv := filterEnv(os.Environ(), "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "OPENAI_API_KEY")
+	baseEnv = append(baseEnv, "TERM=dumb", "NO_COLOR=1", "YESMEM_DAEMON_CHILD=1")
 	if c.sourceAgent == models.SourceAgentOpencode {
-		cmd.Env = append(cmd.Env, `OPENCODE_CONFIG_CONTENT={"mcp":{},"provider":{"deepseek":{"options":{"baseURL":"https://api.deepseek.com/v1"}}}}`)
+		baseEnv = append(baseEnv,
+			"OPENCODE_DISABLE_DEFAULT_PLUGINS=true",
+			`OPENCODE_CONFIG_CONTENT={"mcp":{},"provider":{"deepseek":{"options":{"baseURL":"http://localhost:9099/v1"}}}}`,
+		)
 	}
 
+	cmd := exec.CommandContext(ctx, cmdName, cmdArgs...)
+	cmd.Env = baseEnv
 	// Use StdinPipe and explicitly close after a short delay to ensure
 	// the child process has time to read the full prompt before EOF.
 	stdinPipe, err := cmd.StdinPipe()
@@ -211,13 +205,10 @@ func (c *CLIClient) runStdin(ctx context.Context, system, userMsg string, schema
 		return "", fmt.Errorf("%s start: %w", c.sourceAgent, err)
 	}
 
-	// Write the full prompt to stdin.
+	// Write the full prompt to stdin, then close immediately (like shell pipe).
 	if _, err := stdinPipe.Write([]byte(prompt)); err != nil {
-		log.Printf("[opencode-write] stdin write error: %v", err)
+		return "", fmt.Errorf("stdin write: %w", err)
 	}
-	// Keep stdin open for a short grace period so opencode can finish reading,
-	// then close it to signal EOF.
-	time.Sleep(100 * time.Millisecond)
 	stdinPipe.Close()
 
 	if err := cmd.Wait(); err != nil {
@@ -313,7 +304,6 @@ func (c *CLIClient) stdinArgs(sessionID string) []string {
 		if sessionID != "" {
 			args = append(args, "--session", sessionID)
 		}
-		args = append(args, "--pure")
 		return args
 	default:
 		return []string{"exec"}

@@ -87,7 +87,8 @@ type Handler struct {
 	QualityClient extraction.LLMClient
 
 	// LLM provider config for on-the-fly client creation (llm_complete RPC)
-	LLMProvider string // e.g. "opencode", "api", "openai"
+	LLMProvider         string // e.g. "opencode", "api", "openai"
+	LLMCompleteProvider string // override for handleLLMComplete (empty = use LLMProvider)
 	LLMAPIKey   string
 	LLMBaseURL  string
 
@@ -620,10 +621,16 @@ func (h *Handler) handleLLMComplete(params map[string]any) Response {
 	if client == nil {
 		client = h.SummarizeClient
 	}
-	if model != "" && client != nil && client.Model() != model && h.LLMProvider != "" {
-		mc, err := extraction.NewLLMClient(h.LLMProvider, h.LLMAPIKey, model, "", h.LLMBaseURL)
-		if err == nil && mc != nil {
-			client = mc
+	provider := h.LLMProvider
+	if h.LLMCompleteProvider != "" {
+		provider = h.LLMCompleteProvider
+	}
+	if model != "" && provider != "" {
+		if client == nil || client.Model() != model || client.Name() != provider {
+			mc, err := extraction.NewLLMClient(provider, h.LLMAPIKey, model, "", h.LLMBaseURL)
+			if err == nil && mc != nil {
+				client = mc
+			}
 		}
 	}
 	if client == nil {
@@ -633,7 +640,7 @@ func (h *Handler) handleLLMComplete(params map[string]any) Response {
 	// Track opencode session creation: before the call, record the latest
 	// session timestamp. After the call, check for a new one.
 	var beforeTS int64
-	if sessionID == "" && h.LLMProvider == "opencode" {
+	if sessionID == "" && provider == "opencode" {
 		beforeTS = opencodeLatestSessionTS()
 	}
 
@@ -642,11 +649,18 @@ func (h *Handler) handleLLMComplete(params map[string]any) Response {
 	// The proxy injects CUSTOM-SYSTEM which advertises yesmem MCP tools;
 	// without this guard the LLM uses tools → zero text events.
 	injectedSystem := system
-	if injectedSystem == "" && h.LLMProvider == "opencode" {
+	if provider == "opencode" && injectedSystem == "" {
 		injectedSystem = "You are a plain text completion API with no tools. You cannot call any functions. Respond with text directly — never use a tool."
 	}
 
 	var opts []extraction.CallOption
+	// Generate a proxy session ID for openai_compatible calls
+	// so the proxy injects SYSTEM.md and MCP context.
+	if provider == "openai_compatible" || provider == "openai" {
+		if sessionID == "" {
+			sessionID = randomSessionID()
+		}
+	}
 	if sessionID != "" {
 		opts = append(opts, extraction.WithSession(sessionID))
 	}
@@ -659,7 +673,7 @@ func (h *Handler) handleLLMComplete(params map[string]any) Response {
 
 	// Return the opencode session ID on every call so callers
 	// can always update their stored session for resume.
-	if h.LLMProvider == "opencode" {
+	if provider == "opencode" {
 		if sessionID != "" {
 			resp["session_id"] = sessionID
 		} else {
@@ -718,6 +732,10 @@ func opencodeSessionAfter(afterTS int64) string {
 		return ""
 	}
 	return id
+}
+
+func randomSessionID() string {
+	return fmt.Sprintf("yesmem-%d", time.Now().UnixNano())
 }
 
 // helpers

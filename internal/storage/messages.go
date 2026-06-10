@@ -225,7 +225,9 @@ const deepSearchGlobalBM25Threshold = 5000
 //
 // Dispatches between two ranking strategies based on a cheap match-count precheck:
 // small match-set → global BM25 (best relevance, fits in deadline); large match-set
-// → recency-biased subselect (BM25 only over K most recent matches).
+// → recency-biased subselect (BM25 only over K most recent matches). With an explicit
+// time window the global path is always used: the recency subselect pre-filters to the
+// newest K matches before the date bounds apply, which empties results for old windows.
 func (s *Store) SearchMessagesDeepCtx(query string, includeThinking, includeCommands bool, since, before string, limit int) ([]MessageSearchResult, error) {
 	if limit <= 0 {
 		limit = 10
@@ -243,7 +245,7 @@ func (s *Store) SearchMessagesDeepCtx(query string, includeThinking, includeComm
 		return nil, fmt.Errorf("deep search count: %w", err)
 	}
 
-	if matchCount <= deepSearchGlobalBM25Threshold {
+	if matchCount <= deepSearchGlobalBM25Threshold || since != "" || before != "" {
 		return s.searchMessagesDeepGlobal(ftsQuery, includeThinking, includeCommands, since, before, limit)
 	}
 	return s.searchMessagesDeepRecency(ftsQuery, includeThinking, includeCommands, since, before, limit)
@@ -254,6 +256,18 @@ func (s *Store) searchMessagesDeepGlobal(ftsQuery string, includeThinking, inclu
 	placeholders := strings.Repeat("?,", len(allowed))
 	placeholders = placeholders[:len(placeholders)-1]
 
+	var idLo, idHi int64
+	if since != "" || before != "" {
+		lo, hi, err := s.messageIDBoundsForWindow(since, before)
+		if err != nil {
+			return nil, err
+		}
+		if lo == nil {
+			return nil, nil
+		}
+		idLo, idHi = *lo, *hi
+	}
+
 	sql := `
 		SELECT m.id, m.session_id, COALESCE(m.source_agent, 'claude'), m.message_type, m.timestamp, COALESCE(m.sequence, 0), bm25(messages_fts) as rank
 		FROM messages_fts
@@ -263,6 +277,10 @@ func (s *Store) searchMessagesDeepGlobal(ftsQuery string, includeThinking, inclu
 	args := []any{ftsQuery}
 	for _, t := range allowed {
 		args = append(args, t)
+	}
+	if since != "" || before != "" {
+		sql += ` AND messages_fts.rowid BETWEEN ? AND ?`
+		args = append(args, idLo, idHi)
 	}
 	if since != "" {
 		sql += ` AND m.timestamp >= ?`
@@ -276,6 +294,32 @@ func (s *Store) searchMessagesDeepGlobal(ftsQuery string, includeThinking, inclu
 	args = append(args, limit*20)
 
 	return s.runDeepSearchScan(sql, args, limit)
+}
+
+// messageIDBoundsForWindow returns the smallest and largest message id whose
+// timestamp falls inside the window (nil if the window is empty). The bounds only
+// accelerate the FTS scan: backfilled imports broke strict id/time ordering for
+// pre-April-2026 data, so the range is a superset of the window and the timestamp
+// predicates must stay in the query as the source of truth.
+func (s *Store) messageIDBoundsForWindow(since, before string) (*int64, *int64, error) {
+	q := `SELECT min(id), max(id) FROM messages`
+	var conds []string
+	var args []any
+	if since != "" {
+		conds = append(conds, `timestamp >= ?`)
+		args = append(args, since)
+	}
+	if before != "" {
+		conds = append(conds, `timestamp < ?`)
+		args = append(args, before)
+	}
+	q += ` WHERE ` + strings.Join(conds, ` AND `)
+
+	var lo, hi *int64
+	if err := s.messagesReaderDB().QueryRow(q, args...).Scan(&lo, &hi); err != nil {
+		return nil, nil, fmt.Errorf("message id bounds: %w", err)
+	}
+	return lo, hi, nil
 }
 
 func (s *Store) searchMessagesDeepRecency(ftsQuery string, includeThinking, includeCommands bool, since, before string, limit int) ([]MessageSearchResult, error) {
