@@ -1239,6 +1239,8 @@ agents:
   # Options: ghostty, kitty, gnome-terminal, alacritty, wezterm, xterm
   # Empty = auto-detect (uses x-terminal-emulator fallback)
   terminal: %s
+  # Default backend for spawned agents: claude or opencode
+  default_backend: claude
 
   # Terminal for showing yesmem-agents session output (viewer).
   # Falls back to terminal if empty.

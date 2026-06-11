@@ -9,20 +9,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Config option agents.default_backend replaces PATH-based default
+- Hybrid_search date pre-filtering for vector and AQ lanes
+
+## [2.1.16] - 2026-06-10
+
+### Changed
+
+- Remove debug logging, clean up
+
+## [2.1.15] - 2026-06-10
+
+### Fixed
+
+- Restore OPENCODE_DISABLE_DEFAULT_PLUGINS=true — needed for recipe
+
+## [2.1.14] - 2026-06-10
+
+### Fixed
+
+- Remove OPENCODE_DISABLE_DEFAULT_PLUGINS — MCP disabled is enough
+
+## [2.1.13] - 2026-06-10
+
+### Fixed
+
+- Proxy routing + remove NO TOOLS prefix that conflicted with SYSTEM.md
+
+## [2.1.12] - 2026-06-10
+
+### Fixed
+
+- Route opencode direct to DeepSeek API, bypass proxy injection
+
+## [2.1.11] - 2026-06-10
+
+### Fixed
+
+- FilterEnv ANTHROPIC_BASE_URL instead of empty override
+
+## [2.1.10] - 2026-06-10
+
+## [2.1.9] - 2026-06-10
+
+### Added
+
+- Dual-provider arch — extraction via API, llm_complete via opencode
 - Yesloop — worktree guardrail (⛔ prevent working in main)
 - Yesloop — drift detection and convergence gate guardrails
 
 ### Changed
 
+- Modernc.org/sqlite v1.48.2 -> v1.52.0 (WAL reader-starvation suspect)
+- Gitignore .codex as file (not dir), remove it
+- Gitignore dev artifacts (codex, bun, asciinema, PACKAGE.md)
+- Update CHANGELOG.md
 - Update CHANGELOG.md
 - Add untracked yesdocs files
 
 ### Fixed
 
+- Inherit full env instead of filterEnv for opencode subprocess
+- Explicitly unset ANTHROPIC_BASE_URL in opencode subprocess env
+- Stdin close without delay + provider-aware client cache
+- Session header for openai_compatible llm_complete calls
+- Deep_search date bounds bypass recency path
+- Llm_complete via proxy — client-nil guard + LLMConfig.OpenAIBaseURL
 - Yesloop — remove xdotool reference (doesn't work)
 - Yesloop — add check_messages polling for inter-agent comm
 - Simplify PTY injection — uniform 15s sleep before inject
 - Increase PTY injection delays for opencode TUI
+
+### Performance
+
+- Deep_search date windows via rowid-bounded FTS scan
 
 ## [2.1.8] - 2026-06-09
 
@@ -2737,7 +2797,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add comprehensive tests for generator and storage
 
 
-[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.1.8...HEAD
+[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.1.16...HEAD
+[2.1.16]: https://github.com/carsteneu/yesmem/compare/v2.1.15...v2.1.16
+[2.1.15]: https://github.com/carsteneu/yesmem/compare/v2.1.14...v2.1.15
+[2.1.14]: https://github.com/carsteneu/yesmem/compare/v2.1.13...v2.1.14
+[2.1.13]: https://github.com/carsteneu/yesmem/compare/v2.1.12...v2.1.13
+[2.1.12]: https://github.com/carsteneu/yesmem/compare/v2.1.11...v2.1.12
+[2.1.11]: https://github.com/carsteneu/yesmem/compare/v2.1.10...v2.1.11
+[2.1.10]: https://github.com/carsteneu/yesmem/compare/v2.1.9...v2.1.10
+[2.1.9]: https://github.com/carsteneu/yesmem/compare/v2.1.8...v2.1.9
 [2.1.8]: https://github.com/carsteneu/yesmem/compare/v2.1.7...v2.1.8
 [2.1.7]: https://github.com/carsteneu/yesmem/compare/v2.1.6...v2.1.7
 [2.1.6]: https://github.com/carsteneu/yesmem/compare/v2.1.5...v2.1.6

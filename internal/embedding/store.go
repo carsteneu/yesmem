@@ -293,6 +293,106 @@ func (s *VectorStore) bruteForceScan(ctx context.Context, queryEmbedding []float
 	return results, nil
 }
 
+// SearchAllowed performs a brute-force cosine-similarity search restricted to a set of
+// allowed learning IDs. It searches both SQLite learnings (with embedding_vector) and
+// in-memory AQ documents. When the allowed set is empty, returns empty results.
+func (s *VectorStore) SearchAllowed(ctx context.Context, queryEmbedding []float32, nResults int, allowedIDs map[string]bool) ([]SearchResult, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if nResults <= 0 || len(allowedIDs) == 0 {
+		return nil, nil
+	}
+
+	placeholders := make([]string, 0, len(allowedIDs))
+	args := make([]any, 0, len(allowedIDs))
+	for id := range allowedIDs {
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT CAST(id AS TEXT), content, embedding_vector, COALESCE(project, ''), COALESCE(category, '')
+		 FROM learnings
+		 WHERE id IN (`+strings.Join(placeholders, ",")+`)
+		 AND embedding_vector IS NOT NULL
+		 AND superseded_by IS NULL`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("load vectors: %w", err)
+	}
+	defer rows.Close()
+
+	type scored struct {
+		id, content, project, category string
+		similarity                     float32
+	}
+	var all []scored
+
+	for rows.Next() {
+		var id, content, project, category string
+		var blob []byte
+		if err := rows.Scan(&id, &content, &blob, &project, &category); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		if !allowedIDs[id] {
+			continue
+		}
+		vec := DeserializeFloat32(blob)
+		if len(vec) != len(queryEmbedding) {
+			continue
+		}
+		sim := cosineSimilarity(queryEmbedding, vec)
+		all = append(all, scored{id: id, content: content, project: project, category: category, similarity: sim})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Also search in-memory AQ docs filtered by allowed IDs
+	for _, doc := range s.memDocs {
+		lid := doc.Metadata["learning_id"]
+		if lid == "" {
+			lid = doc.ID
+		}
+		if !allowedIDs[lid] {
+			continue
+		}
+		if len(doc.Embedding) != len(queryEmbedding) {
+			continue
+		}
+		sim := cosineSimilarity(queryEmbedding, doc.Embedding)
+		content := doc.Content
+		proj := doc.Metadata["project"]
+		cat := doc.Metadata["category"]
+		if lc, ok := doc.Metadata["learning_content"]; ok && lc != "" {
+			content = lc
+		}
+		all = append(all, scored{id: lid, content: content, project: proj, category: cat, similarity: sim})
+	}
+
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].similarity > all[j].similarity
+	})
+
+	if nResults > len(all) {
+		nResults = len(all)
+	}
+
+	results := make([]SearchResult, nResults)
+	for i := 0; i < nResults; i++ {
+		results[i] = SearchResult{
+			ID:         all[i].id,
+			Content:    all[i].content,
+			Similarity: all[i].similarity,
+			Metadata: map[string]string{
+				"category": all[i].category,
+				"project":  all[i].project,
+			},
+		}
+	}
+	return results, nil
+}
+
 // Delete removes the embedding for a learning ID.
 // Delete removes the embedding for a learning ID.
 // Also removes from IVF index if active.

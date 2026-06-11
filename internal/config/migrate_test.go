@@ -187,3 +187,32 @@ func TestMigrateConfig_IdempotentModelFeatures(t *testing.T) {
 		t.Errorf("expected 0 fields added for fully migrated config, got %d", n)
 	}
 }
+
+func TestMigrateConfig_AddsAgentsDefaultBackend(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	os.WriteFile(path, []byte("agents:\n  terminal: kitty\n\nextraction:\n  model: sonnet\n"), 0644)
+
+	if _, err := MigrateConfig(path); err != nil {
+		t.Fatal(err)
+	}
+
+	data, _ := os.ReadFile(path)
+	content := string(data)
+	if !strings.Contains(content, "default_backend: claude") {
+		t.Error("config should contain default_backend: claude after migration")
+	}
+	dbIdx := strings.Index(content, "default_backend:")
+	extIdx := strings.Index(content, "extraction:")
+	if dbIdx > extIdx {
+		t.Error("default_backend should be inside the agents: section, not after extraction:")
+	}
+
+	if _, err := MigrateConfig(path); err != nil {
+		t.Fatal(err)
+	}
+	data, _ = os.ReadFile(path)
+	if c := strings.Count(string(data), "default_backend:"); c != 1 {
+		t.Errorf("default_backend should appear exactly once after second run, got %d", c)
+	}
+}

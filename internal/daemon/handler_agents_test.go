@@ -28,6 +28,7 @@ func TestHandleSpawnAgent_RequiresSection(t *testing.T) {
 func TestHandleSpawnAgent_Success(t *testing.T) {
 	h, s := mustHandler(t)
 	h.dataDir = t.TempDir()
+	h.agentDefaultBackend = "claude" // explicit — deterministisch, kein exec.LookPath
 
 	resp := h.handleSpawnAgent(map[string]any{
 		"project": "proj",
@@ -116,6 +117,57 @@ func TestHandleSpawnAgent_BackendCodex(t *testing.T) {
 	m := resultMap(t, resp)
 	if m["backend"] != "codex" {
 		t.Errorf("backend = %q, want codex", m["backend"])
+	}
+}
+
+func TestHandleSpawnAgent_BackendFromConfig(t *testing.T) {
+	h, _ := mustHandler(t)
+	h.dataDir = t.TempDir()
+	h.agentDefaultBackend = "opencode"
+
+	resp := h.handleSpawnAgent(map[string]any{
+		"project": "proj", "section": "config-task",
+	})
+	if resp.Error != "" {
+		t.Fatalf("unexpected error: %s", resp.Error)
+	}
+	m := resultMap(t, resp)
+	if m["backend"] != "opencode" {
+		t.Errorf("backend = %q, want opencode (from config)", m["backend"])
+	}
+}
+
+func TestHandleSpawnAgent_BackendParamOverridesConfig(t *testing.T) {
+	h, _ := mustHandler(t)
+	h.dataDir = t.TempDir()
+	h.agentDefaultBackend = "opencode"
+
+	resp := h.handleSpawnAgent(map[string]any{
+		"project": "proj", "section": "override-task", "backend": "codex",
+	})
+	if resp.Error != "" {
+		t.Fatalf("unexpected error: %s", resp.Error)
+	}
+	m := resultMap(t, resp)
+	if m["backend"] != "codex" {
+		t.Errorf("backend = %q, want codex (param overrides config)", m["backend"])
+	}
+}
+
+func TestHandleSpawnAgent_DefaultBackendFallback(t *testing.T) {
+	h, _ := mustHandler(t)
+	h.dataDir = t.TempDir()
+	// agentDefaultBackend nicht gesetzt — Fallback auf "claude"
+
+	resp := h.handleSpawnAgent(map[string]any{
+		"project": "proj", "section": "fallback-task",
+	})
+	if resp.Error != "" {
+		t.Fatalf("unexpected error: %s", resp.Error)
+	}
+	m := resultMap(t, resp)
+	if m["backend"] != "claude" {
+		t.Errorf("backend = %q, want claude (fallback)", m["backend"])
 	}
 }
 

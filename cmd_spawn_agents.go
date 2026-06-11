@@ -183,9 +183,9 @@ func buildAgentPrompt(project, section, callerSession string) string {
 	prompt := fmt.Sprintf(
 		"You are working on project '%s', section '%s'. "+
 			"FIRST ACTION: Immediately write scratchpad_write(project=\"%s\", section=\"%s\", content=\"Status: started\") so the main agent can see you are working. "+
-			"Then read scratchpad_read(project=\"%s\") for context and work through the task. "+
+			"Then read scratchpad_read(project=\"%s\", section=\"%s\") for context and work through the task. "+
 			"Write your results with scratchpad_write(project=\"%s\", section=\"%s\", content=...).",
-		project, section, project, section, project, project, section,
+		project, section, project, section, project, section, project, section,
 	)
 	if callerSession != "" {
 		prompt += fmt.Sprintf(

@@ -237,7 +237,19 @@ func (h *Handler) handleHybridSearch(params map[string]any) Response {
 			vectorCh <- vectorResult{}
 			return
 		}
-		searchResults, err := h.vectorStore.SearchWithProject(ctx, vectors[0], laneLimit, project)
+
+		var searchResults []embedding.SearchResult
+		if since != "" || before != "" {
+			// Date prefilter: SQLite ID lookup → brute-force scan over allowed IDs
+			allowedIDs, idErr := h.getDateFilteredIDs(since, before, project)
+			if idErr != nil {
+				vectorCh <- vectorResult{err: idErr}
+				return
+			}
+			searchResults, err = h.vectorStore.SearchAllowed(ctx, vectors[0], laneLimit, allowedIDs)
+		} else {
+			searchResults, err = h.vectorStore.SearchWithProject(ctx, vectors[0], laneLimit, project)
+		}
 		if err != nil {
 			vectorCh <- vectorResult{err: err}
 			return
@@ -261,8 +273,8 @@ func (h *Handler) handleHybridSearch(params map[string]any) Response {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), searchTimeout)
 		defer cancel()
-		_ = ctx // SearchAnticipatedQueries doesn't take context yet — timeout via store's busy_timeout
-		results, err := h.store.SearchAnticipatedQueries(query, project, limit)
+		_ = ctx // ctx timeout handled via store's busy_timeout
+		results, err := h.store.SearchAnticipatedQueries(query, project, limit, since, before)
 		if err != nil {
 			aqCh <- bm25Result{err: err}
 			return
@@ -309,13 +321,6 @@ func (h *Handler) handleHybridSearch(params map[string]any) Response {
 		log.Printf("hybrid_search: aq-fts failed: %v", aqRes.err)
 	}
 	tSearch := time.Since(t0)
-
-	// Post-filter vector results by time range (vector store has no native temporal filtering)
-	if len(vectorResults) > 0 && (since != "" || before != "") {
-		filtered := h.filterResultsByTime(vectorResults, since, before)
-		log.Printf("hybrid_search: vector time-filtered %d → %d", len(vectorResults), len(filtered))
-		vectorResults = filtered
-	}
 
 	// If both paths failed, return error
 	if len(bm25Results) == 0 && len(vectorResults) == 0 && (bm25Res.err != nil || vectorRes.err != nil) {
@@ -886,6 +891,40 @@ func (h *Handler) filterResultsByTime(results []embedding.RankedResult, since, b
 		filtered = append(filtered, r)
 	}
 	return filtered
+}
+
+// getDateFilteredIDs returns the set of learning IDs that pass the date and project filters.
+// Used as pre-filter for the vector lane to restrict brute-force scan to a small ID set.
+func (h *Handler) getDateFilteredIDs(since, before, project string) (map[string]bool, error) {
+	where := `WHERE superseded_by IS NULL AND embedding_vector IS NOT NULL`
+	args := make([]any, 0, 3)
+	if since != "" {
+		where += ` AND created_at >= ?`
+		args = append(args, since)
+	}
+	if before != "" {
+		where += ` AND created_at < ?`
+		args = append(args, before)
+	}
+	if project != "" {
+		where += ` AND project = ?`
+		args = append(args, project)
+	}
+
+	rows, err := h.store.DB().Query(`SELECT CAST(id AS TEXT) FROM learnings `+where, args...)
+	if err != nil {
+		return nil, fmt.Errorf("getDateFilteredIDs: %w", err)
+	}
+	defer rows.Close()
+
+	ids := make(map[string]bool)
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			ids[id] = true
+		}
+	}
+	return ids, rows.Err()
 }
 
 // enrichRankedResults adds subagent metadata and agent_role to RankedResult slices (used by hybrid_search).

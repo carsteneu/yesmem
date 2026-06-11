@@ -3,9 +3,11 @@ package embedding
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -272,6 +274,63 @@ func TestCosineSimilarity(t *testing.T) {
 	}
 }
 
+func TestVectorStoreSearchAllowed(t *testing.T) {
+	db := testDB(t)
+	store, err := NewVectorStore(db, 384)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+
+	ctx := context.Background()
+	t0 := time.Now().UTC().Format(time.RFC3339)
+	t1 := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339)
+
+	// Insert learnings with different timestamps and embeddings
+	db.Exec(`INSERT INTO learnings(id, content, category, created_at) VALUES (1, 'recent doc A', 'test', ?)`, t0)
+	db.Exec(`INSERT INTO learnings(id, content, category, created_at) VALUES (2, 'old doc B', 'test', ?)`, t1)
+	db.Exec(`INSERT INTO learnings(id, content, category, created_at) VALUES (3, 'recent doc C', 'test', ?)`, t0)
+
+	store.Add(ctx, VectorDoc{ID: "1", Embedding: makeVec(384, 0.1)})
+	store.Add(ctx, VectorDoc{ID: "2", Embedding: makeVec(384, 0.11)})
+	store.Add(ctx, VectorDoc{ID: "3", Embedding: makeVec(384, 0.9)})
+
+	queryVec := makeVec(384, 0.1)
+
+	// Search with only allowed IDs = {1, 3} — should exclude doc 2
+	allowed := map[string]bool{"1": true, "3": true}
+	results, err := store.SearchAllowed(ctx, queryVec, 10, allowed)
+	if err != nil {
+		t.Fatalf("SearchAllowed: %v", err)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	for _, r := range results {
+		if r.ID == "2" {
+			t.Errorf("doc 2 should not be in allowed set")
+		}
+	}
+
+	// Search with empty allowed set
+	results, err = store.SearchAllowed(ctx, queryVec, 10, map[string]bool{})
+	if err != nil {
+		t.Fatalf("SearchAllowed empty: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("expected 0 results for empty allowed set, got %d", len(results))
+	}
+
+	// Search with only doc 2 allowed
+	results, err = store.SearchAllowed(ctx, queryVec, 10, map[string]bool{"2": true})
+	if err != nil {
+		t.Fatalf("SearchAllowed single: %v", err)
+	}
+	if len(results) != 1 || results[0].ID != "2" {
+		t.Fatalf("expected only doc 2, got %v", results)
+	}
+}
+
 // makeVec creates a simple normalized-ish vector for testing.
 func makeVec(dims int, seed float32) []float32 {
 	v := make([]float32, dims)
@@ -305,7 +364,44 @@ func testDB(t *testing.T) *sql.DB {
 		project TEXT NOT NULL DEFAULT '',
 		embedding_vector BLOB,
 		embedding_status TEXT,
-		superseded_by INTEGER
+		superseded_by INTEGER,
+		created_at TEXT NOT NULL DEFAULT ''
 	)`)
 	return db
+}
+
+func TestVectorStoreSearchAllowedLargeSet(t *testing.T) {
+	db := testDB(t)
+	store, err := NewVectorStore(db, 384)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+
+	ctx := context.Background()
+	now := time.Now().UTC().Format(time.RFC3339)
+	db.Exec(`INSERT INTO learnings(id, content, category, created_at) VALUES (1, 'doc A', 'test', ?)`, now)
+	db.Exec(`INSERT INTO learnings(id, content, category, created_at) VALUES (2, 'doc B', 'test', ?)`, now)
+	db.Exec(`INSERT INTO learnings(id, content, category, created_at) VALUES (3, 'doc C', 'test', ?)`, now)
+	store.Add(ctx, VectorDoc{ID: "1", Embedding: makeVec(384, 0.1)})
+	store.Add(ctx, VectorDoc{ID: "2", Embedding: makeVec(384, 0.11)})
+	store.Add(ctx, VectorDoc{ID: "3", Embedding: makeVec(384, 0.9)})
+
+	// Above maxInClauseVars the full-scan fallback must filter via map instead of IN.
+	allowed := map[string]bool{"1": true, "3": true}
+	for i := 0; i < 1200; i++ {
+		allowed[fmt.Sprintf("ghost-%d", i)] = true
+	}
+
+	results, err := store.SearchAllowed(ctx, makeVec(384, 0.1), 10, allowed)
+	if err != nil {
+		t.Fatalf("SearchAllowed large set: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	for _, r := range results {
+		if r.ID == "2" {
+			t.Errorf("doc 2 must not appear, not in allowed set")
+		}
+	}
 }

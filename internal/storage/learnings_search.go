@@ -400,7 +400,7 @@ func (s *Store) FindLearningsByEntityMatch(entities []string, project string) ([
 
 // SearchAnticipatedQueries searches the anticipated_queries_fts table (porter stemming).
 // Returns parent learning content for matching AQs, deduplicated by learning_id.
-func (s *Store) SearchAnticipatedQueries(query, project string, limit int) ([]LearningSearchResult, error) {
+func (s *Store) SearchAnticipatedQueries(query, project string, limit int, since, before string) ([]LearningSearchResult, error) {
 	words := splitWords(query)
 	if len(words) < 2 {
 		return nil, nil
@@ -415,7 +415,7 @@ func (s *Store) SearchAnticipatedQueries(query, project string, limit int) ([]Le
 	}
 	for len(terms) >= 2 {
 		ftsQuery := strings.Join(terms, " AND ")
-		results, err := s.runAQFTSQuery(ftsQuery, project, limit)
+		results, err := s.runAQFTSQuery(ftsQuery, project, limit, since, before)
 		if err != nil {
 			return nil, err
 		}
@@ -427,15 +427,25 @@ func (s *Store) SearchAnticipatedQueries(query, project string, limit int) ([]Le
 	return nil, nil
 }
 
-func (s *Store) runAQFTSQuery(ftsQuery, project string, limit int) ([]LearningSearchResult, error) {
+func (s *Store) runAQFTSQuery(ftsQuery, project string, limit int, since, before string) ([]LearningSearchResult, error) {
+	where := `MATCH ? AND l.superseded_by IS NULL`
+	args := []any{ftsQuery}
+	if since != "" {
+		where += ` AND l.created_at >= ?`
+		args = append(args, since)
+	}
+	if before != "" {
+		where += ` AND l.created_at < ?`
+		args = append(args, before)
+	}
+
 	rows, err := s.readerDB().Query(`
 		SELECT aq.learning_id, l.content, bm25(anticipated_queries_fts) AS score, COALESCE(l.project, ''), COALESCE(l.canonical_project, '')
 		FROM anticipated_queries_fts aq
 		JOIN learnings l ON l.id = aq.learning_id
-		WHERE anticipated_queries_fts MATCH ?
-		AND l.superseded_by IS NULL
+		WHERE anticipated_queries_fts `+where+`
 		ORDER BY bm25(anticipated_queries_fts)
-		LIMIT ?`, ftsQuery, limit*3)
+		LIMIT ?`, append(args, limit*3)...)
 	if err != nil {
 		return nil, err
 	}

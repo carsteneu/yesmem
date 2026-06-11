@@ -33,6 +33,9 @@ func TestDefault(t *testing.T) {
 	if cfg.Briefing.MaxPerCategory != 5 {
 		t.Errorf("default max_per_category: got %d, want 5", cfg.Briefing.MaxPerCategory)
 	}
+	if cfg.Agents.DefaultBackend != "claude" {
+		t.Errorf("default agents.default_backend: got %q, want 'claude'", cfg.Agents.DefaultBackend)
+	}
 }
 
 func TestLoadFromFile(t *testing.T) {

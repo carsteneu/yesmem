@@ -47,6 +47,11 @@ const opencodeDBSnippet = `
   opencode_db: ~/.local/share/opencode/opencode.db
 `
 
+const agentsDefaultBackendSnippet = `
+  # Default backend for spawned agents: claude or opencode
+  default_backend: claude
+`
+
 const modelFeaturesBlock = `
   # --- Per-Model Feature Gates ---
   # Control which yesmem behavioral features are active per model/provider.
@@ -152,6 +157,12 @@ func MigrateConfig(path string) (int, error) {
 			content = insertAtEndOfSection(content, "pricing:", deepseekPricingSnippet)
 			added++
 		}
+	}
+
+	// ━━ agents section: default_backend ━━
+	if !strings.Contains(content, "default_backend:") && strings.Contains(content, "agents:") {
+		content = insertAtEndOfSection(content, "agents:", agentsDefaultBackendSnippet)
+		added++
 	}
 
 	// ━━ exclude_projects (top-level) ━━

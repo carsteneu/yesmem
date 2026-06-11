@@ -46,12 +46,13 @@ type ModelPricing struct {
 
 // AgentsConfig controls agent spawning behavior.
 type AgentsConfig struct {
-	Terminal       string `yaml:"terminal"`        // Preferred terminal: ghostty, kitty, gnome-terminal, alacritty, wezterm, xterm. Empty = auto-detect.
-	ViewerTerminal string `yaml:"viewer_terminal"` // Terminal for showing yesmem-agents session. Falls back to terminal if empty.
-	MaxRuntime     string `yaml:"max_runtime"`     // Max runtime per agent (Go duration: "30m", "1h"). Empty = 30m default.
-	MaxTurns       int    `yaml:"max_turns"`       // Max relay turns per agent. 0 = 30 default.
-	MaxDepth       int    `yaml:"max_depth"`       // Max spawn depth (agent→sub-agent). 0 = 3 default.
-	TokenBudget    int    `yaml:"token_budget"`    // Max tokens per agent (input+output combined). 0 = 500000 default. Overridable per spawn.
+	Terminal       string `yaml:"terminal"`         // Preferred terminal: ghostty, kitty, gnome-terminal, alacritty, wezterm, xterm. Empty = auto-detect.
+	ViewerTerminal string `yaml:"viewer_terminal"`  // Terminal for showing yesmem-agents session. Falls back to terminal if empty.
+	DefaultBackend string `yaml:"default_backend"`  // Default agent backend: "claude" or "opencode". Empty = "claude".
+	MaxRuntime     string `yaml:"max_runtime"`      // Max runtime per agent (Go duration: "30m", "1h"). Empty = 30m default.
+	MaxTurns       int    `yaml:"max_turns"`        // Max relay turns per agent. 0 = 30 default.
+	MaxDepth       int    `yaml:"max_depth"`        // Max spawn depth (agent→sub-agent). 0 = 3 default.
+	TokenBudget    int    `yaml:"token_budget"`     // Max tokens per agent (input+output combined). 0 = 500000 default. Overridable per spawn.
 }
 
 // SecretsSanitizationConfig konfiguriert die SecretRedactor-Pipeline.
@@ -311,6 +312,8 @@ type LLMConfig struct {
 	DailyBudgetExtractUSD float64 `yaml:"daily_budget_extract_usd"` // extraction (Haiku/Sonnet), 0 = unlimited
 	DailyBudgetQualityUSD float64 `yaml:"daily_budget_quality_usd"` // narratives/persona (Opus), 0 = unlimited
 	MaxBudgetPerCallUSD   float64 `yaml:"max_budget_per_call_usd"`  // per-call safety net (CLI: --max-budget-usd), 0 = no limit
+	OpenAIBaseURL         string  `yaml:"openai_base_url"`          // override for llm_complete RPC (e.g. proxy), empty = use api.openai_base_url
+	CompleteProvider      string  `yaml:"complete_provider"`        // override provider for llm_complete RPC (e.g. opencode), empty = use provider
 }
 
 // EvolutionConfig controls knowledge evolution behavior.
@@ -493,6 +496,9 @@ func Default() *Config {
 			AutoUpdate:    true,
 			CheckInterval: "6h",
 			Channel:       "stable",
+		},
+		Agents: AgentsConfig{
+			DefaultBackend: "claude",
 		},
 		ForkedAgents: ForkedAgentsConfig{
 			Enabled:            false,

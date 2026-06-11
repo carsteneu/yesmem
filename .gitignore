@@ -29,3 +29,9 @@ yesmem.db
 node_modules/
 dbstats
 .opencode/
+
+# Dev artifacts
+.codex
+bunfig.toml
+yesmem_demo*.cast
+**/PACKAGE.md

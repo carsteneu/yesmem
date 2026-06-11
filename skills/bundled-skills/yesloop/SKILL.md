@@ -18,7 +18,7 @@ When invoked from an interactive session, **do NOT execute the pipeline yourself
    - Isolates agent changes from your working directory
    - Multiple agents can run in parallel without conflicts
    - Easy cleanup: delete worktree + branch if abandoned
-2. Write the task to scratchpad with worktree path: `scratchpad_write(project="<project>", section="yesloop-<task-slug>", content="Worktree: <path>\nTask: <description>\n\nUse the yesloop autonomous pipeline (5 phases). Report to scratchpad.")`
+2. Write the task to scratchpad with worktree path: `scratchpad_write(project="<project>", section="yesloop-<task-slug>", content="Worktree: <path>\nTask: <description>\n\nUse the yesloop autonomous pipeline (6 phases). Report to scratchpad.")`
 3. Spawn TUI agent: `yesmem_spawn_agent(project="<project>", section="yesloop-<task-slug>", backend="opencode", work_dir="<worktree-path>")`
 4. Wait 15s for opencode TUI to load + PTY injection to deliver the startup prompt
 5. **Relay kick (backup):** `yesmem_relay_agent(to="<agent-id>", content="Read scratchpad and begin yesloop pipeline.")` — backup if PTY is slow
@@ -72,7 +72,33 @@ When invoked from an interactive session, **do NOT execute the pipeline yourself
 - If issues found → fix and re-verify (**max 3 cycles** — see CONVERGENCE GATE)
 - → scratchpad_write: verification results
 
-### Phase 5: FINISH
+### Phase 5: REVIEW (Inline Self-Review)
+- **Get the full delta** (committed + uncommitted): `git diff origin/main` + `git log origin/main..HEAD --oneline`
+- **Review against the plan** from Phase 2. Check each requirement.
+- **Checklist** (derived from superpowers code-review structure):
+  - **Plan alignment:** Does implementation match the plan? All requirements covered? Deviations justified?
+  - **Code quality:** Clean separation of concerns? Proper error handling? Type safety? Edge cases handled? No dead code?
+  - **Architecture:** Sound design? Integrates cleanly with surrounding code? No unnecessary abstraction?
+  - **Testing:** Tests verify real behavior? Edge cases covered? All tests passing? (VERIFY already ran them — check coverage gaps)
+  - **Production readiness:** Migration needed? Backward compat? Documentation? Obvious bugs?
+- **Output format** (scratchpad_write as structured block):
+  - **Strengths** — what's well done, specific file:line references
+  - **Issues** — Critical (bugs, security, data loss) / Important (architecture, missing features, test gaps) / Minor (style, polish)
+  - **Recommendations** — improvements for code quality, architecture, or process
+  - **Assessment** — Ready to merge? [Yes | With fixes | No] + 1-2 sentence reasoning
+- **GATES:**
+  - **ALL findings must be fixed autonomously** — no user feedback, no escalation for fixable issues
+  - Critical + Important issues → fix immediately, max 3 cycles per issue (CONVERGENCE GATE)
+  - Minor issues → fix if < 2 min each, otherwise document and proceed
+  - After fixes → re-review the changed files once to confirm resolution
+  - Assessment "No" (unfixable, architectural dead-end) → **STOP**, escalate via send_to: "REVIEW BLOCKED: <reasons>"
+  - Assessment "With fixes" → apply all fixes, confirm via re-review, then proceed
+  - **Never leave fixable issues for the user** — the review is a work phase, not an advisory step
+- **Git diff verification:** After reading `git show` or `git diff` output, ALWAYS `Read` the current file to confirm — diffs show what changed, not what's there NOW (gotcha #66986)
+- → scratchpad_write: full review result in structured format
+- → update_agent_status(phase="Phase 5/6 REVIEW: <assessment>")
+
+### Phase 6: FINISH
 - **Default: Create PR** from worktree branch to main
 - **`--merge` flag:** If user explicitly requested auto-merge, merge PR after all checks pass
 - Without `--merge`: send_to caller_session: "DONE: <summary>. PR: <url> — ready for review." — user merges manually
@@ -154,9 +180,9 @@ On startup, before ANY other action:
 **On receiving the PTY prompt:**
 1. `scratchpad_read(project, section)` — get your task + worktree path (written by spawner before your spawn)
 2. `get_plan()` — restore any previous progress
-3. `update_agent_status(phase="Phase 1/5 ANALYZE")` — visible in agent dashboard
-4. **First action:** `scratchpad_write(content="▶ Phase 1/5 ANALYZE: <summary>")`
-5. Follow the 5-phase yesloop pipeline
+3. `update_agent_status(phase="Phase 1/6 ANALYZE")` — visible in agent dashboard
+4. **First action:** `scratchpad_write(content="▶ Phase 1/6 ANALYZE: <summary>")`
+5. Follow the 6-phase yesloop pipeline
 
 **Completion — MUST do all three:**
 1. `scratchpad_write(content="✅ DONE: <summary>. PR: <url>")` — final write to your section
