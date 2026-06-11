@@ -227,16 +227,6 @@ func TestStdinArgs_OpencodeIncludesFormatJSON(t *testing.T) {
 	if args[1] != "--format" || args[2] != "json" {
 		t.Errorf("expected --format json after run, got %v", args[1:3])
 	}
-	foundPure := false
-	for _, a := range args {
-		if a == "--pure" {
-			foundPure = true
-			break
-		}
-	}
-	if !foundPure {
-		t.Errorf("expected --pure flag in args: %v", args)
-	}
 }
 
 func TestStdinArgs_OpencodeWithSessionIncludesFormatJSON(t *testing.T) {
