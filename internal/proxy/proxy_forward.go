@@ -114,6 +114,7 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 			if threadID != "" {
 				go s.queryDaemon("_track_usage", map[string]any{
 					"thread_id":          threadID,
+					"project":            proj,
 					"input_tokens":       jsonResp.Usage.InputTokens,
 					"output_tokens":      jsonResp.Usage.OutputTokens,
 					"cache_read_tokens":  jsonResp.Usage.CacheReadInputTokens,
@@ -255,6 +256,7 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 		if threadID != "" {
 			go s.queryDaemon("_track_usage", map[string]any{
 				"thread_id":          threadID,
+				"project":            proj,
 				"input_tokens":       usage.TotalInputTokens(),
 				"output_tokens":      usage.OutputTokens,
 				"cache_read_tokens":  usage.CacheReadInputTokens,
