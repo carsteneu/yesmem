@@ -647,10 +647,21 @@ func (h *Handler) handleTrackUsage(params map[string]any) Response {
 	}
 
 	// Update agent telemetry if this thread belongs to an agent session.
+	// Try three match strategies in order:
+	//  1. Direct session_id match (daemon-generated UUID == proxy's threadID)
+	//  2. proxy_thread_id match (lazy-mapped from a prior _track_usage call)
+	//  3. Lazy init: find a running agent in the same project with no proxy_thread_id yet
 	if threadID != "" {
 		if agent, err := h.store.AgentGetAnyBySession(threadID); err == nil && agent != nil {
 			h.store.AgentUpdateTelemetry(agent.ID, 1, inputTokens, outputTokens)
 			RegisterSessionThread(agent.SessionID, threadID)
+		} else if agent, err := h.store.AgentGetByProxyThreadID(threadID); err == nil && agent != nil {
+			h.store.AgentUpdateTelemetry(agent.ID, 1, inputTokens, outputTokens)
+		} else if project, ok := params["project"].(string); ok && project != "" {
+			if agent, err := h.store.AgentGetRunningInProject(project); err == nil && agent != nil {
+				h.store.AgentUpdate(agent.ID, map[string]any{"proxy_thread_id": threadID})
+				h.store.AgentUpdateTelemetry(agent.ID, 1, inputTokens, outputTokens)
+			}
 		}
 	}
 

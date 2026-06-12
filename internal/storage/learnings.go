@@ -710,6 +710,12 @@ func (s *Store) GetLearningChain(id int64) ([]models.Learning, error) {
 const (
 	SupersededByResolved  int64 = -2
 	SupersededByReextract int64 = -3
+
+	TaskTypeStale = "stale"
+
+	// BatchCleanupReason is the supersede_reason used by the old resolve-stale cleanup.
+	// Items with this reason can be reactivated via ReactivateBatchCleanup.
+	BatchCleanupReason = "batch-cleanup: stale >30 days"
 )
 
 // ResolveLearning marks an unfinished learning as resolved (superseded_by = -2).
@@ -792,6 +798,53 @@ func (s *Store) ResolveBatch(ids []int64, reason string) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// SetTaskTypeBatch updates task_type for multiple learnings in a single transaction.
+// Only updates learnings where superseded_by IS NULL (active items).
+func (s *Store) SetTaskTypeBatch(ids []int64, taskType string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	stmt, err := tx.Prepare(`UPDATE learnings SET task_type = ?
+		WHERE id = ? AND superseded_by IS NULL`)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	defer stmt.Close()
+	for _, id := range ids {
+		if _, err := stmt.Exec(taskType, id); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("set task_type %d: %w", id, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// CountBatchCleanup returns the count of items that were auto-resolved
+// by the old resolve-stale batch process (without modifying them).
+func (s *Store) CountBatchCleanup() (int64, error) {
+	var count int64
+	err := s.readerDB().QueryRow(`SELECT COUNT(*) FROM learnings
+		WHERE supersede_reason = ? AND superseded_by = ?`,
+		BatchCleanupReason, SupersededByResolved).Scan(&count)
+	return count, err
+}
+
+// ReactivateBatchCleanup clears superseded_by on items that were auto-resolved
+// by the old resolve-stale batch process. Returns count of reactivated items.
+func (s *Store) ReactivateBatchCleanup() (int64, error) {
+	result, err := s.db.Exec(`UPDATE learnings SET superseded_by = NULL, supersede_reason = NULL, valid_until = NULL
+		WHERE supersede_reason = ? AND superseded_by = ?`, BatchCleanupReason, SupersededByResolved)
+	if err != nil {
+		return 0, fmt.Errorf("reactivate batch-cleanup: %w", err)
+	}
+	return result.RowsAffected()
 }
 
 // isInSupersededChain checks if targetID appears in the supersede chain starting from startID.

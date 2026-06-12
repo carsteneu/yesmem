@@ -266,6 +266,23 @@ func runResolveStale() {
 	}
 	defer store.Close()
 
+	// Reactivate items from previous batch-cleanup so they can be re-evaluated.
+	batchCount, err := store.CountBatchCleanup()
+	if err != nil {
+		log.Fatalf("count batch-cleanup: %v", err)
+	}
+	if batchCount > 0 {
+		if dryRun {
+			fmt.Fprintf(os.Stderr, "Would reactivate %d items from previous batch-cleanup (--dry-run).\n", batchCount)
+		} else {
+			reactivated, err := store.ReactivateBatchCleanup()
+			if err != nil {
+				log.Fatalf("reactivate batch-cleanup: %v", err)
+			}
+			fmt.Fprintf(os.Stderr, "Reactivated %d items from previous batch-cleanup for re-evaluation.\n", reactivated)
+		}
+	}
+
 	unfinished, err := store.GetActiveLearnings("unfinished", "", "", "", 0)
 	if err != nil {
 		log.Fatalf("get unfinished: %v", err)
@@ -287,7 +304,7 @@ func runResolveStale() {
 		return
 	}
 
-	// Without --dry-run: resolve items older than 30 days as stale
+	// Without --dry-run: mark items older than 30 days as stale
 	var staleIDs []int64
 	cutoff := time.Now().AddDate(0, 0, -30)
 	for _, u := range unfinished {
@@ -297,15 +314,15 @@ func runResolveStale() {
 	}
 
 	if len(staleIDs) == 0 {
-		fmt.Fprintf(os.Stderr, "\nNo items older than 30 days. Nothing to resolve.\n")
+		fmt.Fprintf(os.Stderr, "\nNo items older than 30 days. Nothing to mark stale.\n")
 		return
 	}
 
-	if err := store.ResolveBatch(staleIDs, "batch-cleanup: stale >30 days"); err != nil {
-		log.Fatalf("resolve batch: %v", err)
+	if err := store.SetTaskTypeBatch(staleIDs, storage.TaskTypeStale); err != nil {
+		log.Fatalf("set task_type stale: %v", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "\nResolved %d stale items (>30 days old).\n", len(staleIDs))
+	fmt.Fprintf(os.Stderr, "\nMarked %d items as stale (>30 days old).\n", len(staleIDs))
 
 	// Regenerate MEMORY.md
 	daemon.GenerateAllMemoryMDs(store)

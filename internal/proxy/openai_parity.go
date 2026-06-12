@@ -726,7 +726,7 @@ func (s *Server) forwardOpenAIWithTracking(w http.ResponseWriter, origReq *http.
 			go s.trackStreamState(threadID, false, int64(len(bodyBytes)), isSub, project)
 		}
 
-		s.trackOpenAINonStreamingUsage(reqIdx, bodyBytes, threadID, estimatedTokens, msgCount)
+		s.trackOpenAINonStreamingUsage(reqIdx, bodyBytes, threadID, project, estimatedTokens, msgCount)
 		return
 	}
 
@@ -782,7 +782,7 @@ func (s *Server) forwardOpenAIWithTracking(w http.ResponseWriter, origReq *http.
 		Model string `json:"model"`
 	}
 	json.Unmarshal(body, &fwdModel)
-	s.finalizeOpenAIUsage(reqIdx, threadID, estimatedTokens, msgCount, usage, fwdModel.Model, rlJSON)
+	s.finalizeOpenAIUsage(reqIdx, threadID, project, estimatedTokens, msgCount, usage, fwdModel.Model, rlJSON)
 
 	// Fire forked agents (async, fire-and-forget) — same logic as proxy_forward.go.
 	if usage.Complete && usage.CacheReadInputTokens > 0 && !s.forkState.IsDisabled(threadID) && isRealUserSession(threadID) {
@@ -834,7 +834,7 @@ func (s *Server) forwardOpenAIWithTracking(w http.ResponseWriter, origReq *http.
 	}
 }
 
-func (s *Server) trackOpenAINonStreamingUsage(reqIdx int, body []byte, threadID string, estimatedTokens, msgCount int) {
+func (s *Server) trackOpenAINonStreamingUsage(reqIdx int, body []byte, threadID string, project string, estimatedTokens, msgCount int) {
 	var parsed struct {
 		Model string         `json:"model"`
 		Usage map[string]any `json:"usage"`
@@ -883,10 +883,10 @@ func (s *Server) trackOpenAINonStreamingUsage(reqIdx int, body []byte, threadID 
 			u.CacheReadInputTokens = int(v)
 		}
 	}
-	s.finalizeOpenAIUsage(reqIdx, threadID, estimatedTokens, msgCount, u, parsed.Model, "")
+	s.finalizeOpenAIUsage(reqIdx, threadID, project, estimatedTokens, msgCount, u, parsed.Model, "")
 }
 
-func (s *Server) finalizeOpenAIUsage(reqIdx int, threadID string, estimatedTokens, msgCount int, usage *UsageTracker, model string, rlJSON string) {
+func (s *Server) finalizeOpenAIUsage(reqIdx int, threadID string, project string, estimatedTokens, msgCount int, usage *UsageTracker, model string, rlJSON string) {
 	if usage == nil || (usage.TotalInputTokens() == 0 && usage.OutputTokens == 0) {
 		return
 	}
@@ -901,6 +901,7 @@ func (s *Server) finalizeOpenAIUsage(reqIdx int, threadID string, estimatedToken
 	if threadID != "" && s.cfg.DataDir != "" {
 		go s.queryDaemon("_track_usage", map[string]any{
 			"thread_id":          threadID,
+			"project":            project,
 			"input_tokens":       usage.TotalInputTokens(),
 			"output_tokens":      usage.OutputTokens,
 			"cache_read_tokens":  usage.CacheReadInputTokens,
