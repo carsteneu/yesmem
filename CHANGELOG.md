@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Config option agents.default_backend replaces PATH-based default
 - Hybrid_search date pre-filtering for vector and AQ lanes
 
+### Changed
+
+- Add --help/ to .gitignore
+
 ### Testing
 
 - Remove --pure flag expectation from opencode stdin args
