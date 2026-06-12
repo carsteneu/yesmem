@@ -647,20 +647,10 @@ func (h *Handler) handleTrackUsage(params map[string]any) Response {
 	}
 
 	// Update agent telemetry if this thread belongs to an agent session.
-	// Try three match strategies in order:
-	//  1. Direct session_id match (daemon-generated UUID == proxy's threadID)
-	//  2. proxy_thread_id match (lazy-mapped from a prior _track_usage call)
-	//  3. Lazy init: find a running agent in the same project with no proxy_thread_id yet
 	if threadID != "" {
 		if agent, err := h.store.AgentGetAnyBySession(threadID); err == nil && agent != nil {
 			h.store.AgentUpdateTelemetry(agent.ID, 1, inputTokens, outputTokens)
-		} else if agent, err := h.store.AgentGetByProxyThreadID(threadID); err == nil && agent != nil {
-			h.store.AgentUpdateTelemetry(agent.ID, 1, inputTokens, outputTokens)
-		} else if project, ok := params["project"].(string); ok && project != "" {
-			if agent, err := h.store.AgentGetRunningInProject(project); err == nil && agent != nil {
-				h.store.AgentUpdate(agent.ID, map[string]any{"proxy_thread_id": threadID})
-				h.store.AgentUpdateTelemetry(agent.ID, 1, inputTokens, outputTokens)
-			}
+			RegisterSessionThread(agent.SessionID, threadID)
 		}
 	}
 
@@ -707,7 +697,45 @@ func (h *Handler) handleGetAgent(params map[string]any) Response {
 		return errorResponse(err.Error())
 	}
 
-	return jsonResponse(agent)
+	// Enrich with stream tracking fields
+	result := agentToMap(agent)
+	result = h.enrichAgentWithStreamFields(result)
+
+	return jsonResponse(result)
+}
+
+// agentToMap converts an Agent struct to a map[string]any for enrichment.
+func agentToMap(a *storage.Agent) map[string]any {
+	return map[string]any{
+		"id":               a.ID,
+		"project":          a.Project,
+		"section":          a.Section,
+		"session_id":       a.SessionID,
+		"pid":              a.PID,
+		"sock_path":        a.SockPath,
+		"status":           a.Status,
+		"caller_session":   a.CallerSession,
+		"error":            a.Error,
+		"heartbeat_at":     a.HeartbeatAt,
+		"progress":         a.Progress,
+		"relay_count":      a.RelayCount,
+		"depth":            a.Depth,
+		"token_budget":     a.TokenBudget,
+		"retry_count":      a.RetryCount,
+		"backend":          a.Backend,
+		"turns_used":       a.TurnsUsed,
+		"input_tokens":     a.InputTokens,
+		"output_tokens":    a.OutputTokens,
+		"last_activity_at": a.LastActivityAt,
+		"phase":            a.Phase,
+		"created_at":       a.CreatedAt,
+		"stopped_at":       a.StoppedAt,
+		"restart_strategy": a.RestartStrategy,
+		"restart_count":    a.RestartCount,
+		"max_restarts":     a.MaxRestarts,
+		"liveness_ping_at": a.LivenessPingAt,
+		"last_restart_at":  a.LastRestartAt,
+	}
 }
 
 // resolveAgent finds an agent by ID or by section within a project.

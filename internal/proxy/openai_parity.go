@@ -305,70 +305,70 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 	_ = messages // keep for when injections are re-enabled
 
 	/*
-	// DISABLED: cache-incompatible injections for DeepSeek/OpenAI path.
-	// Re-enable when injection-state-per-message store is implemented.
+		// DISABLED: cache-incompatible injections for DeepSeek/OpenAI path.
+		// Re-enable when injection-state-per-message store is implemented.
 
-	if isFeatureEnabled(&s.cfg, model, "rules_reminder") {
-		if rulesBlock := s.rulesInject(ctx.ThreadID, totalTokens, ctx.Project); rulesBlock != "" {
-			req["messages"] = injectAssociativeContext(messages, s.formatRulesReminder(rulesBlock, ctx.Project, true), s.cfg.SawtoothEnabled)
-			messages, _ = req["messages"].([]any)
-			s.logger.Printf("%s[req %d %s tid=%s] rules reminder injected%s", colorBlue, ctx.ReqIdx, ctx.Project, ctx.ThreadID, colorReset)
-		}
-	}
-
-	if isFeatureEnabled(&s.cfg, model, "plan_checkpoint") {
-		s.detectPlanToolCall(messages, ctx.ThreadID, totalTokens)
-		if checkpoint := s.planCheckpointInject(ctx.ThreadID, totalTokens); checkpoint != "" {
-			req["messages"] = injectAssociativeContext(messages, checkpoint, s.cfg.SawtoothEnabled)
-			messages, _ = req["messages"].([]any)
-			s.logger.Printf("%s[req %d %s tid=%s] plan checkpoint injected%s", colorBlue, ctx.ReqIdx, ctx.Project, ctx.ThreadID, colorReset)
-		}
-	}
-
-	if isFeatureEnabled(&s.cfg, model, "skill_eval") && ctx.ThreadID != "" && ctx.Project != "" && isUserInputTurn(messages) && s.skillTracker != nil {
-		s.syncSkillActivations(messages, ctx.Project, ctx.ThreadID)
-		skillEval := buildSkillEvalBlock(s.cfg.SkillEvalInject)
-		if skillEval != "" {
-			req["messages"] = injectAssociativeContext(messages, skillEval, s.cfg.SawtoothEnabled)
-		}
-		messages, _ = req["messages"].([]any)
-		s.logger.Printf("%s[req %d %s tid=%s] skill-eval injected%s", colorBlue, ctx.ReqIdx, ctx.Project, ctx.ThreadID, colorReset)
-	}
-
-	if isFeatureEnabled(&s.cfg, model, "think_reminder") && ctx.ThreadID != "" {
-		// NOTE: buildThinkReminder accepts sessionID param (unused internally).
-		// In the OpenAI path ctx.ThreadID == ctx.SessionID already (set in buildOpenAIContext).
-		// Keeping ctx.SessionID here for clarity — both are the same value.
-		thinkReminder := s.buildThinkReminder(ctx.ThreadID, ctx.SessionID, true)
-		if thinkReminder != "" {
-			req["messages"] = injectAssociativeContext(messages, thinkReminder, s.cfg.SawtoothEnabled)
-			messages, _ = req["messages"].([]any)
-		}
-
-		dr := s.checkDialogMessages(ctx.ThreadID, ctx.Project)
-		if dr.Extra != "" {
-			if ctx.SessionID != "" {
-				dr.Extra = fmt.Sprintf("DEINE_SESSION_ID: %s\n", ctx.SessionID) + dr.Extra
+		if isFeatureEnabled(&s.cfg, model, "rules_reminder") {
+			if rulesBlock := s.rulesInject(ctx.ThreadID, totalTokens, ctx.Project); rulesBlock != "" {
+				req["messages"] = injectAssociativeContext(messages, s.formatRulesReminder(rulesBlock, ctx.Project, true), s.cfg.SawtoothEnabled)
+				messages, _ = req["messages"].([]any)
+				s.logger.Printf("%s[req %d %s tid=%s] rules reminder injected%s", colorBlue, ctx.ReqIdx, ctx.Project, ctx.ThreadID, colorReset)
 			}
-			if len(messages) > 0 {
-				lastMsg, _ := messages[len(messages)-1].(map[string]any)
-				if lastMsg != nil && lastMsg["role"] == "user" {
+		}
+
+		if isFeatureEnabled(&s.cfg, model, "plan_checkpoint") {
+			s.detectPlanToolCall(messages, ctx.ThreadID, totalTokens)
+			if checkpoint := s.planCheckpointInject(ctx.ThreadID, totalTokens); checkpoint != "" {
+				req["messages"] = injectAssociativeContext(messages, checkpoint, s.cfg.SawtoothEnabled)
+				messages, _ = req["messages"].([]any)
+				s.logger.Printf("%s[req %d %s tid=%s] plan checkpoint injected%s", colorBlue, ctx.ReqIdx, ctx.Project, ctx.ThreadID, colorReset)
+			}
+		}
+
+		if isFeatureEnabled(&s.cfg, model, "skill_eval") && ctx.ThreadID != "" && ctx.Project != "" && isUserInputTurn(messages) && s.skillTracker != nil {
+			s.syncSkillActivations(messages, ctx.Project, ctx.ThreadID)
+			skillEval := buildSkillEvalBlock(s.cfg.SkillEvalInject)
+			if skillEval != "" {
+				req["messages"] = injectAssociativeContext(messages, skillEval, s.cfg.SawtoothEnabled)
+			}
+			messages, _ = req["messages"].([]any)
+			s.logger.Printf("%s[req %d %s tid=%s] skill-eval injected%s", colorBlue, ctx.ReqIdx, ctx.Project, ctx.ThreadID, colorReset)
+		}
+
+		if isFeatureEnabled(&s.cfg, model, "think_reminder") && ctx.ThreadID != "" {
+			// NOTE: buildThinkReminder accepts sessionID param (unused internally).
+			// In the OpenAI path ctx.ThreadID == ctx.SessionID already (set in buildOpenAIContext).
+			// Keeping ctx.SessionID here for clarity — both are the same value.
+			thinkReminder := s.buildThinkReminder(ctx.ThreadID, ctx.SessionID, true)
+			if thinkReminder != "" {
+				req["messages"] = injectAssociativeContext(messages, thinkReminder, s.cfg.SawtoothEnabled)
+				messages, _ = req["messages"].([]any)
+			}
+
+			dr := s.checkDialogMessages(ctx.ThreadID, ctx.Project)
+			if dr.Extra != "" {
+				if ctx.SessionID != "" {
+					dr.Extra = fmt.Sprintf("DEINE_SESSION_ID: %s\n", ctx.SessionID) + dr.Extra
+				}
+				if len(messages) > 0 {
+					lastMsg, _ := messages[len(messages)-1].(map[string]any)
+					if lastMsg != nil && lastMsg["role"] == "user" {
+						messages = append(messages, map[string]any{
+							"role":    "assistant",
+							"content": "\u200b",
+						})
+					}
 					messages = append(messages, map[string]any{
-						"role":    "assistant",
-						"content": "\u200b",
+						"role":    "user",
+						"content": "<channel source=\"yesmem-dialog\">\n" + dr.Extra + "\n</channel>",
 					})
-				}
-				messages = append(messages, map[string]any{
-					"role":    "user",
-					"content": "<channel source=\"yesmem-dialog\">\n" + dr.Extra + "\n</channel>",
-				})
-				req["messages"] = messages
-				if dr.HasUnread && dr.SessionID != "" && s.shouldMarkChannelRead(dr) {
-					s.markDialogRead(dr)
+					req["messages"] = messages
+					if dr.HasUnread && dr.SessionID != "" && s.shouldMarkChannelRead(dr) {
+						s.markDialogRead(dr)
+					}
 				}
 			}
 		}
-	}
 	*/
 
 	s.annotateOpenAIMessageMetadata(req, ctx, messages, model, totalTokens)
@@ -594,24 +594,24 @@ func (s *Server) annotateOpenAIMessageMetadata(req map[string]any, ctx *openAIRe
 					entry.Delta = formatDelta(now.Sub(respTime))
 				}
 				// Stable injects frozen once per msg:N (idempotent via TimestampStore)
-	if isFeatureEnabled(&s.cfg, model, "think_reminder") && ctx.ThreadID != "" && lastUserTextLen(messages) >= resolveThinkReminderMinChars(&s.cfg, model) {
+				if isFeatureEnabled(&s.cfg, model, "think_reminder") && ctx.ThreadID != "" && lastUserTextLen(messages) >= resolveThinkReminderMinChars(&s.cfg, model) {
 					entry.ThinkReminder = s.buildThinkReminder(ctx.ThreadID, ctx.SessionID, true)
 				}
 				if isFeatureEnabled(&s.cfg, model, "skill_eval") && ctx.ThreadID != "" && ctx.Project != "" && isUserInputTurn(messages) && s.skillTracker != nil {
 					s.syncSkillActivations(messages, ctx.Project, ctx.ThreadID)
 					entry.SkillEval = buildSkillEvalBlock(s.cfg.SkillEvalInject)
 				}
-			if isFeatureEnabled(&s.cfg, model, "rules_reminder") {
-				if rulesBlock := s.rulesInject(ctx.ThreadID, totalTokens, ctx.Project); rulesBlock != "" {
-					entry.Rules = s.formatRulesReminder(rulesBlock, ctx.Project, true)
+				if isFeatureEnabled(&s.cfg, model, "rules_reminder") {
+					if rulesBlock := s.rulesInject(ctx.ThreadID, totalTokens, ctx.Project); rulesBlock != "" {
+						entry.Rules = s.formatRulesReminder(rulesBlock, ctx.Project, true)
+					}
 				}
-			}
-			if isFeatureEnabled(&s.cfg, model, "assoc_context") && ctx.UserQuery != "" {
-				if ac := s.findAssociativeContextFor(ctx.UserQuery, ctx.Project, ctx.ThreadID, messages); ac != "" {
-					entry.AssocContext = ac
+				if isFeatureEnabled(&s.cfg, model, "assoc_context") && ctx.UserQuery != "" {
+					if ac := s.findAssociativeContextFor(ctx.UserQuery, ctx.Project, ctx.ThreadID, messages); ac != "" {
+						entry.AssocContext = ac
+					}
 				}
-			}
-			s.timestampStore.Store(threadID, ctx.RawMsgCount, entry)
+				s.timestampStore.Store(threadID, ctx.RawMsgCount, entry)
 				if isFeatureEnabled(&s.cfg, model, "timestamps") {
 					prependMeta(lastMsg, BuildMeta(ctx.RawMsgCount, entry))
 				}
@@ -704,14 +704,29 @@ func (s *Server) forwardOpenAIWithTracking(w http.ResponseWriter, origReq *http.
 	}
 	w.WriteHeader(resp.StatusCode)
 
+	isSub := isSubagentFromBody(body)
+
 	ct := resp.Header.Get("Content-Type")
 	if !strings.Contains(ct, "text/event-stream") {
+		// Non-SSE: notify stream start
+		if threadID != "" {
+			go s.trackStreamState(threadID, true, 0, isSub, project)
+		}
+
 		bodyBytes, readErr := io.ReadAll(responseBody)
 		if readErr != nil {
+			if threadID != "" {
+				go s.trackStreamState(threadID, false, 0, isSub, project)
+			}
 			return
 		}
 		_, _ = w.Write(bodyBytes)
-		s.trackOpenAINonStreamingUsage(reqIdx, bodyBytes, threadID, project, estimatedTokens, msgCount)
+
+		if threadID != "" {
+			go s.trackStreamState(threadID, false, int64(len(bodyBytes)), isSub, project)
+		}
+
+		s.trackOpenAINonStreamingUsage(reqIdx, bodyBytes, threadID, estimatedTokens, msgCount)
 		return
 	}
 
@@ -721,11 +736,21 @@ func (s *Server) forwardOpenAIWithTracking(w http.ResponseWriter, origReq *http.
 	var textAccum strings.Builder
 	var textDone bool
 
+	// Stream tracking for SSE path
+	var streamStarted bool
+	var totalClientBytes int64
+
 	for {
 		line, readErr := reader.ReadBytes('\n')
 		if len(line) > 0 {
 			trimmedLine := bytes.TrimSpace(line)
 			if bytes.HasPrefix(trimmedLine, []byte("data: ")) {
+				// Notify stream start on first SSE event
+				if !streamStarted && threadID != "" {
+					streamStarted = true
+					go s.trackStreamState(threadID, true, 0, isSub, project)
+				}
+
 				data := bytes.TrimSpace(bytes.TrimPrefix(trimmedLine, []byte("data: ")))
 				if parser != nil {
 					parser.ParseUsage(usage, data)
@@ -733,8 +758,12 @@ func (s *Server) forwardOpenAIWithTracking(w http.ResponseWriter, origReq *http.
 				}
 			}
 			if _, writeErr := w.Write(line); writeErr != nil {
+				if threadID != "" {
+					go s.trackStreamState(threadID, false, totalClientBytes, isSub, project)
+				}
 				return
 			}
+			totalClientBytes += int64(len(line))
 			if canFlush {
 				flusher.Flush()
 			}
@@ -744,11 +773,16 @@ func (s *Server) forwardOpenAIWithTracking(w http.ResponseWriter, origReq *http.
 		}
 	}
 
+	// Notify daemon that stream ended
+	if threadID != "" {
+		go s.trackStreamState(threadID, false, totalClientBytes, isSub, project)
+	}
+
 	var fwdModel struct {
 		Model string `json:"model"`
 	}
 	json.Unmarshal(body, &fwdModel)
-	s.finalizeOpenAIUsage(reqIdx, threadID, project, estimatedTokens, msgCount, usage, fwdModel.Model, rlJSON)
+	s.finalizeOpenAIUsage(reqIdx, threadID, estimatedTokens, msgCount, usage, fwdModel.Model, rlJSON)
 
 	// Fire forked agents (async, fire-and-forget) — same logic as proxy_forward.go.
 	if usage.Complete && usage.CacheReadInputTokens > 0 && !s.forkState.IsDisabled(threadID) && isRealUserSession(threadID) {
@@ -800,7 +834,7 @@ func (s *Server) forwardOpenAIWithTracking(w http.ResponseWriter, origReq *http.
 	}
 }
 
-func (s *Server) trackOpenAINonStreamingUsage(reqIdx int, body []byte, threadID string, project string, estimatedTokens, msgCount int) {
+func (s *Server) trackOpenAINonStreamingUsage(reqIdx int, body []byte, threadID string, estimatedTokens, msgCount int) {
 	var parsed struct {
 		Model string         `json:"model"`
 		Usage map[string]any `json:"usage"`
@@ -849,10 +883,10 @@ func (s *Server) trackOpenAINonStreamingUsage(reqIdx int, body []byte, threadID 
 			u.CacheReadInputTokens = int(v)
 		}
 	}
-	s.finalizeOpenAIUsage(reqIdx, threadID, project, estimatedTokens, msgCount, u, parsed.Model, "")
+	s.finalizeOpenAIUsage(reqIdx, threadID, estimatedTokens, msgCount, u, parsed.Model, "")
 }
 
-func (s *Server) finalizeOpenAIUsage(reqIdx int, threadID string, project string, estimatedTokens, msgCount int, usage *UsageTracker, model string, rlJSON string) {
+func (s *Server) finalizeOpenAIUsage(reqIdx int, threadID string, estimatedTokens, msgCount int, usage *UsageTracker, model string, rlJSON string) {
 	if usage == nil || (usage.TotalInputTokens() == 0 && usage.OutputTokens == 0) {
 		return
 	}
@@ -867,7 +901,6 @@ func (s *Server) finalizeOpenAIUsage(reqIdx int, threadID string, project string
 	if threadID != "" && s.cfg.DataDir != "" {
 		go s.queryDaemon("_track_usage", map[string]any{
 			"thread_id":          threadID,
-			"project":            project,
 			"input_tokens":       usage.TotalInputTokens(),
 			"output_tokens":      usage.OutputTokens,
 			"cache_read_tokens":  usage.CacheReadInputTokens,
