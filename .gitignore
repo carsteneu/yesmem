@@ -35,3 +35,4 @@ dbstats
 bunfig.toml
 yesmem_demo*.cast
 **/PACKAGE.md
+--help/

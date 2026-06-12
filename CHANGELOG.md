@@ -9,8 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add anthropic provider to opencode.json defaults
 - Config option agents.default_backend replaces PATH-based default
 - Hybrid_search date pre-filtering for vector and AQ lanes
+
+### Testing
+
+- Remove --pure flag expectation from opencode stdin args
 
 ## [2.1.16] - 2026-06-10
 
