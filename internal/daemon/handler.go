@@ -15,8 +15,8 @@ import (
 	"github.com/carsteneu/yesmem/internal/extraction"
 	"github.com/carsteneu/yesmem/internal/indexer"
 	"github.com/carsteneu/yesmem/internal/sanitize"
-	_ "modernc.org/sqlite" // opencode session tracking
 	"github.com/carsteneu/yesmem/internal/storage"
+	_ "modernc.org/sqlite" // opencode session tracking
 )
 
 func timeNow() time.Time { return time.Now() }
@@ -31,19 +31,19 @@ func (h *Handler) onMutation() {
 
 // Handler processes socket requests using the daemon's resources.
 type Handler struct {
-	store            *storage.Store
-	bloom            *bloom.Manager
-	dataDir          string        // ~/.claude/yesmem/ — set by daemon after construction
-	agentTerminal    string        // preferred terminal for agent windows — set by daemon from config
-	agentMaxRuntime  time.Duration // max runtime per agent — set by daemon from config
-	scheduler        *Scheduler
-	agentMaxTurns    int           // max relay turns per agent — set by daemon from config
-	agentMaxDepth    int           // max spawn depth — set by daemon from config
-	agentTokenBudget      int            // max tokens per agent — set by daemon from config
-	agentDefaultBackend   string         // default agent backend — set by daemon from config
-	defaultSandboxProfile SandboxProfile // default sandbox for scheduled jobs — set by daemon from config
-	httpRPCAddr    string // HTTP API listen address for bun MCP polyfill (e.g. 127.0.0.1:9377)
-	httpAuthToken  string // bearer token for HTTP API authentication
+	store                 *storage.Store
+	bloom                 *bloom.Manager
+	dataDir               string        // ~/.claude/yesmem/ — set by daemon after construction
+	agentTerminal         string        // preferred terminal for agent windows — set by daemon from config
+	agentMaxRuntime       time.Duration // max runtime per agent — set by daemon from config
+	scheduler             *Scheduler
+	agentMaxTurns         int                // max relay turns per agent — set by daemon from config
+	agentMaxDepth         int                // max spawn depth — set by daemon from config
+	agentTokenBudget      int                // max tokens per agent — set by daemon from config
+	agentDefaultBackend   string             // default agent backend — set by daemon from config
+	defaultSandboxProfile SandboxProfile     // default sandbox for scheduled jobs — set by daemon from config
+	httpRPCAddr           string             // HTTP API listen address for bun MCP polyfill (e.g. 127.0.0.1:9377)
+	httpAuthToken         string             // bearer token for HTTP API authentication
 	redactor              sanitize.Sanitizer // optional; nil = passthrough
 
 	// Optional: vector search (set via SetEmbedding)
@@ -90,8 +90,8 @@ type Handler struct {
 	// LLM provider config for on-the-fly client creation (llm_complete RPC)
 	LLMProvider         string // e.g. "opencode", "api", "openai"
 	LLMCompleteProvider string // override for handleLLMComplete (empty = use LLMProvider)
-	LLMAPIKey   string
-	LLMBaseURL  string
+	LLMAPIKey           string
+	LLMBaseURL          string
 
 	// Optional: LLM client for commit-triggered staleness evaluation
 	CommitEvalClient extraction.LLMClient
@@ -546,6 +546,8 @@ func (h *Handler) Handle(req Request) Response {
 		return h.handleResumeAgent(h.resolveProjectParam(req.Params))
 	case "_track_usage":
 		return h.handleTrackUsage(req.Params)
+	case "track_stream_state":
+		return h.handleTrackStreamState(req.Params)
 	case "_persist_rate_limits":
 		return h.handlePersistRateLimits(req.Params)
 	case "list_agents":

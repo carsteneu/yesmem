@@ -85,13 +85,26 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 	ct := resp.Header.Get("Content-Type")
 	isSSE := strings.Contains(ct, "text/event-stream")
 	if !isSSE {
+		// Non-SSE response — track stream start/stop
+		isSub := isSubagentFromBody(body)
+		if threadID != "" {
+			go s.trackStreamState(threadID, true, 0, isSub, proj)
+		}
+
 		// Read body to extract usage, then write to client
 		bodyBytes, readErr := io.ReadAll(responseBody)
 		if readErr != nil {
 			s.logger.Printf("[req %d] read error: %v", reqIdx, readErr)
+			if threadID != "" {
+				go s.trackStreamState(threadID, false, 0, isSub, proj)
+			}
 			return
 		}
 		w.Write(bodyBytes)
+
+		if threadID != "" {
+			go s.trackStreamState(threadID, false, int64(len(bodyBytes)), isSub, proj)
+		}
 
 		// Parse usage from JSON response
 		var jsonResp struct {
@@ -114,7 +127,6 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 			if threadID != "" {
 				go s.queryDaemon("_track_usage", map[string]any{
 					"thread_id":          threadID,
-					"project":            proj,
 					"input_tokens":       jsonResp.Usage.InputTokens,
 					"output_tokens":      jsonResp.Usage.OutputTokens,
 					"cache_read_tokens":  jsonResp.Usage.CacheReadInputTokens,
@@ -128,7 +140,9 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 			// Update cache status writer
 			s.cacheStatusWriter.Update(time.Now(),
 				jsonResp.Usage.InputTokens, jsonResp.Usage.CacheReadInputTokens, jsonResp.Usage.CacheCreationInputTokens, threadID)
-			var fwdModel struct{ Model string `json:"model"` }
+			var fwdModel struct {
+				Model string `json:"model"`
+			}
 			json.Unmarshal(body, &fwdModel)
 			s.cacheStatusWriter.UpdateThresholdForThread(threadID, s.effectiveTokenThreshold(fwdModel.Model))
 			// Feed TTL detector and reset keepalive (non-streaming path)
@@ -177,12 +191,22 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 	// Accumulate full response text for async reflection call
 	var fullResponseText strings.Builder
 
+	// Stream tracking: notify daemon on first event and track total client bytes
+	var streamStarted bool
+	var totalClientBytes int64
+	isSub := isSubagentFromBody(body)
+
 	for {
 		line, readErr := reader.ReadBytes('\n')
 		if len(line) > 0 {
 			trimmedLine := bytes.TrimSpace(line)
 
 			if bytes.HasPrefix(trimmedLine, []byte("data: ")) {
+				// Stream tracking: notify daemon on first SSE event
+				if !streamStarted && threadID != "" {
+					streamStarted = true
+					go s.trackStreamState(threadID, true, 0, isSub, proj)
+				}
 				data := bytes.TrimPrefix(trimmedLine, []byte("data: "))
 				data = bytes.TrimSpace(data)
 
@@ -214,8 +238,12 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 						deflatedLine = append(deflatedLine, '\n')
 						if _, writeErr := w.Write(deflatedLine); writeErr != nil {
 							s.logger.Printf("[req %d] write error: %v", reqIdx, writeErr)
+							if threadID != "" {
+								go s.trackStreamState(threadID, false, totalClientBytes, isSub, proj)
+							}
 							return
 						}
+						totalClientBytes += int64(len(deflatedLine))
 						if canFlush {
 							flusher.Flush()
 						}
@@ -227,8 +255,12 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 
 			if _, writeErr := w.Write(line); writeErr != nil {
 				s.logger.Printf("[req %d] write error: %v", reqIdx, writeErr)
+				if threadID != "" {
+					go s.trackStreamState(threadID, false, totalClientBytes, isSub, proj)
+				}
 				return
 			}
+			totalClientBytes += int64(len(line))
 			if canFlush {
 				flusher.Flush()
 			}
@@ -237,6 +269,11 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 		if readErr != nil {
 			break
 		}
+	}
+
+	// Notify daemon that stream ended
+	if threadID != "" {
+		go s.trackStreamState(threadID, false, totalClientBytes, isSub, proj)
 	}
 
 	// Task #3: Log real usage
@@ -256,7 +293,6 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 		if threadID != "" {
 			go s.queryDaemon("_track_usage", map[string]any{
 				"thread_id":          threadID,
-				"project":            proj,
 				"input_tokens":       usage.TotalInputTokens(),
 				"output_tokens":      usage.OutputTokens,
 				"cache_read_tokens":  usage.CacheReadInputTokens,
@@ -271,7 +307,9 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 		// Update cache status writer (background goroutine writes to disk every second)
 		s.cacheStatusWriter.Update(time.Now(),
 			usage.TotalInputTokens(), usage.CacheReadInputTokens, usage.CacheCreationInputTokens, threadID)
-		var fwdModel struct{ Model string `json:"model"` }
+		var fwdModel struct {
+			Model string `json:"model"`
+		}
 		json.Unmarshal(body, &fwdModel)
 		s.cacheStatusWriter.UpdateThresholdForThread(threadID, s.effectiveTokenThreshold(fwdModel.Model))
 
@@ -310,10 +348,10 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 		// Persist proxy usage tokens (fire-and-forget)
 		go func(u *UsageTracker) {
 			s.queryDaemon("track_proxy_usage", map[string]any{
-				"input_tokens":           u.InputTokens,
-				"output_tokens":          u.OutputTokens,
-				"cache_read_tokens":      u.CacheReadInputTokens,
-				"cache_creation_tokens":  u.CacheCreationInputTokens,
+				"input_tokens":          u.InputTokens,
+				"output_tokens":         u.OutputTokens,
+				"cache_read_tokens":     u.CacheReadInputTokens,
+				"cache_creation_tokens": u.CacheCreationInputTokens,
 			})
 		}(usage)
 
@@ -475,4 +513,39 @@ func (s *Server) evictOldAnnotations() {
 		count++
 	}
 	s.logger.Printf("evicted %d annotations (was %d, now %d)", count, maxAnnotations, len(s.annotations))
+}
+
+// trackStreamState notifies the daemon about SSE stream state changes.
+// Must be called via goroutine (fire-and-forget) so it never blocks the SSE forward loop.
+func (s *Server) trackStreamState(threadID string, active bool, bytesSoFar int64, isSubagent bool, project string) {
+	if s.cfg.DataDir == "" {
+		return
+	}
+	s.queryDaemon("track_stream_state", map[string]any{
+		"thread_id":     threadID,
+		"stream_active": active,
+		"bytes_so_far":  bytesSoFar,
+		"is_subagent":   isSubagent,
+		"project":       project,
+	})
+}
+
+// isSubagentFromBody checks whether the request body indicates a subagent.
+// Parses metadata.user_id.agent_type from the JSON body.
+func isSubagentFromBody(body []byte) bool {
+	var req struct {
+		Metadata struct {
+			UserID string `json:"user_id"`
+		} `json:"metadata"`
+	}
+	if json.Unmarshal(body, &req) != nil || req.Metadata.UserID == "" {
+		return false
+	}
+	var parsed struct {
+		AgentType string `json:"agent_type"`
+	}
+	if json.Unmarshal([]byte(req.Metadata.UserID), &parsed) != nil {
+		return false
+	}
+	return parsed.AgentType == "subagent"
 }

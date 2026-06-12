@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Agent stream-activity tracking
 - Add anthropic provider to opencode.json defaults
 - Config option agents.default_backend replaces PATH-based default
 - Hybrid_search date pre-filtering for vector and AQ lanes
@@ -16,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Add --help/ to .gitignore
+
+### Fixed
+
+- Implement parentSubagentCounts, fix subagent_streams for parents without own stream
+
+### Documentation
+
+- Add hierarchical autonomous orchestration design
 
 ### Testing
 
