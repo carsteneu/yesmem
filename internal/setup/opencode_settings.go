@@ -41,6 +41,11 @@ func defaultOpencodeSettings() map[string]any {
 					},
 				},
 			},
+			"anthropic": map[string]any{
+				"options": map[string]any{
+					"baseURL": "http://localhost:9099/v1",
+				},
+			},
 		},
 		"mcp": map[string]any{
 			"yesmem": map[string]any{
@@ -171,6 +176,7 @@ func removeOpencodeProviders(cfg map[string]any) {
 	}
 	delete(provider, "deepseek")
 	delete(provider, "openai")
+	delete(provider, "anthropic")
 	if len(provider) == 0 {
 		delete(cfg, "provider")
 	}

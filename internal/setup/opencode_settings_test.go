@@ -28,6 +28,14 @@ func TestDefaultOpencodeSettings_HasRequiredKeys(t *testing.T) {
 	if provider["openai"] == nil {
 		t.Error("missing provider.openai")
 	}
+	anthropic, ok := provider["anthropic"].(map[string]any)
+	if !ok {
+		t.Fatal("missing provider.anthropic")
+	}
+	anthropicOpts, ok := anthropic["options"].(map[string]any)
+	if !ok || anthropicOpts["baseURL"] != "http://localhost:9099/v1" {
+		t.Errorf("provider.anthropic.options.baseURL should be http://localhost:9099/v1, got %v", anthropic["options"])
+	}
 
 	mcp := s["mcp"].(map[string]any)
 	yesmem, ok := mcp["yesmem"].(map[string]any)
@@ -61,9 +69,10 @@ func TestDefaultOpencodeSettings_HasRequiredKeys(t *testing.T) {
 func TestRemoveOpencodeProviders(t *testing.T) {
 	cfg := map[string]any{
 		"provider": map[string]any{
-			"deepseek": map[string]any{"options": map[string]any{"baseURL": "x"}},
-			"openai":   map[string]any{"options": map[string]any{"baseURL": "x"}},
-			"custom":   map[string]any{"options": map[string]any{"baseURL": "y"}},
+			"deepseek":  map[string]any{"options": map[string]any{"baseURL": "x"}},
+			"openai":    map[string]any{"options": map[string]any{"baseURL": "x"}},
+			"anthropic": map[string]any{"options": map[string]any{"baseURL": "x"}},
+			"custom":    map[string]any{"options": map[string]any{"baseURL": "y"}},
 		},
 	}
 
@@ -76,6 +85,9 @@ func TestRemoveOpencodeProviders(t *testing.T) {
 	if provider["openai"] != nil {
 		t.Error("openai provider not removed")
 	}
+	if provider["anthropic"] != nil {
+		t.Error("anthropic provider not removed")
+	}
 	if provider["custom"] == nil {
 		t.Error("custom provider was incorrectly removed")
 	}
@@ -84,8 +96,9 @@ func TestRemoveOpencodeProviders(t *testing.T) {
 func TestRemoveOpencodeProviders_AllYesMem(t *testing.T) {
 	cfg := map[string]any{
 		"provider": map[string]any{
-			"deepseek": map[string]any{"options": nil},
-			"openai":   map[string]any{"options": nil},
+			"deepseek":  map[string]any{"options": nil},
+			"openai":    map[string]any{"options": nil},
+			"anthropic": map[string]any{"options": nil},
 		},
 	}
 
