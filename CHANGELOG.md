@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add reddit_fetch bundled skill (v12, HTML scraping docs)
 - Reddit_fetch v4 — old.reddit.com HTML scraping statt gebrochener .json API
 
 ### Fixed
