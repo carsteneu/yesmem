@@ -61,6 +61,7 @@ type Config struct {
 	PromptOutputDiscipline   bool   // inject [yesmem-output-discipline] no-preamble + no-skill-eval + exploratory-heuristic
 	PromptCodingDiscipline   bool   // inject [yesmem-coding-discipline] read-before-propose + no-brute-force + no-half-finished
 	PromptBeweislast         bool   // inject [yesmem-beweislast] fabrication-guard + claim-vs-proof + stance-under-challenge + tool-result-honesty + long-context-erosion
+	PromptFable              bool   // inject [yesmem-fable] baseline-comparison + rollback-path + readback-check for high-stakes changes
 	PromptScopeDiscipline    bool   // inject [yesmem-scope-discipline] deliver-A-not-A+B+C + adjacent-findings-separate + scope-bound-authorization
 	PromptDelegationContract bool   // inject [yesmem-delegation-contract] self-contained-prompts + parallel-dispatch
 	PromptClarifyFirst       bool   // inject [yesmem-clarify-first] clarify only when alternative interpretations produce materially different work
@@ -978,6 +979,9 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		if pf.Beweislast {
 			InjectBeweislast(req)
 		}
+		if pf.Fable {
+			InjectFable(req)
+		}
 		if pf.ScopeDiscipline {
 			InjectScopeDiscipline(req)
 		}
@@ -1807,6 +1811,7 @@ func (s *Server) getPromptFlags(profile models.PromptProfile) *config.PromptFlag
 		OutputDiscipline:   s.cfg.PromptOutputDiscipline,
 		CodingDiscipline:   s.cfg.PromptCodingDiscipline,
 		Beweislast:         s.cfg.PromptBeweislast,
+		Fable:              s.cfg.PromptFable,
 		ScopeDiscipline:    s.cfg.PromptScopeDiscipline,
 		DelegationContract: s.cfg.PromptDelegationContract,
 		ClarifyFirst:       s.cfg.PromptClarifyFirst,

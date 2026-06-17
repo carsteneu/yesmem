@@ -72,7 +72,9 @@ When invoked from an interactive session, **do NOT execute the pipeline yourself
 - If issues found → fix and re-verify (**max 3 cycles** — see CONVERGENCE GATE)
 - → scratchpad_write: verification results
 
-### Phase 5: REVIEW (Inline Self-Review)
+### Phase 5: REVIEW (Two-Stage: Self + Cold)
+
+**Stage 1 — Self-Review** (catches mechanical issues: dead code, error handling, style):
 - **Get the full delta** (committed + uncommitted): `git diff origin/main` + `git log origin/main..HEAD --oneline`
 - **Review against the plan** from Phase 2. Check each requirement.
 - **Checklist** (derived from superpowers code-review structure):
@@ -86,16 +88,28 @@ When invoked from an interactive session, **do NOT execute the pipeline yourself
   - **Issues** — Critical (bugs, security, data loss) / Important (architecture, missing features, test gaps) / Minor (style, polish)
   - **Recommendations** — improvements for code quality, architecture, or process
   - **Assessment** — Ready to merge? [Yes | With fixes | No] + 1-2 sentence reasoning
-- **GATES:**
+
+**Stage 2 — Cold Review via task()** (fresh eyes, catches architectural blind spots, scope creep):
+- Dispatch a focused task()-subagent with the code-reviewer template (derived from superpowers requesting-code-review):
+  - **Description:** "Review code changes"
+  - **Input:** git diff origin/main + Phase 2 plan (no exploration — diff + plan only for speed)
+  - **Checklist:** Plan alignment, Code quality, Architecture, Testing, Production readiness + End-to-End perspective
+  - **Calibration:** Categorize by actual severity. Not everything is Critical. Acknowledge strengths first.
+  - **Output format:** Strengths, Issues (Critical/Important/Minor with file:line references + reasoning), Recommendations, Assessment
+- **Fallback:** If task() fails or times out → Self-Review result stands. The cold review is additive, not a blocker.
+
+**Merging & Resolution:**
+- Merge findings from both stages into a unified issues list (deduplicate, preserve highest severity)
+- **Unified GATES:**
   - **ALL findings must be fixed autonomously** — no user feedback, no escalation for fixable issues
   - Critical + Important issues → fix immediately, max 3 cycles per issue (CONVERGENCE GATE)
   - Minor issues → fix if < 2 min each, otherwise document and proceed
-  - After fixes → re-review the changed files once to confirm resolution
+  - After fixes → loop back to Phase 4 VERIFY to re-run tests, then re-review changed files (max 3 REVIEW→VERIFY cycles total, see CONVERGENCE GATE)
   - Assessment "No" (unfixable, architectural dead-end) → **STOP**, escalate via send_to: "REVIEW BLOCKED: <reasons>"
-  - Assessment "With fixes" → apply all fixes, confirm via re-review, then proceed
+  - Assessment "With fixes" → apply all fixes, re-run VERIFY to confirm tests pass, re-review final diff, then proceed
   - **Never leave fixable issues for the user** — the review is a work phase, not an advisory step
-- **Git diff verification:** After reading `git show` or `git diff` output, ALWAYS `Read` the current file to confirm — diffs show what changed, not what's there NOW (gotcha #66986)
-- → scratchpad_write: full review result in structured format
+- **Git diff verification:** After reading `git show` or `git diff` output, ALWAYS `Read` the current file to confirm — diffs show what changed, not what's there NOW
+- → scratchpad_write: unified review result in structured format (note which stage found each issue)
 - → update_agent_status(phase="Phase 5/6 REVIEW: <assessment>")
 
 ### Phase 6: FINISH

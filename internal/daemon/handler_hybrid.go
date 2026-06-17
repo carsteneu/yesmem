@@ -635,12 +635,8 @@ func (h *Handler) resolveSupersededResults(results []embedding.RankedResult) []e
 		}
 	}
 
-	redirects, err := h.store.ResolveSupersededIDs(ids)
-	if err != nil || len(redirects) == 0 {
-		return results
-	}
-
-	// Build output with redirects applied, dedup by active ID
+	// Phase 1: Redirect superseded learnings to active successors
+	redirects, _ := h.store.ResolveSupersededIDs(ids)
 	seen := map[string]bool{}
 	out := make([]embedding.RankedResult, 0, len(results))
 	for _, r := range results {
@@ -649,20 +645,19 @@ func (h *Handler) resolveSupersededResults(results []embedding.RankedResult) []e
 			if target <= 0 {
 				continue // negative supersede ID = bulk-resolved, no valid successor
 			}
-			// Superseded → load active successor
 			active, err := h.store.GetLearning(target)
 			if err != nil {
-				continue // successor not found, skip
+				continue
 			}
 			activeID := strconv.FormatInt(active.ID, 10)
 			if seen[activeID] {
-				continue // already in results
+				continue
 			}
 			seen[activeID] = true
 			out = append(out, embedding.RankedResult{
 				ID:      activeID,
 				Content: active.Content,
-				Score:   r.Score * 0.7, // penalty: found via old content, new content may have drifted
+				Score:   r.Score * 0.7, // penalty: found via old content
 				Source:  r.Source,
 				Project: active.Project,
 			})
@@ -674,7 +669,42 @@ func (h *Handler) resolveSupersededResults(results []embedding.RankedResult) []e
 			out = append(out, r)
 		}
 	}
+
+	// Phase 2: Staleness penalty — reduce score for learnings with high staleness_score
+	if len(out) > 0 {
+		var outIDs []int64
+		for _, r := range out {
+			if id, err := strconv.ParseInt(r.ID, 10, 64); err == nil {
+				outIDs = append(outIDs, id)
+			}
+		}
+		scores, err := h.store.GetStalenessScores(outIDs)
+		if err == nil && len(scores) > 0 {
+			out = applyStalenessPenalty(out, scores)
+		}
+	}
+
 	return out
+}
+
+// applyStalenessPenalty applies staleness score penalty to results.
+// staleness_score >= 0.8 → 0.5×, staleness_score >= 0.5 → 0.8×
+func applyStalenessPenalty(results []embedding.RankedResult, scores map[int64]float64) []embedding.RankedResult {
+	if len(scores) == 0 {
+		return results
+	}
+	for i, r := range results {
+		if id, err := strconv.ParseInt(r.ID, 10, 64); err == nil {
+			if ss, ok := scores[id]; ok {
+				if ss >= 0.8 {
+					results[i].Score *= 0.5
+				} else if ss >= 0.5 {
+					results[i].Score *= 0.8
+				}
+			}
+		}
+	}
+	return results
 }
 
 // augmentWithGraphNeighbors expands search results with graph-connected learnings.

@@ -126,6 +126,13 @@ type Learning struct {
 	ImpactScore float64 `json:"impact_score"`
 	ImpactCount int     `json:"impact_count"`
 
+	// Staleness detection (v0.64)
+	StalenessScore     float64 `json:"staleness_score,omitempty"`
+	StalenessReason    string  `json:"staleness_reason,omitempty"`
+	StalenessCheckedAt string  `json:"staleness_checked_at,omitempty"`
+	StalenessType      string  `json:"staleness_type,omitempty"`
+	CodeFingerprint    string  `json:"code_fingerprint,omitempty"`
+
 	// Computed (not persisted) — loaded from sessions table during enrichment
 	SessionFixationRatio float64 `json:"session_fixation_ratio,omitempty"`
 	CurrentTurnCount     int64   `json:"current_turn_count,omitempty"` // set by caller before scoring

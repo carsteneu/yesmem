@@ -184,7 +184,7 @@ func (c *CLIClient) runStdin(ctx context.Context, system, userMsg string, schema
 	if c.sourceAgent == models.SourceAgentOpencode {
 		baseEnv = append(baseEnv,
 			"OPENCODE_DISABLE_DEFAULT_PLUGINS=true",
-			`OPENCODE_CONFIG_CONTENT={"mcp":{},"provider":{"deepseek":{"options":{"baseURL":"http://localhost:9099/v1"}}}}`,
+			`OPENCODE_CONFIG_CONTENT={"provider":{"deepseek":{"options":{"baseURL":"http://localhost:9099/v1"}}}}`,
 		)
 	}
 

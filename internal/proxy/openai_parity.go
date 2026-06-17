@@ -187,6 +187,9 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 	if pf.Beweislast {
 		InjectBeweislast(req)
 	}
+	if pf.Fable {
+		InjectFable(req)
+	}
 	if pf.ScopeDiscipline {
 		InjectScopeDiscipline(req)
 	}

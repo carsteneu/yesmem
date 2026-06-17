@@ -843,6 +843,25 @@ func Run(cfg Config) error {
 		startRulesWatch(daemonCtx, store, rulesClient)
 	}()
 
+	// ━━━ Staleness tick — periodic git commit scan, LLM-based learning freshness evaluation ━━━
+	go func() {
+		// Wait for CommitEvalClient (set asynchronously during extraction init).
+		// Give up after 2 minutes if the client never materializes (e.g. LLM disabled).
+		const stalenessStartupTimeout = 2 * time.Minute
+		deadline := time.After(stalenessStartupTimeout)
+		for handler.CommitEvalClient == nil {
+			select {
+			case <-daemonCtx.Done():
+				return
+			case <-deadline:
+				log.Printf("[staleness-tick] CommitEvalClient not available after %v, disabling staleness scan", stalenessStartupTimeout)
+				return
+			case <-time.After(10 * time.Second):
+			}
+		}
+		startStalenessTick(daemonCtx, handler, cfg.ProjectsDir)
+	}()
+
 	// ━━━ Briefing refinement background job ━━━
 	go func() {
 		// Wait for appCfg + API key

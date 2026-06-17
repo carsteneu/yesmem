@@ -461,6 +461,12 @@ var migrations = []string{
 		`ALTER TABLE learnings ADD COLUMN attribution TEXT NOT NULL DEFAULT ''`,
 		// v0.63: Flavor learnings count on sessions for grounding check
 		`ALTER TABLE sessions ADD COLUMN flavor_learnings_count INTEGER NOT NULL DEFAULT -1`,
+		// v0.64: Staleness detection — score instead of binary resolve, fingerprint for change detection
+		`ALTER TABLE learnings ADD COLUMN staleness_score REAL DEFAULT 0.0`,
+		`ALTER TABLE learnings ADD COLUMN staleness_reason TEXT DEFAULT ''`,
+		`ALTER TABLE learnings ADD COLUMN staleness_checked_at TEXT DEFAULT ''`,
+		`ALTER TABLE learnings ADD COLUMN staleness_type TEXT DEFAULT ''`,
+		`ALTER TABLE learnings ADD COLUMN code_fingerprint TEXT DEFAULT ''`,
 	}
 
 // messagesMigrations runs against messages.db (separate from yesmem.db migrations).
@@ -559,7 +565,12 @@ const tableLearnings = `CREATE TABLE IF NOT EXISTS learnings (
 	source_agent        TEXT NOT NULL DEFAULT '',
 	target_agent        TEXT NOT NULL DEFAULT '',
 	canonical_project   TEXT NOT NULL DEFAULT '',
-	attribution         TEXT NOT NULL DEFAULT ''
+	attribution         TEXT NOT NULL DEFAULT '',
+	staleness_score     REAL,                           -- v0.64: 0.0=valid, 1.0=stale, NULL=unchecked
+	staleness_reason    TEXT DEFAULT '',                -- v0.64: LLM rationale
+	staleness_checked_at TEXT,                          -- v0.64: ISO timestamp of last check
+	staleness_type      TEXT DEFAULT '',                -- v0.64: code_contradicts|code_removed|code_renamed|code_changed_insight_holds
+	code_fingerprint    TEXT DEFAULT ''                 -- v0.64: SHA256 of code at learning creation
 )`
 
 const tableAssociations = `CREATE TABLE IF NOT EXISTS associations (
