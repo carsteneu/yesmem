@@ -105,7 +105,7 @@ The dialog system is designed for seamless migration to Claude Code Channels whe
 - **Dialog is for questions, not knowledge transfer** — use `remember()` to persist, dialog to discuss
 - **No auto-extract from dialogs** — only explicit `remember()` from dialog context becomes a learning (prevents agents from burning false info into each other)
 - **Proxy over hooks** — proxy sees every request with correct session_id from metadata; hooks have timing issues and daemon restart fragility
-- **Shared Scratchpad** — structured whiteboard for n:n collaboration. Each agent writes its own section (`scratchpad_write`), all agents read the full document each turn (`scratchpad_read`). CRUD via MCP tools: `scratchpad_write`, `scratchpad_read`, `scratchpad_list`, `scratchpad_delete`.
+- **Shared Scratchpad** — structured whiteboard for n:n collaboration. Each agent writes its own section (`scratchpad_write`) and reads its own section each turn (`scratchpad_read`); the orchestrator reads the full document for cross-agent visibility. CRUD via MCP tools: `scratchpad_write`, `scratchpad_read`, `scratchpad_list`, `scratchpad_delete`.
 
 ### 22.10 Agent Orchestrator (Daemon-Managed Agents)
 

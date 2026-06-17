@@ -1,13 +1,16 @@
 package daemon
 
 import (
+	"bufio"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -134,6 +137,146 @@ func (h *Handler) handleSpawnAgent(params map[string]any) Response {
 	})
 }
 
+// codexSessionFile holds a path and modification time for sorting.
+type codexSessionFile struct {
+	path    string
+	modTime time.Time
+}
+
+// findCodexSessionID scans ~/.codex/sessions/ for the most recent session
+// whose CWD matches workDir. Returns the Codex session ID (without "codex:" prefix).
+func findCodexSessionID(workDir string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("home dir: %w", err)
+	}
+	sessionsRoot := filepath.Join(home, ".codex", "sessions")
+
+	var files []codexSessionFile
+	walkErr := filepath.Walk(sessionsRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // skip inaccessible
+		}
+		if info.IsDir() || filepath.Ext(path) != ".jsonl" {
+			return nil
+		}
+		files = append(files, codexSessionFile{path: path, modTime: info.ModTime()})
+		return nil
+	})
+	if walkErr != nil {
+		return "", fmt.Errorf("walk sessions: %w", walkErr)
+	}
+
+	// Most recent first
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].modTime.After(files[j].modTime)
+	})
+
+	for _, f := range files {
+		file, err := os.Open(f.path)
+		if err != nil {
+			continue
+		}
+		scanner := bufio.NewScanner(file)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			var line struct {
+				Type    string          `json:"type"`
+				Payload json.RawMessage `json:"payload"`
+			}
+			if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
+				continue
+			}
+			if line.Type != "session_meta" {
+				continue
+			}
+			var meta struct {
+				ID  string `json:"id"`
+				CWD string `json:"cwd"`
+			}
+			if err := json.Unmarshal(line.Payload, &meta); err != nil {
+				continue
+			}
+			if meta.CWD == workDir && meta.ID != "" {
+				file.Close()
+				return meta.ID, nil
+			}
+			// Skip non-matching session_meta and continue scanning the file;
+			// codex may write multiple session_meta lines in future versions.
+		}
+		file.Close()
+	}
+
+	return "", fmt.Errorf("no codex session found for workDir %s", workDir)
+}
+
+// pollCodexSessionID waits for a codex session file to appear for the given
+// workDir and returns its session ID. Returns "" on timeout.
+func pollCodexSessionID(workDir string, timeout time.Duration) string {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		sid, err := findCodexSessionID(workDir)
+		if err == nil && sid != "" {
+			return sid
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return ""
+}
+
+// pollOpencodeSessionID queries the opencode database via sqlite3 CLI for
+// the most recent session matching workDir and returns its session ID.
+// Returns "" on timeout or error.
+func pollOpencodeSessionID(workDir string, timeout time.Duration) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	dbPath := filepath.Join(home, ".local", "share", "opencode", "opencode.db")
+	if _, err := os.Stat(dbPath); err != nil {
+		return ""
+	}
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		// sqlite3 CLI does not support ? placeholders; escape the workDir manually.
+		escaped := strings.ReplaceAll(workDir, "'", "''")
+		query := fmt.Sprintf("SELECT id FROM session WHERE directory = '%s' ORDER BY time_created DESC LIMIT 1", escaped)
+		out, err := exec.Command("sqlite3", dbPath, query).Output()
+		if err == nil && len(out) > 0 {
+			sid := strings.TrimSpace(string(out))
+			if sid != "" {
+				return sid
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return ""
+}
+
+// loadCodexAuthEnv reads ~/.codex/auth.json and returns "OPENAI_API_KEY=..." if present.
+func loadCodexAuthEnv() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	authPath := filepath.Join(home, ".codex", "auth.json")
+	data, err := os.ReadFile(authPath)
+	if err != nil {
+		return "", err
+	}
+	var auth struct {
+		OPENAI_API_KEY string `json:"OPENAI_API_KEY"`
+	}
+	if err := json.Unmarshal(data, &auth); err != nil {
+		return "", err
+	}
+	if auth.OPENAI_API_KEY == "" {
+		return "", fmt.Errorf("no OPENAI_API_KEY in auth.json")
+	}
+	return "OPENAI_API_KEY=" + auth.OPENAI_API_KEY, nil
+}
+
 // spawnAgentProcess creates a PTY bridge, opens a terminal, and waits for the agent to finish.
 func (h *Handler) spawnAgentProcess(id, sessionID, project, section, prompt, sockPath, workDir, backend, model string, maxTurns int, resume bool) {
 	var agentBin string
@@ -141,36 +284,52 @@ func (h *Handler) spawnAgentProcess(id, sessionID, project, section, prompt, soc
 
 	switch backend {
 	case "opencode":
-		if resume {
-			h.store.AgentUpdate(id, map[string]any{
-				"status":     "error",
-				"error":      "resume is only supported for claude agents",
-				"stopped_at": time.Now().Format(time.RFC3339),
-			})
-			return
-		}
 		agentBin = resolveAgentBinary(backend)
-		// TUI mode — prompt wird via PTY inject gesendet
-		agentArgs = []string{}
+		if resume {
+			// Prefer stored per-agent opencode session ID.
+			sid := sessionID
+			if agent, _ := h.store.AgentGet(id); agent != nil && agent.OpencodeSessionID != "" {
+				sid = agent.OpencodeSessionID
+			}
+			agentArgs = []string{"-s", sid}
+		} else {
+			agentArgs = []string{}
+		}
 		if model != "" {
-			agentArgs = []string{"--model", fmt.Sprintf("deepseek/%s", model)}
+			agentArgs = append(agentArgs, "--model", fmt.Sprintf("deepseek/%s", model))
 		}
 	case "codex":
-		if resume {
-			h.store.AgentUpdate(id, map[string]any{
-				"status":     "error",
-				"error":      "resume is only supported for claude agents",
-				"stopped_at": time.Now().Format(time.RFC3339),
-			})
-			return
-		}
 		agentBin = resolveAgentBinary(backend)
-		agentArgs = []string{
-			"--cd", workDir,
-			"--full-auto",
-			"--no-alt-screen",
-			"-c", fmt.Sprintf("approval_policy={granular={mcp_elicitations=true,sandbox_approval=true,rules=true,request_permissions=true,skill_approval=true}}"),
-			prompt,
+		if resume {
+			// Prefer stored per-agent session ID over workDir heuristic.
+			sessionID := ""
+			if agent, _ := h.store.AgentGet(id); agent != nil && agent.CodexSessionID != "" {
+				sessionID = agent.CodexSessionID
+			}
+			if sessionID == "" {
+				var err error
+				sessionID, err = findCodexSessionID(workDir)
+				if err != nil {
+					h.store.AgentUpdate(id, map[string]any{
+						"status":     "error",
+						"error":      fmt.Sprintf("codex session lookup: %v", err),
+						"stopped_at": time.Now().Format(time.RFC3339),
+					})
+					return
+				}
+			}
+			agentArgs = []string{
+				"resume", sessionID,
+				"--cd", workDir,
+				"--no-alt-screen",
+				"-c", fmt.Sprintf("approval_policy={granular={mcp_elicitations=true,sandbox_approval=true,rules=true,request_permissions=true,skill_approval=true}}"),
+			}
+		} else {
+			agentArgs = []string{
+				"--cd", workDir,
+				"--no-alt-screen",
+				"-c", fmt.Sprintf("approval_policy={granular={mcp_elicitations=true,sandbox_approval=true,rules=true,request_permissions=true,skill_approval=true}}"),
+			}
 		}
 	default: // "claude"
 		agentBin = "claude"
@@ -191,7 +350,15 @@ func (h *Handler) spawnAgentProcess(id, sessionID, project, section, prompt, soc
 		}
 	}
 
-	bridge, err := orchestrator.NewAgentBridge(agentBin, agentArgs, sockPath, workDir)
+	// Load codex auth for env injection (codex CLI needs OPENAI_API_KEY in environment)
+	var extraEnv []string
+	if backend == "codex" {
+		if key, err := loadCodexAuthEnv(); err == nil && key != "" {
+			extraEnv = append(extraEnv, key)
+		}
+	}
+
+	bridge, err := orchestrator.NewAgentBridge(agentBin, agentArgs, sockPath, workDir, extraEnv...)
 	if err != nil {
 		h.store.AgentUpdate(id, map[string]any{
 			"status":     "error",
@@ -219,6 +386,11 @@ func (h *Handler) spawnAgentProcess(id, sessionID, project, section, prompt, soc
 		})
 		return
 	}
+	// Reap terminal process on exit to prevent zombie accumulation.
+	// gnome-terminal forks itself; the immediate parent exits quickly,
+	// but without Wait() it stays as a zombie and eventually blocks
+	// gnome-terminal-server's DBus activation for future spawns.
+	go func() { termCmd.Wait() }()
 
 	h.store.AgentUpdate(id, map[string]any{
 		"pid":       bridge.Cmd.Process.Pid,
@@ -226,8 +398,8 @@ func (h *Handler) spawnAgentProcess(id, sessionID, project, section, prompt, soc
 		"status":    "running",
 	})
 
-	// Inject initial prompt via PTY — for Claude and Opencode TUI (Codex gets prompt as CLI arg)
-	if backend != "codex" && !resume {
+	// Inject initial prompt via PTY — all backends, initial spawn only
+	if !resume {
 		go func() {
 			injectPath := sockPath + ".inject"
 
@@ -252,6 +424,27 @@ func (h *Handler) spawnAgentProcess(id, sessionID, project, section, prompt, soc
 			if conn, err := net.DialTimeout("unix", injectPath, 3*time.Second); err == nil {
 				conn.Write([]byte("\r"))
 				conn.Close()
+			}
+
+			// Capture codex session ID for per-agent tracking.
+			// Codex writes session_meta to ~/.codex/sessions/ within ~2s of TUI start.
+			if backend == "codex" {
+				codexID := pollCodexSessionID(workDir, 30*time.Second)
+				if codexID != "" {
+					h.store.AgentUpdate(id, map[string]any{
+						"codex_session_id": codexID,
+					})
+				}
+			}
+			// Capture opencode session ID for per-agent tracking.
+			// OpenCode creates its session in opencode.db within ~2s of TUI start.
+			if backend == "opencode" {
+				ocID := pollOpencodeSessionID(workDir, 30*time.Second)
+				if ocID != "" {
+					h.store.AgentUpdate(id, map[string]any{
+						"opencode_session_id": ocID,
+					})
+				}
 			}
 		}()
 	}
@@ -385,15 +578,28 @@ func (h *Handler) handleRelayAgent(params map[string]any) Response {
 	wrappedContent := fmt.Sprintf("[RELAY from=%s] %s", caller, sanitized)
 
 	injectPath := agent.SockPath + ".inject"
-	conn, err := net.DialTimeout("unix", injectPath, 3*time.Second)
+
+	// Two separate connections to avoid bracketed-paste swallowing the \r.
+	// First connection: write content only (no trailing \r).
+	// Then 3s later, second connection: write only \r to submit.
+	conn1, err := net.DialTimeout("unix", injectPath, 3*time.Second)
 	if err != nil {
 		return errorResponse(fmt.Sprintf("connect to inject socket: %v (agent may have crashed)", err))
 	}
-	defer conn.Close()
-
-	if _, err := conn.Write([]byte(wrappedContent + "\r")); err != nil {
+	if _, err := conn1.Write([]byte(wrappedContent)); err != nil {
+		conn1.Close()
 		return errorResponse(fmt.Sprintf("write to inject socket: %v", err))
 	}
+	conn1.Close()
+
+	time.Sleep(3 * time.Second)
+
+	conn2, err := net.DialTimeout("unix", injectPath, 3*time.Second)
+	if err != nil {
+		return errorResponse(fmt.Sprintf("connect to inject socket for \\r: %v", err))
+	}
+	conn2.Write([]byte("\r\n"))
+	conn2.Close()
 
 	return jsonResponse(map[string]any{
 		"status":   "injected",
@@ -422,7 +628,7 @@ func (h *Handler) handleStopAgent(params map[string]any) Response {
 
 	// Try graceful exit via inject socket
 	stopped := false
-	if agent.SockPath != "" {
+	if agent.SockPath != "" && agent.Backend != "codex" {
 		injectPath := agent.SockPath + ".inject"
 		conn, err := net.DialTimeout("unix", injectPath, 3*time.Second)
 		if err == nil {
@@ -436,7 +642,14 @@ func (h *Handler) handleStopAgent(params map[string]any) Response {
 		}
 	}
 
-	// Fallback: SIGTERM
+	// Codex: inject socket Ctrl+C doesn't work in raw-mode PTY;
+	// SIGTERM triggers clean exit + session save (verified E2E).
+	if agent.Backend == "codex" && agent.PID > 0 {
+		syscall.Kill(agent.PID, syscall.SIGTERM)
+		stopped = true
+	}
+
+	// Fallback: SIGTERM for other backends
 	if !stopped && agent.PID > 0 {
 		syscall.Kill(agent.PID, syscall.SIGTERM)
 	}
@@ -525,7 +738,7 @@ func (h *Handler) handleStopAllAgents(params map[string]any) Response {
 	})
 }
 
-// handleResumeAgent restarts a stopped/frozen agent using its existing Claude session.
+// handleResumeAgent restarts a stopped/frozen agent using its existing session.
 func (h *Handler) handleResumeAgent(params map[string]any) Response {
 	to, _ := params["to"].(string)
 	project, _ := params["project"].(string)
@@ -542,8 +755,8 @@ func (h *Handler) handleResumeAgent(params map[string]any) Response {
 	if agent.Status != "stopped" && agent.Status != "frozen" {
 		return errorResponse(fmt.Sprintf("agent %s is %s, not resumable", agent.ID, agent.Status))
 	}
-	if agent.Backend != "" && agent.Backend != "claude" {
-		return errorResponse(fmt.Sprintf("agent %s uses backend %s; true resume is only supported for claude", agent.ID, agent.Backend))
+	if agent.Backend == "" {
+		agent.Backend = "claude"
 	}
 	if agent.SessionID == "" {
 		return errorResponse(fmt.Sprintf("agent %s has no session_id to resume", agent.ID))
@@ -553,7 +766,7 @@ func (h *Handler) handleResumeAgent(params map[string]any) Response {
 	}
 
 	sockPath := filepath.Join(h.dataDir, fmt.Sprintf("%s.sock", agent.ID))
-	workDir := h.resolveAgentWorkDir(agent.Project, "", "claude")
+	workDir := h.resolveAgentWorkDir(agent.Project, "", agent.Backend)
 	if err := h.store.AgentUpdate(agent.ID, map[string]any{
 		"status":      "pending",
 		"pid":         0,
@@ -565,7 +778,7 @@ func (h *Handler) handleResumeAgent(params map[string]any) Response {
 	}); err != nil {
 		return errorResponse(fmt.Sprintf("resume agent: %v", err))
 	}
-	go h.spawnAgentProcess(agent.ID, agent.SessionID, agent.Project, agent.Section, "", sockPath, workDir, "claude", "", 0, true)
+	go h.spawnAgentProcess(agent.ID, agent.SessionID, agent.Project, agent.Section, "", sockPath, workDir, agent.Backend, "", 0, true)
 
 	return jsonResponse(map[string]any{
 		"status":   "resuming",
@@ -803,6 +1016,19 @@ func resolveAgentBinary(backend string) string {
 		if path, err := exec.LookPath("node"); err == nil {
 			if dir := filepath.Dir(path); strings.Contains(dir, ".nvm") {
 				return filepath.Join(dir, "codex")
+			}
+		}
+		// Fallback: scan NVM versions directly (daemon may not have node in PATH)
+		nvmBase := filepath.Join(homeDir, ".nvm", "versions", "node")
+		if entries, err := os.ReadDir(nvmBase); err == nil {
+			for _, e := range entries {
+				if !e.IsDir() {
+					continue
+				}
+				candidate := filepath.Join(nvmBase, e.Name(), "bin", "codex")
+				if _, err := os.Stat(candidate); err == nil {
+					return candidate
+				}
 			}
 		}
 		return "codex"

@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -658,8 +660,9 @@ func TestHandleResumeAgent_NotResumable(t *testing.T) {
 	}
 }
 
-func TestHandleResumeAgent_CodexNotSupported(t *testing.T) {
+func TestHandleResumeAgent_CodexNowSupported(t *testing.T) {
 	h, s := mustHandler(t)
+	h.dataDir = t.TempDir()
 
 	s.AgentCreate(storage.Agent{
 		ID: "agent-1", Project: "proj", Section: "task",
@@ -667,12 +670,22 @@ func TestHandleResumeAgent_CodexNotSupported(t *testing.T) {
 	})
 
 	resp := h.handleResumeAgent(map[string]any{"to": "agent-1"})
-	if resp.Error == "" {
-		t.Fatal("expected error for codex backend")
+	if resp.Error != "" {
+		t.Fatalf("expected success for codex backend (now supported), got error: %s", resp.Error)
 	}
-	if !strings.Contains(resp.Error, "only supported for claude") {
-		t.Errorf("unexpected error text: %s", resp.Error)
+
+	m := resultMap(t, resp)
+	if m["status"] != "resuming" {
+		t.Errorf("status = %q, want resuming", m["status"])
 	}
+	if m["agent_id"] != "agent-1" {
+		t.Errorf("agent_id = %q, want agent-1", m["agent_id"])
+	}
+	// Note: spawned goroutine may race to set status "pending" → "error" when
+	// findCodexSessionID fails in test (no ~/.codex/sessions/). We only verify
+	// handleResumeAgent returned success — the goroutine behavior is verified
+	// implicitly by the response shape.
+	_ = s // keep reference alive
 }
 
 func TestHandleResumeAgent_NoSessionID(t *testing.T) {
@@ -1289,5 +1302,133 @@ func TestHandleTrackUsage_LazyMapping(t *testing.T) {
 	}
 	if agent.InputTokens != 300 {
 		t.Errorf("InputTokens = %d, want 300 (accumulated)", agent.InputTokens)
+	}
+}
+
+func TestHandleResumeAgent_OpenCodeNowSupported(t *testing.T) {
+	h, s := mustHandler(t)
+	h.dataDir = t.TempDir()
+
+	s.AgentCreate(storage.Agent{
+		ID: "agent-1", Project: "proj", Section: "task",
+		SessionID: "sess-1", Status: "stopped", Backend: "opencode",
+	})
+
+	resp := h.handleResumeAgent(map[string]any{"to": "agent-1"})
+	if resp.Error != "" {
+		t.Fatalf("expected success for opencode backend (now supported), got error: %s", resp.Error)
+	}
+
+	m := resultMap(t, resp)
+	if m["status"] != "resuming" {
+		t.Errorf("status = %q, want resuming", m["status"])
+	}
+	_ = s
+}
+
+// --- findCodexSessionID ---
+
+func TestFindCodexSessionID_Success(t *testing.T) {
+	sessionsRoot := t.TempDir()
+	workDir := "/tmp/test-workdir"
+
+	jsonl := filepath.Join(sessionsRoot, "session-abc.jsonl")
+	if err := os.WriteFile(jsonl, []byte(
+		`{"type":"session_meta","payload":{"id":"abc-123","cwd":"/tmp/test-workdir"}}`+"\n"+
+			`{"type":"message","payload":{}}`+"\n",
+	), 0644); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+
+	// findCodexSessionID uses os.UserHomeDir() → join .codex → sessions
+	// Override HOME to point to a dir with .codex/sessions/
+	homeDir := t.TempDir()
+	codexDir := filepath.Join(homeDir, ".codex", "sessions")
+	os.MkdirAll(codexDir, 0755)
+	// Copy the test session file to the fake codex dir
+	src, _ := os.ReadFile(jsonl)
+	os.WriteFile(filepath.Join(codexDir, "session-abc.jsonl"), src, 0644)
+	t.Setenv("HOME", homeDir)
+
+	sid, err := findCodexSessionID(workDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sid != "abc-123" {
+		t.Errorf("session ID = %q, want abc-123", sid)
+	}
+}
+
+func TestFindCodexSessionID_NoMatch(t *testing.T) {
+	homeDir := t.TempDir()
+	codexDir := filepath.Join(homeDir, ".codex", "sessions")
+	os.MkdirAll(codexDir, 0755)
+	os.WriteFile(filepath.Join(codexDir, "session-abc.jsonl"), []byte(
+		`{"type":"session_meta","payload":{"id":"abc-123","cwd":"/other/dir"}}`+"\n",
+	), 0644)
+	t.Setenv("HOME", homeDir)
+
+	_, err := findCodexSessionID("/no/match")
+	if err == nil {
+		t.Fatal("expected error for non-matching CWD")
+	}
+	if !strings.Contains(err.Error(), "no codex session found") {
+		t.Errorf("unexpected error text: %s", err)
+	}
+}
+
+func TestFindCodexSessionID_EmptyDir(t *testing.T) {
+	homeDir := t.TempDir()
+	os.MkdirAll(filepath.Join(homeDir, ".codex", "sessions"), 0755)
+	t.Setenv("HOME", homeDir)
+
+	_, err := findCodexSessionID("/tmp/work")
+	if err == nil {
+		t.Fatal("expected error for empty sessions dir")
+	}
+}
+
+func TestFindCodexSessionID_PicksMostRecent(t *testing.T) {
+	homeDir := t.TempDir()
+	codexDir := filepath.Join(homeDir, ".codex", "sessions")
+	os.MkdirAll(codexDir, 0755)
+
+	// Older session for same workDir
+	os.WriteFile(filepath.Join(codexDir, "older.jsonl"), []byte(
+		`{"type":"session_meta","payload":{"id":"old-456","cwd":"/tmp/work"}}`+"\n",
+	), 0644)
+	// Newer session for same workDir
+	os.WriteFile(filepath.Join(codexDir, "newer.jsonl"), []byte(
+		`{"type":"session_meta","payload":{"id":"new-789","cwd":"/tmp/work"}}`+"\n",
+	), 0644)
+	t.Setenv("HOME", homeDir)
+
+	sid, err := findCodexSessionID("/tmp/work")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sid != "new-789" {
+		t.Errorf("session ID = %q, want new-789 (most recent)", sid)
+	}
+}
+
+func TestFindCodexSessionID_SkipsNonMatchingSessionMeta(t *testing.T) {
+	homeDir := t.TempDir()
+	codexDir := filepath.Join(homeDir, ".codex", "sessions")
+	os.MkdirAll(codexDir, 0755)
+
+	// File with two session_meta lines: first wrong CWD, second correct
+	os.WriteFile(filepath.Join(codexDir, "multi.jsonl"), []byte(
+		`{"type":"session_meta","payload":{"id":"wrong-1","cwd":"/other"}}`+"\n"+
+			`{"type":"session_meta","payload":{"id":"right-2","cwd":"/tmp/work"}}`+"\n",
+	), 0644)
+	t.Setenv("HOME", homeDir)
+
+	sid, err := findCodexSessionID("/tmp/work")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sid != "right-2" {
+		t.Errorf("session ID = %q, want right-2 (should skip non-matching session_meta and continue scanning)", sid)
 	}
 }

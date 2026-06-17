@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carsteneu/yesmem/internal/embedding"
 	"github.com/carsteneu/yesmem/internal/extraction"
 	"github.com/carsteneu/yesmem/internal/models"
 )
@@ -256,5 +257,98 @@ func TestEvaluateStaleness_TruncatesLongContent(t *testing.T) {
 	}
 	if len(decisions) != 1 {
 		t.Fatalf("expected 1 decision, got %d", len(decisions))
+	}
+}
+
+func TestEvaluateStaleness_WithConfidenceAndType(t *testing.T) {
+	mock := &mockCommitEvalClient{
+		response: `[{"id": 1, "action": "stale", "reason": "function signature changed", "confidence": 0.95, "type": "code_contradicts"}]`,
+	}
+	learnings := []models.Learning{
+		{ID: 1, Content: "Foo(a, b) returns string", Category: "gotcha"},
+	}
+
+	decisions, err := evaluateStaleness(mock, "diff --git a/lib.go\n-func Foo(a, b) string {}\n+func Foo(ctx, a, b) error {}", learnings)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(decisions) != 1 {
+		t.Fatalf("expected 1 decision, got %d", len(decisions))
+	}
+	if decisions[0].Confidence != 0.95 {
+		t.Errorf("expected confidence 0.95, got %f", decisions[0].Confidence)
+	}
+	if decisions[0].Type != "code_contradicts" {
+		t.Errorf("expected type 'code_contradicts', got %q", decisions[0].Type)
+	}
+}
+
+func TestEvaluateStaleness_CodeChangedInsightHolds(t *testing.T) {
+	mock := &mockCommitEvalClient{
+		response: `[{"id": 1, "action": "code_changed_insight_holds", "reason": "code refactored but design insight still valid", "confidence": 0.7, "type": "code_changed_insight_holds"}]`,
+	}
+	learnings := []models.Learning{
+		{ID: 1, Content: "proxy uses RWMutex for concurrent access — design decision driven by read-heavy workload", Category: "decision"},
+	}
+
+	decisions, err := evaluateStaleness(mock, "diff --git a/proxy.go\n- rw.RLock()\n+ mu.Lock() // refactored to use simpler mutex", learnings)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(decisions) != 1 {
+		t.Fatalf("expected 1 decision, got %d", len(decisions))
+	}
+	if decisions[0].Action != "code_changed_insight_holds" {
+		t.Errorf("expected 'code_changed_insight_holds', got %q", decisions[0].Action)
+	}
+}
+
+func TestEvaluateStaleness_Uncertain(t *testing.T) {
+	mock := &mockCommitEvalClient{
+		response: `[{"id": 1, "action": "uncertain", "reason": "cannot determine from diff alone", "confidence": 0.3, "type": ""}]`,
+	}
+	learnings := []models.Learning{
+		{ID: 1, Content: "This learning references library code that may be affected", Category: "pattern"},
+	}
+
+	decisions, err := evaluateStaleness(mock, "diff --git a/go.mod\n-require github.com/foo v1.0\n+require github.com/foo v2.0", learnings)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(decisions) != 1 {
+		t.Fatalf("expected 1 decision, got %d", len(decisions))
+	}
+	if decisions[0].Action != "uncertain" {
+		t.Errorf("expected 'uncertain', got %q", decisions[0].Action)
+	}
+}
+
+func TestApplyStalenessPenalty(t *testing.T) {
+	// Test the helper directly
+	results := []embedding.RankedResult{
+		{ID: "1", Score: 1.0},
+		{ID: "2", Score: 0.8},
+		{ID: "3", Score: 0.5},
+		{ID: "4", Score: 1.0},
+	}
+	scores := map[int64]float64{
+		1: 0.9,  // stale → 0.5× penalty
+		2: 0.6,  // moderately stale → 0.8× penalty (≥0.5)
+		4: 0.3,  // low staleness → no penalty (<0.5)
+		// 3: not checked → no penalty
+	}
+
+	out := applyStalenessPenalty(results, scores)
+	if out[0].Score != 0.5 {
+		t.Errorf("id=1 staleness=0.9: expected score 0.5, got %f", out[0].Score)
+	}
+	if out[1].Score < 0.63 || out[1].Score > 0.65 {
+		t.Errorf("id=2 staleness=0.6: expected score ~0.64 (0.8× penalty), got %f", out[1].Score)
+	}
+	if out[2].Score != 0.5 {
+		t.Errorf("id=3 unchecked: expected score 0.5 (no penalty), got %f", out[2].Score)
+	}
+	if out[3].Score != 1.0 {
+		t.Errorf("id=4 staleness=0.3: expected score 1.0 (no penalty), got %f", out[3].Score)
 	}
 }

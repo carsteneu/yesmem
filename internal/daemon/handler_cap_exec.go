@@ -76,7 +76,7 @@ func (h *Handler) fireCapHandler(meta CapMeta, fn, argsJSON, sessionID string) R
 		sb.WriteString(fmt.Sprintf("YESMEM_SOCK=%s\nexport YESMEM_SOCK\n", sockPath))
 		sb.WriteString(`store() { yesmem store "$1"; }
 llm() {
-  _body=$(yesmem json -n --arg model "${1:-}" --arg system "${2:-}" --arg prompt "${3:-}" --arg session "${4:-}" '{"model":$model,"system":$system,"prompt":$prompt,"session":$session}')
+  _body=$(yesmem json -n --arg model "${1:-}" --arg system "${2:-}" --arg prompt "${3:-}" --arg session "${4:-}" --arg tools "${5:-}" 'if $tools == "tools" then {model:$model,system:$system,prompt:$prompt,session:$session,tools:true} else {model:$model,system:$system,prompt:$prompt,session:$session} end')
   yesmem llm-complete "$_body"
   return $?
 }

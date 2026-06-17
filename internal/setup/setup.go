@@ -471,6 +471,16 @@ func executeSetup(home, dataDir, binaryPath, model, apiKey, provider, terminal s
 		})
 	}
 
+	// 7d4. Configure codex MCP tool approvals (per‑tool, avoids interactive picker)
+	if detectCodexBinary() != "" {
+		withSpinner("Configuring codex approvals", func() (string, error) {
+			if err := ensureCodexSetup(home, binaryPath); err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("%d tools", len(yesmemCodexToolNames)), nil
+		})
+	}
+
 	// 7e. Generate project RULES.md (for rule_guard plugin)
 	if cwd, err := os.Getwd(); err == nil {
 		withSpinner("Generating RULES.md", func() (string, error) {

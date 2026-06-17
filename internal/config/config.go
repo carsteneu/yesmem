@@ -120,6 +120,7 @@ type ProxyConfig struct {
 	PromptOutputDiscipline   bool           `yaml:"prompt_output_discipline"`   // [deprecated] use claude_prompt.prompt_output_discipline
 	PromptCodingDiscipline   bool           `yaml:"prompt_coding_discipline"`   // [deprecated] use claude_prompt.prompt_coding_discipline
 	PromptBeweislast         bool           `yaml:"prompt_beweislast"`          // [deprecated] use claude_prompt.prompt_beweislast
+	PromptFable              bool           `yaml:"prompt_fable"`               // [deprecated] use claude_prompt.prompt_fable
 	PromptScopeDiscipline    bool           `yaml:"prompt_scope_discipline"`    // [deprecated] use claude_prompt.prompt_scope_discipline
 	PromptDelegationContract bool           `yaml:"prompt_delegation_contract"` // [deprecated] use claude_prompt.prompt_delegation_contract
 	PromptClarifyFirst       bool           `yaml:"prompt_clarify_first"`       // [deprecated] use claude_prompt.prompt_clarify_first
@@ -176,6 +177,7 @@ type PromptFlags struct {
 	OutputDiscipline   bool `yaml:"prompt_output_discipline"`
 	CodingDiscipline   bool `yaml:"prompt_coding_discipline"`
 	Beweislast         bool `yaml:"prompt_beweislast"`
+	Fable              bool `yaml:"prompt_fable"`
 	ScopeDiscipline    bool `yaml:"prompt_scope_discipline"`
 	DelegationContract bool `yaml:"prompt_delegation_contract"`
 	ClarifyFirst       bool `yaml:"prompt_clarify_first"`
@@ -194,6 +196,7 @@ func (p *ProxyConfig) claudeLegacyFlags() *PromptFlags {
 		OutputDiscipline:   p.PromptOutputDiscipline,
 		CodingDiscipline:   p.PromptCodingDiscipline,
 		Beweislast:         p.PromptBeweislast,
+		Fable:              p.PromptFable,
 		ScopeDiscipline:    p.PromptScopeDiscipline,
 		DelegationContract: p.PromptDelegationContract,
 		ClarifyFirst:       p.PromptClarifyFirst,
@@ -266,6 +269,9 @@ func mergeFlags(dst, src *PromptFlags) {
 	}
 	if src.Beweislast {
 		dst.Beweislast = true
+	}
+	if src.Fable {
+		dst.Fable = true
 	}
 	if src.ScopeDiscipline {
 		dst.ScopeDiscipline = true
@@ -419,6 +425,7 @@ func Default() *Config {
 			PromptOutputDiscipline:   true,
 			PromptCodingDiscipline:   true,
 			PromptBeweislast:         true,
+			PromptFable:              true,
 			PromptScopeDiscipline:    true,
 			PromptDelegationContract: true,
 			PromptClarifyFirst:       true,
@@ -432,6 +439,7 @@ func Default() *Config {
 				OutputDiscipline: true,
 				CodingDiscipline: true,
 				Beweislast:       true,
+				Fable:            true,
 				ScopeDiscipline:  true,
 				ClarifyFirst:     true,
 				CodeToolsFirst: true,

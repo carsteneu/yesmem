@@ -5,6 +5,48 @@ All notable changes to YesMem are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Per-agent opencode session ID tracking for precise resume
+- Include codex_session_id in agent response
+- Per-agent codex session ID tracking for precise resume
+- Per-tool MCP approvals for all 70 yesmem tools
+- Unify PTY inject for all backends + resume for codex/opencode
+- Auto-generate code fingerprint from entity file paths at remember()
+- Two-stage Phase 5 REVIEW — Self-Review + Cold Review via task()
+- Add REVIEW→VERIFY feedback loop to pipeline
+- Native Go daemon tick for auto-trigger staleness scanning
+- Add reddit_fetch bundled skill (v12, HTML scraping docs)
+- Reddit_fetch v4 — old.reddit.com HTML scraping statt gebrochener .json API
+
+### Changed
+
+- Remove hardcoded gotcha #66986 reference from SKILL.md
+
+### Fixed
+
+- Two-connection PTY inject to prevent bracketed-paste swallowing \r
+- Use SIGTERM for codex, not inject-socket Ctrl+C
+- Send Ctrl+C for codex backend (not /exit\r)
+- Inject OPENAI_API_KEY from ~/.codex/auth.json for codex spawn
+- Remove --full-auto from codex args (not valid in codex 0.140.0) + NVM fallback for codex binary resolution
+- MCP tools + SYSTEM.md injection + reddit bundle v5
+- Remove misleading cost benchmark from cold review stage
+- Review fixes — dynamic project discovery, penalty harmonization, bounded wait
+- Reap terminal process to prevent zombie accumulation
+- Sync reddit_fetch bundle to v4 (HTML scraping, auto_active)
+- Wire prompt_fable through legacy config path
+
+### Documentation
+
+- Update scratchpad read description for scoped reads
+
+### Testing
+
+- Add tests for enhanced staleness decisions and penalty helper
+
 ## [2.1.17] - 2026-06-12
 
 ### Added
@@ -2815,6 +2857,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add comprehensive tests for generator and storage
 
 
+[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.1.17...HEAD
 [2.1.17]: https://github.com/carsteneu/yesmem/compare/v2.1.16...v2.1.17
 [2.1.16]: https://github.com/carsteneu/yesmem/compare/v2.1.15...v2.1.16
 [2.1.15]: https://github.com/carsteneu/yesmem/compare/v2.1.14...v2.1.15
