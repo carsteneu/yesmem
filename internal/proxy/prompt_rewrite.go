@@ -164,6 +164,15 @@ func InjectBeweislast(req map[string]any) {
 	ReplaceSystemBlock(req, "yesmem-beweislast", beweislast)
 }
 
+// InjectFable appends a system block tagged [yesmem-fable] that overlays
+// three high-stakes disciplines on top of [yesmem-beweislast]: baseline-before-change,
+// rollback-naming, and readback-check. Activation-gated: skipped on routine work
+// where the 25–70% overhead would be pure waste.
+func InjectFable(req map[string]any) {
+	const fable = `Before I change code, I capture the current state — test output, build status, error counts. I make the change, then I compare. I never claim "no regressions" without a baseline comparison. Before any destructive or hard-to-reverse action, I name the concrete rollback path. Before I send, I run a readback-check: can the reader distinguish what I confirmed from what I assumed? If a claim lacks evidence, I re-verify or mark it explicitly. I apply this only to high-stakes changes — destructive ops, multi-file refactors, deploys, data migrations. On routine work the 25–70% overhead is pure waste, so I skip it there. This overlays [yesmem-beweislast], it does not replace it.`
+	ReplaceSystemBlock(req, "yesmem-fable", fable)
+}
+
 // InjectScopeDiscipline appends a system block tagged [yesmem-scope-discipline]
 // that enforces scope-bound authorization while mandating that bugs, security
 // issues, and misconceptions adjacent to the work MUST be surfaced — silence

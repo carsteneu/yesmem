@@ -219,6 +219,11 @@ func (h *Handler) spawnAgentProcess(id, sessionID, project, section, prompt, soc
 		})
 		return
 	}
+	// Reap terminal process on exit to prevent zombie accumulation.
+	// gnome-terminal forks itself; the immediate parent exits quickly,
+	// but without Wait() it stays as a zombie and eventually blocks
+	// gnome-terminal-server's DBus activation for future spawns.
+	go func() { termCmd.Wait() }()
 
 	h.store.AgentUpdate(id, map[string]any{
 		"pid":       bridge.Cmd.Process.Pid,
