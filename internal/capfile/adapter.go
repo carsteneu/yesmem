@@ -185,10 +185,10 @@ yesmem() {
   command yesmem "$@"
 }
 llm() {
-  _body=$(yesmem json -n --arg model "${1:-}" --arg system "${2:-}" --arg prompt "${3:-}" --arg session "${4:-}" '{"model":$model,"system":$system,"prompt":$prompt,"session":$session}')
-  yesmem llm-complete "$_body"
-  return $?
-}
+    _body=$(yesmem json -n --arg model "${1:-}" --arg system "${2:-}" --arg prompt "${3:-}" --arg session "${4:-}" --arg tools "${5:-}" 'if $tools == "tools" then {model:$model,system:$system,prompt:$prompt,session:$session,tools:true} else {model:$model,system:$system,prompt:$prompt,session:$session} end')
+    yesmem llm-complete "$_body"
+    return $?
+  }
 `
 }
 

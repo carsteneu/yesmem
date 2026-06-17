@@ -181,10 +181,15 @@ func (c *CLIClient) runStdin(ctx context.Context, system, userMsg string, schema
 
 	baseEnv := filterEnv(os.Environ(), "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "OPENAI_API_KEY")
 	baseEnv = append(baseEnv, "TERM=dumb", "NO_COLOR=1", "YESMEM_DAEMON_CHILD=1")
+	if o.tools {
+		baseEnv = append(baseEnv, "YESMEM_ALLOW_CHILD_MCP=1")
+	}
 	if c.sourceAgent == models.SourceAgentOpencode {
+		mcpCfg := `"mcp":{"yesmem":{"type":"local","command":["yesmem","mcp"],"enabled":true,"timeout":120000,"environment":{"YESMEM_SOURCE_AGENT":"opencode"}}}`
+		providerCfg := `"provider":{"deepseek":{"options":{"baseURL":"http://localhost:9099/v1","headers":{"x-yesmem-allow-mcp":"1"}}}}`
 		baseEnv = append(baseEnv,
 			"OPENCODE_DISABLE_DEFAULT_PLUGINS=true",
-			`OPENCODE_CONFIG_CONTENT={"provider":{"deepseek":{"options":{"baseURL":"http://localhost:9099/v1"}}}}`,
+			`OPENCODE_CONFIG_CONTENT={`+mcpCfg+`,`+providerCfg+`}`,
 		)
 	}
 

@@ -615,6 +615,7 @@ func (h *Handler) handleLLMComplete(params map[string]any) Response {
 	system, _ := params["system"].(string)
 	prompt, _ := params["prompt"].(string)
 	sessionID := stringOr(params, "session", "")
+	tools, _ := params["tools"].(bool)
 
 	if system == "" && prompt == "" {
 		return errorResponse("system or prompt required")
@@ -666,6 +667,9 @@ func (h *Handler) handleLLMComplete(params map[string]any) Response {
 	}
 	if sessionID != "" {
 		opts = append(opts, extraction.WithSession(sessionID))
+	}
+	if tools {
+		opts = append(opts, extraction.WithTools())
 	}
 	result, err := client.Complete(injectedSystem, prompt, opts...)
 	if err != nil {
