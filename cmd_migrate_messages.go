@@ -57,7 +57,8 @@ func runMigrateMessages() {
 		tool_name       TEXT,
 		file_path       TEXT,
 		timestamp       TEXT NOT NULL,
-		sequence        INTEGER NOT NULL
+		sequence        INTEGER NOT NULL,
+		model           TEXT DEFAULT ''
 	)`)
 	dst.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id)`)
 	dst.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(message_type)`)

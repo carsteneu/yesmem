@@ -34,7 +34,7 @@ func (h *Handler) handleRemember(params map[string]any) Response {
 
 	l := &models.Learning{
 		Category: category, Content: text, Project: project,
-		Confidence: 1.0, CreatedAt: timeNow(), ModelUsed: rememberModel(params),
+		Confidence: 1.0, CreatedAt: timeNow(), ModelUsed: h.rememberModel(params),
 		Source: source, OriginTool: origin,
 		CanonicalProject: canonicalProjectFor(project),
 	}
@@ -93,6 +93,21 @@ func (h *Handler) handleRemember(params map[string]any) Response {
 	}
 	if attribution, ok := params["attribution"].(string); ok {
 		l.Attribution = attribution
+	}
+
+	// Collect metadata-sparseness warnings for the response message
+	var metadataWarnings []string
+	if len(l.AnticipatedQueries) == 0 {
+		metadataWarnings = append(metadataWarnings, "anticipated_queries empty (hybrid_search will struggle)")
+	}
+	if len(l.Entities) == 0 {
+		metadataWarnings = append(metadataWarnings, "entities empty (query_facts can't find by entity)")
+	}
+	if l.TriggerRule == "" {
+		metadataWarnings = append(metadataWarnings, "trigger empty (no proactive surface)")
+	}
+	if l.Domain == "" {
+		metadataWarnings = append(metadataWarnings, "domain defaulted to 'general'")
 	}
 		codeFingerprint, _ := params["code_fingerprint"].(string)
 
@@ -208,13 +223,17 @@ func (h *Handler) handleRemember(params map[string]any) Response {
 	h.recentRemembered = append(h.recentRemembered, recentLearning{ID: id, Text: text})
 	h.recentRememberMu.Unlock()
 
+	warning := ""
+	if len(metadataWarnings) > 0 {
+		warning = " ⚠ " + strings.Join(metadataWarnings, ", ")
+	}
 	resp := map[string]any{
 		"id":         id,
 		"category":   category,
 		"project":    project,
 		"content":    truncate(text, 120),
 		"model_used": l.ModelUsed,
-		"message":    fmt.Sprintf("Learning #%d saved (%s, model=%s).%s", id, category, l.ModelUsed, supersededMsg),
+		"message":    fmt.Sprintf("Learning #%d saved (%s, model=%s).%s%s", id, category, l.ModelUsed, supersededMsg, warning),
 	}
 	if supersedesID > 0 {
 		resp["supersedes_id"] = int64(supersedesID)
@@ -222,12 +241,33 @@ func (h *Handler) handleRemember(params map[string]any) Response {
 	return jsonResponse(resp)
 }
 
-func rememberModel(params map[string]any) string {
+// rememberModel resolves the model attribution for an in-session remember() call.
+// Resolution order (first wins):
+//  1. explicit `model` param (caller override)
+//  2. `_client_model` (MCP server injects from env vars: CODEX_MODEL, OPENAI_MODEL,
+//     ANTHROPIC_MODEL, CLAUDE_MODEL, MODEL, or the new YESMEM_MODEL_ID)
+//  3. `session_model:<sid>` from proxy_state — proxy.go persists this per CC API
+//     request, so CC sessions always have a real model here even when the MCP
+//     layer doesn't inject one. See learning #76567.
+//  4. "self" (legacy fallback — should rarely trigger after fix #3)
+func (h *Handler) rememberModel(params map[string]any) string {
 	if model, ok := params["model"].(string); ok && strings.TrimSpace(model) != "" {
 		return strings.TrimSpace(model)
 	}
 	if model, ok := params["_client_model"].(string); ok && strings.TrimSpace(model) != "" {
 		return strings.TrimSpace(model)
+	}
+	// Fall back to session_model:<sid> from proxy_state. Try _session_id (MCP
+	// server injects) first, then session_id (legacy). Matches the daemon-side
+	// session resolution logic at handler_learnings.go:43.
+	sid, _ := params["_session_id"].(string)
+	if sid == "" {
+		sid, _ = params["session_id"].(string)
+	}
+	if sid != "" && h.store != nil {
+		if model, err := h.store.GetProxyState("session_model:" + sid); err == nil && strings.TrimSpace(model) != "" {
+			return model
+		}
 	}
 	return "self"
 }

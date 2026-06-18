@@ -19,8 +19,8 @@ func (s *Store) InsertMessages(msgs []models.Message) error {
 	defer tx.Rollback()
 
 	stmt, err := tx.Prepare(`INSERT INTO messages
-		(session_id, source_agent, role, message_type, content, content_blob, tool_name, file_path, timestamp, sequence)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		(session_id, source_agent, role, message_type, content, content_blob, tool_name, file_path, timestamp, sequence, model)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return fmt.Errorf("prepare: %w", err)
 	}
@@ -40,7 +40,7 @@ func (s *Store) InsertMessages(msgs []models.Message) error {
 			content = string(m.ContentBlob)
 		}
 		res, err := stmt.Exec(m.SessionID, sourceAgent, m.Role, m.MessageType, content,
-			m.ContentBlob, m.ToolName, m.FilePath, fmtTime(m.Timestamp), m.Sequence)
+			m.ContentBlob, m.ToolName, m.FilePath, fmtTime(m.Timestamp), m.Sequence, m.Model)
 		if err != nil {
 			return fmt.Errorf("insert message seq=%d: %w", m.Sequence, err)
 		}
@@ -58,7 +58,7 @@ func (s *Store) InsertMessages(msgs []models.Message) error {
 // GetMessagesBySession returns all messages for a session, ordered by sequence.
 func (s *Store) GetMessagesBySession(sessionID string) ([]models.Message, error) {
 	rows, err := s.messagesReaderDB().Query(`SELECT id, session_id, COALESCE(source_agent, 'claude'), role, message_type, content,
-		content_blob, tool_name, file_path, timestamp, sequence
+		content_blob, tool_name, file_path, timestamp, sequence, COALESCE(model, '')
 		FROM messages WHERE session_id = ? ORDER BY sequence`, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("get messages for %s: %w", sessionID, err)
@@ -71,7 +71,7 @@ func (s *Store) GetMessagesBySession(sessionID string) ([]models.Message, error)
 // GetMessagesBySessionAndType returns messages filtered by type, with optional limit.
 func (s *Store) GetMessagesBySessionAndType(sessionID, msgType string, limit ...int) ([]models.Message, error) {
 	q := `SELECT id, session_id, COALESCE(source_agent, 'claude'), role, message_type, content,
-		content_blob, tool_name, file_path, timestamp, sequence
+		content_blob, tool_name, file_path, timestamp, sequence, COALESCE(model, '')
 		FROM messages WHERE session_id = ? AND message_type = ? ORDER BY sequence`
 	var args []any
 	args = append(args, sessionID, msgType)
@@ -91,7 +91,7 @@ func (s *Store) GetMessagesBySessionAndType(sessionID, msgType string, limit ...
 // GetMessagesBySessionRange returns messages in a sequence range for a session.
 func (s *Store) GetMessagesBySessionRange(sessionID string, fromSeq, toSeq int) ([]models.Message, error) {
 	rows, err := s.messagesReaderDB().Query(`SELECT id, session_id, COALESCE(source_agent, 'claude'), role, message_type, content,
-		content_blob, tool_name, file_path, timestamp, sequence
+		content_blob, tool_name, file_path, timestamp, sequence, COALESCE(model, '')
 		FROM messages WHERE session_id = ? AND sequence >= ? AND sequence <= ? ORDER BY sequence`, sessionID, fromSeq, toSeq)
 	if err != nil {
 		return nil, fmt.Errorf("get messages range %s [%d-%d]: %w", sessionID, fromSeq, toSeq, err)
@@ -453,7 +453,7 @@ func scanMessages(rows interface {
 		var m models.Message
 		var ts string
 		if err := rows.Scan(&m.ID, &m.SessionID, &m.SourceAgent, &m.Role, &m.MessageType, &m.Content,
-			&m.ContentBlob, &m.ToolName, &m.FilePath, &ts, &m.Sequence); err != nil {
+			&m.ContentBlob, &m.ToolName, &m.FilePath, &ts, &m.Sequence, &m.Model); err != nil {
 			return nil, err
 		}
 		m.Timestamp = parseTime(ts)

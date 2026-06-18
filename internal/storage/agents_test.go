@@ -1,6 +1,10 @@
 package storage
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+)
 
 func TestAgentCreate_And_Get(t *testing.T) {
 	s := newTestStore(t)
@@ -33,6 +37,50 @@ func TestAgentCreate_And_Get(t *testing.T) {
 	}
 	if got.Status != "pending" {
 		t.Errorf("expected status='pending', got %q", got.Status)
+	}
+}
+
+// TestAgentCreate_CreatedAtUsesRFC3339WithOffset verifies that AgentCreate stores
+// created_at as RFC3339 with timezone offset (e.g. "2026-06-18T22:58:53+02:00"),
+// NOT as a naked SQLite datetime('now','localtime') string. modernc-sqlite's
+// pure-Go localtime resolution is broken and returns UTC, which caused the
+// agent-230 misdiagnosis in learning #76675 (created_at read as UTC, interpreted
+// as local, 36min real runtime mistaken for 2.5h).
+func TestAgentCreate_CreatedAtUsesRFC3339WithOffset(t *testing.T) {
+	s := newTestStore(t)
+
+	agent := Agent{
+		ID:      "agent-tz-0",
+		Project: "p",
+		Section: "s",
+		Status:  "running",
+	}
+	if err := s.AgentCreate(agent); err != nil {
+		t.Fatalf("AgentCreate: %v", err)
+	}
+
+	got, err := s.AgentGet("agent-tz-0")
+	if err != nil {
+		t.Fatalf("AgentGet: %v", err)
+	}
+
+	if got.CreatedAt == "" {
+		t.Fatal("CreatedAt is empty — expected RFC3339 timestamp")
+	}
+
+	// RFC3339 requires a timezone offset: "+02:00", "-05:00", or "Z" (UTC).
+	// A naked "YYYY-MM-DD HH:MM:SS" (no T, no offset) means the schema
+	// default fired instead of Go's time.Now() — that's the bug.
+	if !strings.Contains(got.CreatedAt, "T") {
+		t.Errorf("CreatedAt %q: missing 'T' separator — not RFC3339. Likely schema-default fired.", got.CreatedAt)
+	}
+	if !strings.ContainsAny(got.CreatedAt, "+Z") || !strings.Contains(got.CreatedAt, ":") {
+		t.Errorf("CreatedAt %q: missing timezone offset — RFC3339 requires +HH:MM or Z.", got.CreatedAt)
+	}
+
+	// Must be parseable as RFC3339.
+	if _, err := time.Parse(time.RFC3339, got.CreatedAt); err != nil {
+		t.Errorf("CreatedAt %q is not valid RFC3339: %v", got.CreatedAt, err)
 	}
 }
 

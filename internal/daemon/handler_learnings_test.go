@@ -86,6 +86,125 @@ func TestHandleRememberFallsBackToSelfModel(t *testing.T) {
 	}
 }
 
+// TestHandleRememberFallsBackToSessionModel verifies that when no explicit model
+// is passed but the proxy has persisted session_model:<sid> in proxy_state
+// (CC case: proxy.go persists it per request), the daemon picks it up.
+//
+// This fixes the bug where in-session remember() calls got model_used='self'
+// even though the proxy knew the real model. See learning #76567.
+func TestHandleRememberFallsBackToSessionModel(t *testing.T) {
+	h, s := mustHandler(t)
+
+	// Simulate proxy persisting the current session's model.
+	if err := s.SetProxyState("session_model:ses-abc-123", "claude-opus-4-7"); err != nil {
+		t.Fatalf("SetProxyState: %v", err)
+	}
+
+	resp := h.Handle(Request{
+		Method: "remember",
+		Params: map[string]any{
+			"text":        "Modell wird via session_model proxy_state aufgelöst",
+			"category":    "decision",
+			"project":     "yesmem",
+			"_session_id": "ses-abc-123",
+		},
+	})
+
+	if resp.Error != "" {
+		t.Fatalf("unexpected error: %s", resp.Error)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+
+	if got := result["model_used"]; got != "claude-opus-4-7" {
+		t.Fatalf("response model_used: got %v, want %q", got, "claude-opus-4-7")
+	}
+
+	id, ok := result["id"].(float64)
+	if !ok || id <= 0 {
+		t.Fatalf("invalid id in response: %v", result["id"])
+	}
+
+	learning, err := s.GetLearning(int64(id))
+	if err != nil {
+		t.Fatalf("get learning: %v", err)
+	}
+	if learning.ModelUsed != "claude-opus-4-7" {
+		t.Fatalf("stored model_used: got %q, want %q", learning.ModelUsed, "claude-opus-4-7")
+	}
+}
+
+// TestHandleRememberExplicitModelOverridesProxyState verifies that an explicit
+// `model` param still wins over the session_model proxy_state lookup.
+func TestHandleRememberExplicitModelOverridesProxyState(t *testing.T) {
+	h, s := mustHandler(t)
+
+	if err := s.SetProxyState("session_model:ses-xyz", "claude-opus-4-7"); err != nil {
+		t.Fatalf("SetProxyState: %v", err)
+	}
+
+	resp := h.Handle(Request{
+		Method: "remember",
+		Params: map[string]any{
+			"text":        "Explizites Modell schlägt proxy_state",
+			"category":    "decision",
+			"project":     "yesmem",
+			"_session_id": "ses-xyz",
+			"model":       "deepseek-v4-pro",
+		},
+	})
+
+	if resp.Error != "" {
+		t.Fatalf("unexpected error: %s", resp.Error)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+
+	if got := result["model_used"]; got != "deepseek-v4-pro" {
+		t.Fatalf("response model_used: got %v, want %q (explicit param must win)", got, "deepseek-v4-pro")
+	}
+}
+
+// TestHandleRememberClientModelOverridesProxyState verifies that the MCP-injected
+// `_client_model` (set by currentClientModel from env vars) wins over proxy_state.
+func TestHandleRememberClientModelOverridesProxyState(t *testing.T) {
+	h, s := mustHandler(t)
+
+	if err := s.SetProxyState("session_model:ses-env", "claude-opus-4-7"); err != nil {
+		t.Fatalf("SetProxyState: %v", err)
+	}
+
+	resp := h.Handle(Request{
+		Method: "remember",
+		Params: map[string]any{
+			"text":          "_client_model schlägt proxy_state",
+			"category":      "decision",
+			"project":       "yesmem",
+			"_session_id":   "ses-env",
+			"_client_model": "glm-5.2",
+		},
+	})
+
+	if resp.Error != "" {
+		t.Fatalf("unexpected error: %s", resp.Error)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+
+	if got := result["model_used"]; got != "glm-5.2" {
+		t.Fatalf("response model_used: got %v, want %q (_client_model must win over proxy_state)", got, "glm-5.2")
+	}
+}
+
 func TestHandleRememberAcceptsAnticipatedQueries(t *testing.T) {
 	h, s := mustHandler(t)
 

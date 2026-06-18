@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // tableAgents defines the agents table schema for agent orchestration.
@@ -82,9 +83,16 @@ func (s *Store) AgentCreate(a Agent) error {
 	if backend == "" {
 		backend = "claude"
 	}
-	_, err := s.db.Exec(`INSERT INTO agents (id, project, section, session_id, pid, sock_path, status, caller_session, depth, token_budget, backend, restart_strategy, restart_count, max_restarts, liveness_ping_at, last_restart_at, proxy_thread_id, codex_session_id, opencode_session_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.ID, a.Project, a.Section, a.SessionID, a.PID, a.SockPath, a.Status, a.CallerSession, a.Depth, a.TokenBudget, backend, a.RestartStrategy, a.RestartCount, a.MaxRestarts, a.LivenessPingAt, a.LastRestartAt, a.ProxyThreadID, a.CodexSessionID, a.OpencodeSessionID)
+	// Explicit RFC3339 timestamp with offset. SQLite's datetime('now','localtime')
+	// default resolves to UTC under modernc-sqlite (pure-Go) — see learning #76675.
+	// If caller pre-populates CreatedAt (e.g. in tests), honor it.
+	createdAt := a.CreatedAt
+	if createdAt == "" {
+		createdAt = time.Now().Format(time.RFC3339)
+	}
+	_, err := s.db.Exec(`INSERT INTO agents (id, project, section, session_id, pid, sock_path, status, caller_session, depth, token_budget, backend, restart_strategy, restart_count, max_restarts, liveness_ping_at, last_restart_at, proxy_thread_id, codex_session_id, opencode_session_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.ID, a.Project, a.Section, a.SessionID, a.PID, a.SockPath, a.Status, a.CallerSession, a.Depth, a.TokenBudget, backend, a.RestartStrategy, a.RestartCount, a.MaxRestarts, a.LivenessPingAt, a.LastRestartAt, a.ProxyThreadID, a.CodexSessionID, a.OpencodeSessionID, createdAt)
 	return err
 }
 

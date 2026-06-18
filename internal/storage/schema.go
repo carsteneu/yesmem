@@ -475,6 +475,8 @@ var messagesMigrations = []string{
 	`ALTER TABLE messages ADD COLUMN source_agent TEXT DEFAULT 'claude'`,
 	// v0.43: Index messages.timestamp for date-bounded search/deep_search filters.
 	`CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)`,
+	// v0.44: Store per-message model provenance.
+	`ALTER TABLE messages ADD COLUMN model TEXT DEFAULT ''`,
 }
 
 const tableSessions = `CREATE TABLE IF NOT EXISTS sessions (
@@ -509,7 +511,8 @@ const tableMessages = `CREATE TABLE IF NOT EXISTS messages (
 	tool_name       TEXT,
 	file_path       TEXT,
 	timestamp       TEXT NOT NULL,
-	sequence        INTEGER NOT NULL
+	sequence        INTEGER NOT NULL,
+	model           TEXT DEFAULT ''
 )`
 
 const tableLearnings = `CREATE TABLE IF NOT EXISTS learnings (

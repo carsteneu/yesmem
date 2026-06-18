@@ -7,7 +7,7 @@ import (
 )
 
 func TestCurrentClientModelEmpty(t *testing.T) {
-	for _, key := range []string{"CODEX_MODEL", "OPENAI_MODEL", "ANTHROPIC_MODEL", "CLAUDE_MODEL", "MODEL"} {
+	for _, key := range []string{"YESMEM_MODEL_ID", "CODEX_MODEL", "OPENAI_MODEL", "ANTHROPIC_MODEL", "CLAUDE_MODEL", "MODEL"} {
 		t.Setenv(key, "")
 	}
 
@@ -25,6 +25,20 @@ func TestCurrentClientModelPriority(t *testing.T) {
 
 	if got := currentClientModel(); got != "gpt-5.4-mini" {
 		t.Fatalf("currentClientModel(): got %q, want %q", got, "gpt-5.4-mini")
+	}
+}
+
+// TestCurrentClientModelYesmemModelIDWins verifies that YESMEM_MODEL_ID takes
+// priority over the generic vendor env vars. This gives direct-MCP clients
+// (opencode, codex) a clean, unambiguous way to declare their model without
+// colliding with vendor-specific vars they may not own. See learning #76567.
+func TestCurrentClientModelYesmemModelIDWins(t *testing.T) {
+	t.Setenv("MODEL", "generic")
+	t.Setenv("CLAUDE_MODEL", "claude-sonnet")
+	t.Setenv("YESMEM_MODEL_ID", " glm-5.2 ")
+
+	if got := currentClientModel(); got != "glm-5.2" {
+		t.Fatalf("currentClientModel(): got %q, want %q (YESMEM_MODEL_ID must win)", got, "glm-5.2")
 	}
 }
 

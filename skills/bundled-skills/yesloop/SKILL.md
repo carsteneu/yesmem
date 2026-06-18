@@ -26,6 +26,29 @@ When invoked from an interactive session, **do NOT execute the pipeline yourself
 
 **Only run inline if:** user explicitly says `--inline` or task is < 2 min trivial.
 
+**"Pipeline" includes exploratory work.** Writing tests, spiking an approach, "just quickly trying the fix on main to see if it works" — if you'd commit it, it belongs in the worktree. Create the worktree BEFORE the first edit, not after you've verified the fix works. Migrating uncommitted changes from main into a worktree mid-session (stash → worktree add → stash apply) is error-prone and avoidable.
+
+## Orchestrator Contract (what to prescribe vs. delegate)
+
+When you spawn a yesloop agent, the scratchpad task defines the working relationship. Over-prescribing takes ANALYZE+PLAN away from the agent; under-prescribing sends it into orientation loops. Get the level right.
+
+**Prescribe (orchestrator's job):**
+- **Goal** in 1-2 sentences — what success looks like, not how to get there
+- **Dense context** — facts, file paths, relevant learning IDs, what's already been tried, what failed. The agent starts cold; you don't.
+- **Hard constraints** — schema-breaking changes, backfills, new dependencies, destructive ops, files off-limits. "No backfill in this PR" is a constraint; "here's the migration SQL" is over-prescription.
+- **Escalation triggers** — decisions that belong to the user (product direction, API shape changes, breaking compatibility). The agent stops and asks, doesn't decide alone.
+
+**Delegate (agent's job):**
+- **ANALYZE** — reading code, grepping, finding the call sites, identifying edge cases. Even if you know the answer, let the agent verify. Its plan will be better grounded.
+- **PLAN** — commit structure, file selection, test strategy, step ordering. A scratchpad that reads like an implementation guide ("step 1: edit foo.go line 42, step 2: ...") has crossed the line. Shorten to goals + constraints.
+- **EXECUTE/VERIFY/REVIEW** — the full 6-phase pipeline runs on the agent's plan, not yours.
+
+**Anti-pattern — the implementation-guide scratchpad:** If your scratchpad reads like a step-by-step tutorial, you've done ANALYZE+PLAN for the agent. The agent will either follow it mechanically (losing the chance to catch what you missed) or ignore it (wasting your work). Write the goal + context + constraints, then stop. Let ANALYZE+PLAN be the agent's first deliverable.
+
+**Anti-pattern — bare goal:** Conversely, "fix the model_used bug" with no context sends the agent into 200k-token orientation spirals (see learning #53077, #73503). The agent earns its keep by planning, but it can't plan without your prior context.
+
+**Calibration test:** Before writing the scratchpad, ask: "If the agent came back with a plan, would I be surprised?" If yes for the right reasons (it found a better approach), you prescribed the right amount. If yes for the wrong reasons (it misunderstood the goal), add context. If you'd be bored by its plan (because it matches what you'd have written), you over-prescribed — shorten and re-test.
+
 ## Execution Modes
 
 **tui-agent** (DEFAULT) — Spawned via yesmem_spawn_agent → gnome-terminal, visible, non-blocking. Report via scratchpad_write + send_to.

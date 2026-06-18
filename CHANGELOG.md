@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Store per-message model provenance from parser and opencode scanner
+
+### Fixed
+
+- Store created_at as RFC3339 with timezone offset
+- Sharpen MCP tool descriptions + add metadata-sparse warning
+- Raise default max_runtime from 30min to 48h
+- Resolve model_used provenance via proxy_state + YESMEM_MODEL_ID env
+
+## [2.1.19] - 2026-06-18
+
 ### Fixed
 
 - Restore legitimate test fixtures to SCAN_ALLOWLIST
@@ -2924,7 +2937,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add comprehensive tests for generator and storage
 
 
-[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.1.18...HEAD
+[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.1.19...HEAD
+[2.1.19]: https://github.com/carsteneu/yesmem/compare/v2.1.18...v2.1.19
 [2.1.18]: https://github.com/carsteneu/yesmem/compare/v2.1.17...v2.1.18
 [2.1.17]: https://github.com/carsteneu/yesmem/compare/v2.1.16...v2.1.17
 [2.1.16]: https://github.com/carsteneu/yesmem/compare/v2.1.15...v2.1.16

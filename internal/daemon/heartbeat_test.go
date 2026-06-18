@@ -554,8 +554,8 @@ func TestCrashRuntime_LargeRuntime(t *testing.T) {
 func TestGetAgentMaxRuntime_Default(t *testing.T) {
 	h, _ := mustHandler(t)
 	got := h.getAgentMaxRuntime()
-	if got != 30*time.Minute {
-		t.Errorf("getAgentMaxRuntime() = %v, want 30m", got)
+	if got != 48*time.Hour {
+		t.Errorf("getAgentMaxRuntime() = %v, want 48h", got)
 	}
 }
 
@@ -572,8 +572,8 @@ func TestGetAgentMaxRuntime_ZeroMeansDefault(t *testing.T) {
 	h, _ := mustHandler(t)
 	h.agentMaxRuntime = 0
 	got := h.getAgentMaxRuntime()
-	if got != 30*time.Minute {
-		t.Errorf("getAgentMaxRuntime(0) = %v, want 30m default", got)
+	if got != 48*time.Hour {
+		t.Errorf("getAgentMaxRuntime(0) = %v, want 48h default", got)
 	}
 }
 
@@ -581,7 +581,7 @@ func TestGetAgentMaxRuntime_NegativeMeansDefault(t *testing.T) {
 	h, _ := mustHandler(t)
 	h.agentMaxRuntime = -5 * time.Minute
 	got := h.getAgentMaxRuntime()
-	if got != 30*time.Minute {
-		t.Errorf("getAgentMaxRuntime(negative) = %v, want 30m default", got)
+	if got != 48*time.Hour {
+		t.Errorf("getAgentMaxRuntime(negative) = %v, want 48h default", got)
 	}
 }

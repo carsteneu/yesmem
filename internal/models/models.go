@@ -52,6 +52,7 @@ type Message struct {
 	FilePath    string    `json:"file_path,omitempty"`
 	Timestamp   time.Time `json:"timestamp"`
 	Sequence    int       `json:"sequence"`
+	Model       string    `json:"model,omitempty"`   // model provenance (e.g. claude-sonnet-4-20250514)
 }
 
 // Learning represents an extracted piece of knowledge.

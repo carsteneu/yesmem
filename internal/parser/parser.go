@@ -210,6 +210,7 @@ func parseUserMessage(line rawLine, meta *SessionMeta, seq int, ts time.Time) []
 			Content:     contentStr,
 			Timestamp:   ts,
 			Sequence:    seq,
+			Model:       env.Model,
 		})
 		return messages
 	}
@@ -243,6 +244,7 @@ func parseUserMessage(line rawLine, meta *SessionMeta, seq int, ts time.Time) []
 				Content:     block.Text,
 				Timestamp:   ts,
 				Sequence:    seq + len(messages),
+				Model:       env.Model,
 			})
 		case "tool_result":
 			content := fmt.Sprintf("%v", block.Content)
@@ -254,6 +256,7 @@ func parseUserMessage(line rawLine, meta *SessionMeta, seq int, ts time.Time) []
 				ContentBlob: []byte(content),
 				Timestamp:   ts,
 				Sequence:    seq + len(messages),
+				Model:       env.Model,
 			})
 		}
 	}
@@ -297,6 +300,7 @@ func parseAssistantMessage(line rawLine, seq int, ts time.Time) []models.Message
 				Content:     block.Text,
 				Timestamp:   ts,
 				Sequence:    seq + len(messages),
+				Model:       env.Model,
 			})
 		case "thinking":
 			messages = append(messages, models.Message{
@@ -306,6 +310,7 @@ func parseAssistantMessage(line rawLine, seq int, ts time.Time) []models.Message
 				ContentBlob: []byte(block.Thinking),
 				Timestamp:   ts,
 				Sequence:    seq + len(messages),
+				Model:       env.Model,
 			})
 		case "tool_use":
 			msg := models.Message{
@@ -315,6 +320,7 @@ func parseAssistantMessage(line rawLine, seq int, ts time.Time) []models.Message
 				ToolName:    block.Name,
 				Timestamp:   ts,
 				Sequence:    seq + len(messages),
+				Model:       env.Model,
 			}
 
 			// Extract file_path and command from input

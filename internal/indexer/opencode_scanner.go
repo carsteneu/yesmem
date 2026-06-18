@@ -83,6 +83,9 @@ func (s *OpencodeScanner) MaybeScan() {
 		}
 
 		msgs := mapOpencodeMessages(dbMsgs)
+		for i := range msgs {
+			msgs[i].Model = sess.Model
+		}
 		if isExtractionPipelineSession(msgs) {
 			continue
 		}

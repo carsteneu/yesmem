@@ -121,8 +121,14 @@ func (s *Server) proxyCall(method string) mcpserver.ToolHandlerFunc {
 	}
 }
 
+// currentClientModel resolves the calling agent's model from environment.
+// Priority: YESMEM_MODEL_ID (explicit yesmem-native declaration, wins over
+// vendor vars — gives direct-MCP clients like opencode a clean injection point),
+// then vendor-specific CODEX_MODEL / OPENAI_MODEL / ANTHROPIC_MODEL / CLAUDE_MODEL,
+// then generic MODEL as last resort. Empty string if none set.
 func currentClientModel() string {
 	for _, key := range []string{
+		"YESMEM_MODEL_ID",
 		"CODEX_MODEL",
 		"OPENAI_MODEL",
 		"ANTHROPIC_MODEL",
@@ -865,22 +871,22 @@ func (s *Server) registerTools() {
 
 	s.srv.AddTool(
 		mcplib.NewTool("remember",
-			mcplib.WithDescription("Save a learning for future sessions"),
+			mcplib.WithDescription("Save a learning. Model auto-resolved via param/YESMEM_MODEL_ID/proxy_state. Minimum viable: text, category, entities, anticipated_queries, trigger."),
 			mcplib.WithString("text", mcplib.Required(), mcplib.Description("Content to remember")),
 			mcplib.WithString("category", mcplib.Description("gotcha|decision|pattern|preference|explicit_teaching|strategic")),
 			mcplib.WithString("project", mcplib.Description("Project filter")),
-			mcplib.WithString("model", mcplib.Description("Caller model")),
+			mcplib.WithString("model", mcplib.Description("Optional override; auto-resolved when omitted.")),
 			mcplib.WithString("source", mcplib.Description("user_stated|agreed_upon|claude_suggested")),
-			mcplib.WithString("origin", mcplib.Description("Origin tool tag for provenance-aware trust scoring (e.g. manual, repl_command, llm_extracted_session)")),
+			mcplib.WithString("origin", mcplib.Description("Origin tag for trust scoring (e.g. manual, repl_command)")),
 			mcplib.WithNumber("supersedes", mcplib.Description("ID of learning this replaces")),
-			mcplib.WithArray("entities", mcplib.WithStringItems(), mcplib.Description("Files, systems, people affected")),
+			mcplib.WithArray("entities", mcplib.WithStringItems(), mcplib.Description("Files, systems, people affected (required for query_facts by entity)")),
 			mcplib.WithArray("actions", mcplib.WithStringItems(), mcplib.Description("Commands or operations involved")),
-			mcplib.WithString("trigger", mcplib.Description("When to surface this knowledge")),
-			mcplib.WithArray("anticipated_queries", mcplib.WithStringItems(), mcplib.Description("Search phrases to find this later")),
+			mcplib.WithString("trigger", mcplib.Description("When to surface. Deadline syntax 'before YYYY-MM-DD' auto-sets ExpiresAt.")),
+			mcplib.WithArray("anticipated_queries", mcplib.WithStringItems(), mcplib.Description("(retrieval-critical) 3-8 phrases for hybrid_search.")),
 			mcplib.WithString("context", mcplib.Description("Why/when is this relevant?")),
-			mcplib.WithString("domain", mcplib.Description("code|marketing|legal|finance|general")),
 			mcplib.WithString("task_type", mcplib.Description("For unfinished: task|idea|blocked|stale")),
 			mcplib.WithString("attribution", mcplib.Description("External source: e.g. 'Fullerenes (competitor)', 'mem0 docs'. Empty = own experience.")),
+			mcplib.WithString("domain", mcplib.Description("code|marketing|legal|finance|general (default: code)")),
 		), s.proxyCallFormat("remember", formatRemember))
 
 	s.srv.AddTool(

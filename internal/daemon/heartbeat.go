@@ -278,7 +278,7 @@ func (h *Handler) getAgentMaxRuntime() time.Duration {
 	if h.agentMaxRuntime > 0 {
 		return h.agentMaxRuntime
 	}
-	return 30 * time.Minute
+	return 48 * time.Hour
 }
 
 // attemptRestart checks running agents with a restart strategy and relaunches
