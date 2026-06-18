@@ -1,8 +1,11 @@
 package daemon
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -91,6 +94,12 @@ func (h *Handler) handleRemember(params map[string]any) Response {
 	if attribution, ok := params["attribution"].(string); ok {
 		l.Attribution = attribution
 	}
+		codeFingerprint, _ := params["code_fingerprint"].(string)
+
+		// Auto-generate code fingerprint from entity file paths when not explicitly provided.
+		if codeFingerprint == "" && len(l.Entities) > 0 {
+			codeFingerprint = h.computeCodeFingerprint(l.Entities)
+		}
 
 	// Generate enriched embedding text for V2 learnings
 	if l.IsV2() {
@@ -129,6 +138,11 @@ func (h *Handler) handleRemember(params map[string]any) Response {
 	id, err := h.store.InsertLearning(l)
 	if err != nil {
 		return errorResponse(err.Error())
+	}
+
+	// Store code fingerprint if provided (staleness detection)
+	if codeFingerprint != "" {
+		h.store.StoreCodeFingerprint(id, codeFingerprint)
 	}
 
 	// If superseding an old learning, check trust level first
@@ -749,4 +763,30 @@ func (h *Handler) handleGetSessionFlavorsForSession(params map[string]any) Respo
 // If project contains .worktrees/, returns the parent directory basename.
 func canonicalProjectFor(project string) string {
 	return models.CanonicalProject(project)
+}
+
+// computeCodeFingerprint generates a SHA256 hash of the content of entity file paths.
+// Only entities that look like file paths (containing '/' or '\' and an extension) are included.
+// The fingerprint is used by the staleness detection system to detect code changes
+// that may invalidate a learning.
+func (h *Handler) computeCodeFingerprint(entities []string) string {
+	hasher := sha256.New()
+	fileCount := 0
+	for _, entity := range entities {
+		// Heuristic: a file path contains a directory separator and a file extension
+		if !strings.ContainsAny(entity, "/\\") || !strings.Contains(entity, ".") {
+			continue
+		}
+		data, err := os.ReadFile(entity)
+		if err != nil {
+			continue // file moved/deleted — skip
+		}
+		fmt.Fprintf(hasher, "%s:%d:", entity, len(data))
+		hasher.Write(data)
+		fileCount++
+	}
+	if fileCount == 0 {
+		return ""
+	}
+	return hex.EncodeToString(hasher.Sum(nil))
 }

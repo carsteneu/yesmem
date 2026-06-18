@@ -61,6 +61,7 @@ type Config struct {
 	PromptOutputDiscipline   bool   // inject [yesmem-output-discipline] no-preamble + no-skill-eval + exploratory-heuristic
 	PromptCodingDiscipline   bool   // inject [yesmem-coding-discipline] read-before-propose + no-brute-force + no-half-finished
 	PromptBeweislast         bool   // inject [yesmem-beweislast] fabrication-guard + claim-vs-proof + stance-under-challenge + tool-result-honesty + long-context-erosion
+	PromptFable              bool   // inject [yesmem-fable] baseline-comparison + rollback-path + readback-check for high-stakes changes
 	PromptScopeDiscipline    bool   // inject [yesmem-scope-discipline] deliver-A-not-A+B+C + adjacent-findings-separate + scope-bound-authorization
 	PromptDelegationContract bool   // inject [yesmem-delegation-contract] self-contained-prompts + parallel-dispatch
 	PromptClarifyFirst       bool   // inject [yesmem-clarify-first] clarify only when alternative interpretations produce materially different work
@@ -106,6 +107,7 @@ type CustomSystemPromptConfig struct {
 	EnabledClaudeCode bool
 	EnabledCodex      bool
 	TemplatePath      string
+	ModelTemplates    map[string]string // per-model overrides: modelPattern → templatePath
 }
 
 const maxAnnotations = 5000 // evict oldest when exceeded
@@ -247,6 +249,9 @@ type Server struct {
 	// Custom system prompt template for OpenCode (loaded from DataDir/SYSTEM.md)
 	customSystemPrompt []byte
 
+	// Per-model template overrides (loaded from config CustomSystemPrompt.ModelTemplates)
+	modelTemplates map[string][]byte
+
 	// Rules re-injection: condensed CLAUDE.md rules injected every ~40k tokens
 	rulesMu               sync.RWMutex
 	rulesBlock            string          // cached condensed rules (fetched once from daemon)
@@ -320,6 +325,20 @@ func Run(cfg Config) error {
 		} else {
 			s.logger.Printf("[proxy] WARNING: custom_system_prompt enabled but template not found at %q — feature disabled",
 				cfg.CustomSystemPrompt.TemplatePath)
+		}
+	}
+
+	// Load per-model template overrides
+	if len(cfg.CustomSystemPrompt.ModelTemplates) > 0 {
+		s.modelTemplates = make(map[string][]byte, len(cfg.CustomSystemPrompt.ModelTemplates))
+		for pattern, path := range cfg.CustomSystemPrompt.ModelTemplates {
+			tpl := loadSystemPromptFromPath(path)
+			if tpl != nil {
+				s.modelTemplates[pattern] = tpl
+				s.logger.Printf("[proxy] loaded model template %q from %s (%d bytes)", pattern, path, len(tpl))
+			} else {
+				s.logger.Printf("[proxy] WARNING: model template %q not found at %q — skipping", pattern, path)
+			}
 		}
 	}
 
@@ -977,6 +996,9 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		}
 		if pf.Beweislast {
 			InjectBeweislast(req)
+		}
+		if pf.Fable {
+			InjectFable(req)
 		}
 		if pf.ScopeDiscipline {
 			InjectScopeDiscipline(req)
@@ -1807,6 +1829,7 @@ func (s *Server) getPromptFlags(profile models.PromptProfile) *config.PromptFlag
 		OutputDiscipline:   s.cfg.PromptOutputDiscipline,
 		CodingDiscipline:   s.cfg.PromptCodingDiscipline,
 		Beweislast:         s.cfg.PromptBeweislast,
+		Fable:              s.cfg.PromptFable,
 		ScopeDiscipline:    s.cfg.PromptScopeDiscipline,
 		DelegationContract: s.cfg.PromptDelegationContract,
 		ClarifyFirst:       s.cfg.PromptClarifyFirst,

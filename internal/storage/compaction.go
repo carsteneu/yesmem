@@ -113,3 +113,13 @@ func (s *Store) DeleteProxyStatePrefix(prefix string) (int, error) {
 	n, _ := result.RowsAffected()
 	return int(n), nil
 }
+
+// GetLastCheckedCommit returns the last commit hash processed for staleness scanning.
+func (s *Store) GetLastCheckedCommit(project string) (string, error) {
+	return s.GetProxyState("staleness_last_checked:" + project)
+}
+
+// SetLastCheckedCommit stores the last commit hash processed for staleness scanning.
+func (s *Store) SetLastCheckedCommit(project, hash string) error {
+	return s.SetProxyState("staleness_last_checked:"+project, hash)
+}

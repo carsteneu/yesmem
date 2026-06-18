@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -22,6 +23,29 @@ type codexConfigState struct {
 	ApprovalConfigured     bool
 	InstructionsReferenced bool
 	InstructionsPresent    bool
+}
+
+// yesmemCodexToolNames is the authoritative list of YesMem MCP tools
+// for which codex per-tool approvals are generated.
+// Updated from internal/mcp/server.go registerTools().
+var yesmemCodexToolNames = []string{
+	"activate_cap", "broadcast", "cap_proposal_decide", "cap_store",
+	"complete_plan", "deactivate_cap", "deep_search", "dismiss_code_nav",
+	"dismiss_repl_pattern", "docs_search", "execute_cap", "expand_context",
+	"get_agent", "get_caps", "get_code_context", "get_code_snippet",
+	"get_compacted_stubs", "get_config", "get_coverage", "get_dependency_map",
+	"get_file_index", "get_file_symbols", "get_learnings", "get_persona",
+	"get_pins", "get_plan", "get_project_profile", "get_self_feedback",
+	"get_session", "graph_traverse", "hybrid_search", "ingest_docs",
+	"list_agents", "list_cap_proposals", "list_docs", "list_projects",
+	"pin", "project_summary", "quarantine_session", "query_facts",
+	"register_caps", "related_to_file", "relate_learnings", "relay_agent",
+	"remember", "remove_docs", "resolve", "resolve_by_text", "resume_agent",
+	"save_cap", "schedule", "scratchpad_delete", "scratchpad_list",
+	"scratchpad_read", "scratchpad_write", "search", "search_code",
+	"search_code_index", "send_to", "set_config", "set_persona", "set_plan",
+	"skip_indexing", "spawn_agent", "stop_agent", "stop_all_agents", "unpin",
+	"update_agent_status", "update_plan", "whoami",
 }
 
 func codexConfigPath(home string) string {
@@ -132,7 +156,9 @@ func inspectCodexConfigContent(content, instructionsPath string) codexConfigStat
 	instructionsValue, hasInstructions := topLevelStringValue(content, "developer_instructions_file")
 	state.InstructionsReferenced = hasInstructions && matchesCodexInstructionsPath(instructionsValue, instructionsPath)
 
-	state.ApprovalConfigured = strings.Contains(content, `approval_policy = "never"`)
+	// Per-tool approval_mode="approve" is the correct mechanism for MCP tool calls;
+	// approval_policy="never" at top-level does NOT suppress MCP tool approval prompts (Learning #45002).
+	state.ApprovalConfigured = codexToolApprovalsPresent(content)
 	return state
 }
 
@@ -150,9 +176,11 @@ func mergeCodexConfigContent(content, binaryPath, instructionsPath string) strin
 	content = normalizeTOMLContent(content)
 	content = upsertTopLevelString(content, "model_provider", "yesmem")
 	content = upsertTopLevelString(content, "developer_instructions_file", instructionsPath)
-	content = upsertTopLevelString(content, "approval_policy", "never")
+	// Remove old approval_policy = "never" (doesn't work for MCP tool calls, see Learning #45002)
+	content = removeTopLevelKeyMatching(content, "approval_policy", func(value string) bool { return true })
 	content = upsertSection(content, "model_providers.yesmem", renderCodexProviderSection())
 	content = upsertSection(content, "mcp_servers.yesmem", renderCodexMCPSection(binaryPath))
+	content = upsertCodexToolApprovalSections(content)
 	return normalizeTOMLContent(content)
 }
 
@@ -164,7 +192,9 @@ func removeCodexConfigContent(content, instructionsPath string) string {
 	content = removeTopLevelKeyMatching(content, "developer_instructions_file", func(value string) bool {
 		return matchesCodexInstructionsPath(value, instructionsPath)
 	})
+	content = removeTopLevelKeyMatching(content, "approval_policy", func(value string) bool { return true })
 	content = removeSection(content, "model_providers.yesmem")
+	content = removeCodexToolApprovalSections(content)
 	content = removeSection(content, "mcp_servers.yesmem")
 	return normalizeTOMLContent(content)
 }
@@ -184,6 +214,83 @@ func renderCodexMCPSection(binaryPath string) string {
 		fmt.Sprintf("command = %s", strconv.Quote(binaryPath)),
 		`args = ["mcp"]`,
 	}, "\n")
+}
+
+// renderCodexToolApprovals returns TOML sections for per-tool auto-approval.
+func renderCodexToolApprovals() string {
+	var out []string
+	for _, name := range yesmemCodexToolNames {
+		out = append(out, "")
+		out = append(out, fmt.Sprintf("[mcp_servers.yesmem.tools.%s]", name))
+		out = append(out, `approval_mode = "approve"`)
+	}
+	return strings.Join(out, "\n") + "\n"
+}
+
+// detectCodexBinary returns the codex binary path or "" if not found.
+func detectCodexBinary() string {
+	if p, err := exec.LookPath("codex"); err == nil {
+		return p
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		nvmBase := filepath.Join(home, ".nvm", "versions", "node")
+		if entries, err := os.ReadDir(nvmBase); err == nil {
+			for _, e := range entries {
+				if !e.IsDir() {
+					continue
+				}
+				candidate := filepath.Join(nvmBase, e.Name(), "bin", "codex")
+				if _, err := os.Stat(candidate); err == nil {
+					return candidate
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// upsertCodexToolApprovalSections ensures all yesmem tools have approval sections.
+func upsertCodexToolApprovalSections(content string) string {
+	content = removeCodexToolApprovalSections(content)
+	content = normalizeTOMLContent(content)
+	if content != "" {
+		content += "\n"
+	}
+	content += renderCodexToolApprovals()
+	return normalizeTOMLContent(content)
+}
+
+// removeCodexToolApprovalSections strips all [mcp_servers.yesmem.tools.*] sections.
+func removeCodexToolApprovalSections(content string) string {
+	lines := splitTOMLLines(content)
+	var out []string
+	skip := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[mcp_servers.yesmem.tools.") {
+			skip = true
+			continue
+		}
+		if skip && isSectionHeader(trimmed) {
+			skip = false
+		}
+		if skip {
+			continue
+		}
+		out = append(out, line)
+	}
+	return normalizeTOMLContent(strings.Join(out, "\n"))
+}
+
+// codexToolApprovalsPresent returns true if all yesmem tools have approval sections.
+func codexToolApprovalsPresent(content string) bool {
+	for _, name := range yesmemCodexToolNames {
+		needle := fmt.Sprintf("[mcp_servers.yesmem.tools.%s]", name)
+		if !strings.Contains(content, needle) {
+			return false
+		}
+	}
+	return true
 }
 
 func defaultCodexInstructions() string {

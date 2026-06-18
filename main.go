@@ -194,7 +194,9 @@ func runMCP() {
 	// Prevent MCP recursion deadlock: when the daemon spawns opencode
 	// (which loads yesmem mcp), the child mcp must not reconnect to the
 	// same daemon that is blocked waiting for opencode to finish.
-	if os.Getenv("YESMEM_DAEMON_CHILD") == "1" {
+	// YESMEM_ALLOW_CHILD_MCP=1 overrides: used for explicit agent calls (Telegram).
+	if os.Getenv("YESMEM_DAEMON_CHILD") == "1" &&
+		os.Getenv("YESMEM_ALLOW_CHILD_MCP") != "1" {
 		os.Exit(0)
 	}
 

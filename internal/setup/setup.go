@@ -335,8 +335,18 @@ func executeSetup(home, dataDir, binaryPath, model, apiKey, provider, terminal s
 
 	// 2. Write config.yaml
 	withSpinner("Writing config.yaml", func() (string, error) {
+		// Backup existing config.yaml before overwriting
+		cfgPath := filepath.Join(dataDir, "config.yaml")
+		if _, err := os.Stat(cfgPath); err == nil {
+			backupDir := filepath.Join(dataDir, "backup")
+			os.MkdirAll(backupDir, 0755)
+			backupPath := filepath.Join(backupDir, "config.yaml.bak."+time.Now().Format("20060102T150405"))
+			if data, err := os.ReadFile(cfgPath); err == nil {
+				os.WriteFile(backupPath, data, 0644)
+			}
+		}
 		cfgContent := generateConfig(model, autoExtract, apiKey, provider, terminal)
-		return model, os.WriteFile(filepath.Join(dataDir, "config.yaml"), []byte(cfgContent), 0644)
+		return model, os.WriteFile(cfgPath, []byte(cfgContent), 0644)
 	})
 
 	// 2b. Bootstrap SYSTEM.md (if not present)
@@ -468,6 +478,16 @@ func executeSetup(home, dataDir, binaryPath, model, apiKey, provider, terminal s
 				ids = append(ids, id)
 			}
 			return strings.Join(ids, ", "), nil
+		})
+	}
+
+	// 7d4. Configure codex MCP tool approvals (per‑tool, avoids interactive picker)
+	if detectCodexBinary() != "" {
+		withSpinner("Configuring codex approvals", func() (string, error) {
+			if err := ensureCodexSetup(home, binaryPath); err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("%d tools", len(yesmemCodexToolNames)), nil
 		})
 	}
 
@@ -1079,14 +1099,17 @@ proxy:
       think_reminder: true
       timestamps: true
 
-  # --- Custom System Prompt ---
-  # Replaces the default system prompt with SYSTEM.md for supported pipelines.
-  # OpenCode and Claude Code pipelines each independently toggleable.
-  custom_system_prompt:
-    enabled_opencode: true
-    enabled_claude_code: true
-    enabled_codex: true
-    template_path: ~/.claude/yesmem/SYSTEM.md
+    # --- Custom System Prompt ---
+    # Replaces the default system prompt with SYSTEM.md for supported pipelines.
+    # OpenCode and Claude Code pipelines each independently toggleable.
+    # model_templates provides per-model overrides (substring matched, longest key first).
+    custom_system_prompt:
+      enabled_opencode: true
+      enabled_claude_code: true
+      enabled_codex: true
+      template_path: ~/.claude/yesmem/SYSTEM.md
+      model_templates:
+        codex: ~/.claude/yesmem/SYSTEM_CODEX.md
 
 # --- Forked Agents (Background Learning Extraction) ---
 # Spawns async API calls after each assistant response to extract learnings,

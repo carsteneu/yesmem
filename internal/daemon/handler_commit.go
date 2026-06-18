@@ -14,9 +14,11 @@ import (
 
 // stalenessDecision is the LLM's verdict on a single learning.
 type stalenessDecision struct {
-	ID     int64  `json:"id"`
-	Action string `json:"action"` // "stale" or "valid"
-	Reason string `json:"reason"`
+	ID         int64   `json:"id"`
+	Action     string  `json:"action"`     // "stale" | "code_changed_insight_holds" | "valid" | "uncertain"
+	Reason     string  `json:"reason"`     // brief explanation
+	Confidence float64 `json:"confidence"` // 0.0–1.0, how confident the LLM is in this verdict
+	Type       string  `json:"type"`       // code_contradicts, code_removed, code_renamed, code_changed_insight_holds
 }
 
 func (h *Handler) handleInvalidateOnCommit(params map[string]any) Response {
@@ -58,32 +60,46 @@ func (h *Handler) handleInvalidateOnCommit(params map[string]any) Response {
 		return errorResponse(fmt.Sprintf("LLM evaluation: %v", err))
 	}
 
-	// Step 5: Apply decisions
-	var resolvedIDs []int64
+	// Step 5: Apply decisions — score instead of resolve
+	var scoredIDs []int64
 	for _, d := range decisions {
-		if d.Action == "stale" {
-			shortHash := hash
-			if len(shortHash) > 7 {
-				shortHash = shortHash[:7]
+		shortHash := hash
+		if len(shortHash) > 7 {
+			shortHash = shortHash[:7]
+		}
+		reason := fmt.Sprintf("commit %s: %s", shortHash, d.Reason)
+
+		var score float64
+		switch d.Action {
+		case "stale":
+			score = d.Confidence
+			if score == 0 {
+				score = 0.85 // default when LLM omits confidence for stale
 			}
-			reason := fmt.Sprintf("invalidated by commit %s: %s", shortHash, d.Reason)
-			if err := h.store.ResolveLearning(d.ID, reason); err != nil {
-				log.Printf("[commit-invalidate] resolve %d: %v", d.ID, err)
-			} else {
-				resolvedIDs = append(resolvedIDs, d.ID)
-			}
+		case "code_changed_insight_holds":
+			score = 0.3 // low staleness — insight holds but code changed
+		case "valid":
+			score = 0 // not stale at all
+		default: // "uncertain" or unknown
+			score = 0.5
+		}
+
+		if err := h.store.SetStalenessScore(d.ID, score, reason, d.Type); err != nil {
+			log.Printf("[commit-invalidate] staleness score %d: %v", d.ID, err)
+		} else {
+			scoredIDs = append(scoredIDs, d.ID)
 		}
 	}
 
-	if len(resolvedIDs) > 0 {
+	if len(scoredIDs) > 0 {
 		go h.onMutation()
-		log.Printf("[commit-invalidate] %s: %d stale, %d valid (of %d affected)",
-			hash[:min(7, len(hash))], len(resolvedIDs), len(affected)-len(resolvedIDs), len(affected))
+		log.Printf("[commit-invalidate] %s: %d scored (of %d affected)",
+			hash[:min(7, len(hash))], len(scoredIDs), len(affected))
 	}
 
 	return jsonResponse(map[string]any{
 		"affected": len(affected),
-		"resolved": len(resolvedIDs),
+		"scored":   len(scoredIDs),
 		"hash":     hash,
 	})
 }
@@ -138,9 +154,22 @@ func gitDiffTruncated(hash, workdir string, maxBytes int) string {
 // evaluateStaleness asks an LLM to evaluate which learnings are invalidated by a diff.
 func evaluateStaleness(client extraction.LLMClient, diff string, learnings []models.Learning) ([]stalenessDecision, error) {
 	system := `You evaluate whether existing knowledge about a codebase is still valid after a code change.
-For each learning, decide: "stale" (no longer accurate due to this change) or "valid" (still accurate).
-Only mark "stale" if the change DIRECTLY contradicts or invalidates the learning content.
-Respond ONLY with a JSON array: [{"id": <int>, "action": "stale"|"valid", "reason": "<brief>"}]`
+For each learning, decide one of:
+- "stale" — the change directly contradicts or invalidates the learning content
+- "code_changed_insight_holds" — the referenced code changed but the design insight / rationale is still correct
+- "valid" — the learning is still accurate, the change doesn't affect it
+- "uncertain" — you cannot determine from the diff alone
+
+Include:
+- A confidence score (0.0–1.0): 1.0 = certain, 0.5 = unsure
+- A type indicating WHY:
+  "code_contradicts" — the diff directly contradicts the learning's claim
+  "code_removed" — the code the learning references has been deleted
+  "code_renamed" — the code the learning references has moved/renamed
+  "code_changed_insight_holds" — code changed but the learning's insight is still valid
+
+Respond ONLY with a JSON array:
+[{"id": <int>, "action": "<action>", "reason": "<brief>", "confidence": <float>, "type": "<type>"}]`
 
 	var learningLines []string
 	for _, l := range learnings {

@@ -57,6 +57,7 @@ func runProxy() {
 		PromptOutputDiscipline: cfg.Proxy.PromptOutputDiscipline,
 		PromptCodingDiscipline: cfg.Proxy.PromptCodingDiscipline,
 		PromptBeweislast:         cfg.Proxy.PromptBeweislast,
+		PromptFable:              cfg.Proxy.PromptFable,
 		PromptScopeDiscipline:    cfg.Proxy.PromptScopeDiscipline,
 		PromptDelegationContract: cfg.Proxy.PromptDelegationContract,
 		PromptClarifyFirst:       cfg.Proxy.PromptClarifyFirst,
@@ -86,6 +87,7 @@ func runProxy() {
 			EnabledClaudeCode: cfg.Proxy.CustomSystemPrompt.EnabledClaudeCode,
 			EnabledCodex:      cfg.Proxy.CustomSystemPrompt.EnabledCodex,
 			TemplatePath:      cfg.Proxy.CustomSystemPrompt.TemplatePath,
+			ModelTemplates:    cfg.Proxy.CustomSystemPrompt.ModelTemplates,
 		},
 	}
 

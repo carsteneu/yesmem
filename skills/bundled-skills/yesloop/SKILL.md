@@ -72,7 +72,9 @@ When invoked from an interactive session, **do NOT execute the pipeline yourself
 - If issues found → fix and re-verify (**max 3 cycles** — see CONVERGENCE GATE)
 - → scratchpad_write: verification results
 
-### Phase 5: REVIEW (Inline Self-Review)
+### Phase 5: REVIEW (Two-Stage: Self + Cold)
+
+**Stage 1 — Self-Review** (catches mechanical issues: dead code, error handling, style):
 - **Get the full delta** (committed + uncommitted): `git diff origin/main` + `git log origin/main..HEAD --oneline`
 - **Review against the plan** from Phase 2. Check each requirement.
 - **Checklist** (derived from superpowers code-review structure):
@@ -81,21 +83,35 @@ When invoked from an interactive session, **do NOT execute the pipeline yourself
   - **Architecture:** Sound design? Integrates cleanly with surrounding code? No unnecessary abstraction?
   - **Testing:** Tests verify real behavior? Edge cases covered? All tests passing? (VERIFY already ran them — check coverage gaps)
   - **Production readiness:** Migration needed? Backward compat? Documentation? Obvious bugs?
+  - **Second-order effects:** If this change ships, what happens NEXT? Trace 2+ levels of consequence — downstream consumers, migration ripple, feedback loops. Ask: "Then what? And after that?"
+  - **Assumption surfacing:** What must be TRUE for this change to work? List load-bearing assumptions. Which are verified, which are unverified but treated as fact? Flag the risky ones before proceeding.
 - **Output format** (scratchpad_write as structured block):
   - **Strengths** — what's well done, specific file:line references
-  - **Issues** — Critical (bugs, security, data loss) / Important (architecture, missing features, test gaps) / Minor (style, polish)
+  - **Issues** — Critical (bugs, security, data loss) / Important (architecture, missing features, test gaps) / Minor (style, polish). Prefix: [2nd-order] / [assumption] when applicable.
   - **Recommendations** — improvements for code quality, architecture, or process
   - **Assessment** — Ready to merge? [Yes | With fixes | No] + 1-2 sentence reasoning
-- **GATES:**
+
+**Stage 2 — Cold Review via task()** (fresh eyes, catches architectural blind spots, scope creep):
+- Dispatch a focused task()-subagent with the code-reviewer template (derived from superpowers requesting-code-review):
+  - **Description:** "Review code changes"
+  - **Input:** git diff origin/main + Phase 2 plan (no exploration — diff + plan only for speed)
+  - **Checklist:** Plan alignment, Code quality, Architecture, Testing, Production readiness, Second-order effects, Assumption surfacing + End-to-End perspective
+  - **Calibration:** Categorize by actual severity. Not everything is Critical. Acknowledge strengths first.
+  - **Output format:** Strengths, Issues (Critical/Important/Minor with file:line references + reasoning), Recommendations, Assessment
+- **Fallback:** If task() fails or times out → Self-Review result stands. The cold review is additive, not a blocker.
+
+**Merging & Resolution:**
+- Merge findings from both stages into a unified issues list (deduplicate, preserve highest severity)
+- **Unified GATES:**
   - **ALL findings must be fixed autonomously** — no user feedback, no escalation for fixable issues
   - Critical + Important issues → fix immediately, max 3 cycles per issue (CONVERGENCE GATE)
   - Minor issues → fix if < 2 min each, otherwise document and proceed
-  - After fixes → re-review the changed files once to confirm resolution
+  - After fixes → loop back to Phase 4 VERIFY to re-run tests, then re-review changed files (max 3 REVIEW→VERIFY cycles total, see CONVERGENCE GATE)
   - Assessment "No" (unfixable, architectural dead-end) → **STOP**, escalate via send_to: "REVIEW BLOCKED: <reasons>"
-  - Assessment "With fixes" → apply all fixes, confirm via re-review, then proceed
+  - Assessment "With fixes" → apply all fixes, re-run VERIFY to confirm tests pass, re-review final diff, then proceed
   - **Never leave fixable issues for the user** — the review is a work phase, not an advisory step
-- **Git diff verification:** After reading `git show` or `git diff` output, ALWAYS `Read` the current file to confirm — diffs show what changed, not what's there NOW (gotcha #66986)
-- → scratchpad_write: full review result in structured format
+- **Git diff verification:** After reading `git show` or `git diff` output, ALWAYS `Read` the current file to confirm — diffs show what changed, not what's there NOW
+- → scratchpad_write: unified review result in structured format (note which stage found each issue)
 - → update_agent_status(phase="Phase 5/6 REVIEW: <assessment>")
 
 ### Phase 6: FINISH
@@ -137,7 +153,26 @@ If you're cycling without making progress, recognize it and stop:
 
 **Hard limit:** If you make no forward progress (no completed steps in todowrite) for 5 consecutive turns → escalate and stop.
 
-## State Management (Collapse Survival)
+### BEWEISLAST BEI SCRATCHPAD-CLAIMS
+
+Before writing "DONE", "completed", or "verified" to scratchpad or `send_to`, confirm the artifact matches the claim — not just that the command exited 0.
+
+| Claim | Required independent check |
+|---|---|
+| "build succeeded" | `go build ./...` exit + binary exists with new mtime |
+| "tests green" | show last 5 lines of test output, not just "PASS" |
+| "deployed" | curl/GET against the running service shows new version |
+| "bundle rolled out" | `diff source installed && echo identical` (exit 0) |
+| "commit pushed" | `git log origin/<branch> --oneline -1` shows the hash |
+| "file edited" | `Read` the file (not just `git show` on the diff — see gotcha #66986) |
+
+**Why:** command-exit-0 is not state-change-propagated. Operations with hidden prerequisites (binary rebuild before embed-rollout via `yesmem migrate`, daemon restart before config reload, prefix-cache cooldown before measurement) silently no-op if the prerequisite is missing. The agent that ran `yesmem migrate` without prior `make deploy` saw an exit-0 and claimed "bundle rolled out" — but the SHA256 had nothing to compare against because the embedded binary was stale. The scratchpad said DONE; the live skill file was unchanged.
+
+**Rule:** if verification was skipped (not just run and passing), say so explicitly in the scratchpad entry: `<claim> (not independently verified)`. The orchestrator reading the scratchpad knows to treat the claim as reported, not confirmed. If verification was run, paste the observable evidence (diff exit code, command output snippet, file mtime) into the scratchpad entry — one line is enough.
+
+**Apply only to consequential claims:** build, deploy, bundle rollout, merge, migrate, config change, destructive ops. Routine step-completion in todowrite does not need this. Over-applying pollutes the scratchpad. The cost of a false DONE is paid by the orchestrator or the user downstream; the cost of explicit "not verified" is one extra line.
+
+
 
 Your state lives in yesmem, not context. On every wake-up:
 1. `get_plan()` — restore active goal and progress

@@ -287,3 +287,117 @@ func TestReadOSVersion(t *testing.T) {
 		t.Error("expected non-empty OS version")
 	}
 }
+
+func TestResolveSystemTemplate_NilModelTemplates(t *testing.T) {
+	s := &Server{
+		customSystemPrompt: []byte("default"),
+		modelTemplates:     nil,
+	}
+	got := s.resolveSystemTemplate("codex")
+	if string(got) != "default" {
+		t.Errorf("expected default template, got %q", string(got))
+	}
+}
+
+func TestResolveSystemTemplate_EmptyModelTemplates(t *testing.T) {
+	s := &Server{
+		customSystemPrompt: []byte("default"),
+		modelTemplates:     map[string][]byte{},
+	}
+	got := s.resolveSystemTemplate("codex")
+	if string(got) != "default" {
+		t.Errorf("expected default template, got %q", string(got))
+	}
+}
+
+func TestResolveSystemTemplate_NoMatch(t *testing.T) {
+	s := &Server{
+		customSystemPrompt: []byte("default"),
+		modelTemplates: map[string][]byte{
+			"claude": []byte("claude tpl"),
+		},
+	}
+	got := s.resolveSystemTemplate("codex")
+	if string(got) != "default" {
+		t.Errorf("expected default template for no match, got %q", string(got))
+	}
+}
+
+func TestResolveSystemTemplate_ExactMatch(t *testing.T) {
+	s := &Server{
+		customSystemPrompt: []byte("default"),
+		modelTemplates: map[string][]byte{
+			"codex": []byte("codex tpl"),
+		},
+	}
+	got := s.resolveSystemTemplate("codex")
+	if string(got) != "codex tpl" {
+		t.Errorf("expected codex template, got %q", string(got))
+	}
+}
+
+func TestResolveSystemTemplate_SubstringMatch(t *testing.T) {
+	s := &Server{
+		customSystemPrompt: []byte("default"),
+		modelTemplates: map[string][]byte{
+			"codex": []byte("codex tpl"),
+		},
+	}
+	got := s.resolveSystemTemplate("codex-cli-1.2")
+	if string(got) != "codex tpl" {
+		t.Errorf("expected codex template for substring match, got %q", string(got))
+	}
+}
+
+func TestResolveSystemTemplate_CaseInsensitive(t *testing.T) {
+	s := &Server{
+		customSystemPrompt: []byte("default"),
+		modelTemplates: map[string][]byte{
+			"Codex": []byte("codex tpl"),
+		},
+	}
+	got := s.resolveSystemTemplate("CODEX-cli")
+	if string(got) != "codex tpl" {
+		t.Errorf("expected codex template for case-insensitive match, got %q", string(got))
+	}
+}
+
+func TestResolveSystemTemplate_LongestKeyWins(t *testing.T) {
+	s := &Server{
+		customSystemPrompt: []byte("default"),
+		modelTemplates: map[string][]byte{
+			"codex":    []byte("generic codex"),
+			"codex-v2": []byte("codex v2"),
+		},
+	}
+	got := s.resolveSystemTemplate("codex-v2-rc1")
+	if string(got) != "codex v2" {
+		t.Errorf("expected longest key match (codex-v2), got %q", string(got))
+	}
+}
+
+func TestResolveSystemTemplate_FallbackToDefaultWhenNilMatch(t *testing.T) {
+	s := &Server{
+		customSystemPrompt: []byte("default"),
+		modelTemplates: map[string][]byte{
+			"codex": nil,
+		},
+	}
+	got := s.resolveSystemTemplate("codex-cli")
+	if string(got) != "default" {
+		t.Errorf("expected fallback to default when match is nil, got %q", string(got))
+	}
+}
+
+func TestResolveSystemTemplate_GPT5Match(t *testing.T) {
+	s := &Server{
+		customSystemPrompt: []byte("default"),
+		modelTemplates: map[string][]byte{
+			"gpt-5": []byte("gpt-5 tpl"),
+		},
+	}
+	got := s.resolveSystemTemplate("gpt-5.4")
+	if string(got) != "gpt-5 tpl" {
+		t.Errorf("expected gpt-5 template for gpt-5.4, got %q", string(got))
+	}
+}

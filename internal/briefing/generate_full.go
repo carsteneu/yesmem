@@ -61,6 +61,11 @@ func GenerateFullBriefing(store *storage.Store, dataDir, project, sessionID stri
 	projectShort := filepath.Base(project)
 	text = RefineBriefing(text, store, projectShort, nil)
 
+	// Metamemory (post-refine so it survives refinement)
+	if mm := gen.GenerateMetamemory(projectShort); mm != "" {
+		text = mm + "\n" + text
+	}
+
 	// Recovery block (post-refine so it survives refinement)
 	if recovery := gen.GenerateRecovery(); recovery != "" {
 		text = recovery + "\n" + text

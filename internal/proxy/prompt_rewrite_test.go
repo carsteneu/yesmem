@@ -288,6 +288,7 @@ func TestInjectDirectives_PreserveExistingBlocks(t *testing.T) {
 		InjectOutputDiscipline,
 		InjectCodingDiscipline,
 		InjectBeweislast,
+		InjectFable,
 		InjectScopeDiscipline,
 		InjectDelegationContract,
 		InjectClarifyFirst,
@@ -742,9 +743,35 @@ func TestInjectBeweislast_AddsBlock(t *testing.T) {
 	if !strings.HasPrefix(text, "[yesmem-beweislast]") {
 		t.Errorf("block should be tagged: %s", text)
 	}
-	for _, keyword := range []string{"Fabrication", "Claim-vs-proof", "Stance-under-challenge", "Tool-result-honesty", "Long-context-erosion", "Self-check", "mental self-check"} {
+	for _, keyword := range []string{"Fabrication", "Claim-vs-proof", "Stance-under-challenge", "Tool-result-honesty", "Long-context-erosion", "Self-check", "mental self-check", "Propagated-claim honesty", "I verify the artifact independently", "Command-exit-0"} {
 		if !strings.Contains(text, keyword) {
 			t.Errorf("beweislast block should mention %q", keyword)
+		}
+	}
+}
+
+// --- InjectFable ---
+
+func TestInjectFable_AddsBlock(t *testing.T) {
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": "You are Claude."},
+		},
+	}
+
+	InjectFable(req)
+
+	blocks := req["system"].([]any)
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks, got %d", len(blocks))
+	}
+	text, _ := blocks[1].(map[string]any)["text"].(string)
+	if !strings.HasPrefix(text, "[yesmem-fable]") {
+		t.Errorf("block should be tagged: %s", text)
+	}
+	for _, keyword := range []string{"baseline", "rollback", "readback-check", "high-stakes", "overlays [yesmem-beweislast]"} {
+		if !strings.Contains(text, keyword) {
+			t.Errorf("fable block should mention %q", keyword)
 		}
 	}
 }

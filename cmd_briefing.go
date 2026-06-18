@@ -69,6 +69,11 @@ func runBriefing() {
 	projectShort := filepath.Base(project)
 	text = briefing.RefineBriefing(text, store, projectShort, nil)
 
+	// Metamemory (post-refine so it survives refinement)
+	if mm := gen.GenerateMetamemory(projectShort); mm != "" {
+		text = mm + "\n" + text
+	}
+
 	// Recovery block (post-refine so it survives refinement)
 	if recovery := gen.GenerateRecovery(); recovery != "" {
 		text = recovery + "\n" + text
