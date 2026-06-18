@@ -332,7 +332,7 @@ func syntheticOpenAIPreFixture(t *testing.T, profile models.PromptProfile) []byt
 				Content: []any{
 					map[string]any{
 						"type": "text",
-						"text": "<environment_context>\n  <cwd>/home/chief/memory/yesmem/.worktrees/opencode-proxy</cwd>\n  <shell>bash</shell>\n</environment_context>",
+						"text": "<environment_context>\n  <cwd>/home/user/projects/yesmem/.worktrees/opencode-proxy</cwd>\n  <shell>bash</shell>\n</environment_context>",
 					},
 				},
 			},

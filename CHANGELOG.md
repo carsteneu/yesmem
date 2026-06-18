@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Restore legitimate test fixtures to SCAN_ALLOWLIST
+- Harden sync-public.sh + remove hardcoded private paths
+- Exclude scripts/extract_skills.ts from public sync
+
+## [2.1.18] - 2026-06-18
+
 ### Added
 
 - Add propagated-claim honesty + yesloop scratchpad verification
@@ -2916,7 +2924,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add comprehensive tests for generator and storage
 
 
-[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.1.17...HEAD
+[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.1.18...HEAD
+[2.1.18]: https://github.com/carsteneu/yesmem/compare/v2.1.17...v2.1.18
 [2.1.17]: https://github.com/carsteneu/yesmem/compare/v2.1.16...v2.1.17
 [2.1.16]: https://github.com/carsteneu/yesmem/compare/v2.1.15...v2.1.16
 [2.1.15]: https://github.com/carsteneu/yesmem/compare/v2.1.14...v2.1.15

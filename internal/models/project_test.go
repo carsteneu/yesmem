@@ -29,10 +29,10 @@ func TestCanonicalProject(t *testing.T) {
 		cwd  string
 		want string
 	}{
-		{"/home/chief/memory/yesmem/.worktrees/opencode-proxy", "yesmem"},
-		{"/home/chief/memory/yesmem/.worktrees/feat+capability-memory", "yesmem"},
-		{"/home/chief/memory/yesmem", "yesmem"},
-		{"/home/chief/projects/gluten", "gluten"},
+		{"/home/user/projects/yesmem/.worktrees/opencode-proxy", "yesmem"},
+		{"/home/user/projects/yesmem/.worktrees/feat+capability-memory", "yesmem"},
+		{"/home/user/projects/yesmem", "yesmem"},
+		{"/home/user/projects/gluten", "gluten"},
 		{"/var/www/html/GreenWashProjekt/greenWebsite", "greenWebsite"},
 		{"/home/user/projects/.worktrees/my-feature", "projects"},
 	}

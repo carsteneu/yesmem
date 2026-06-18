@@ -73,8 +73,8 @@ func TestSecretRedactor_BearerToken(t *testing.T) {
 
 func TestSecretRedactor_Email(t *testing.T) {
 	r := NewSecretRedactor(nil)
-	out := r.Sanitize("contact carsten@example.com please")
-	if strings.Contains(out, "carsten@example.com") {
+	out := r.Sanitize("contact user@example.com please")
+	if strings.Contains(out, "user@example.com") {
 		t.Fatalf("email not redacted: %q", out)
 	}
 	if !strings.Contains(out, "[REDACTED:email]") {
@@ -83,9 +83,9 @@ func TestSecretRedactor_Email(t *testing.T) {
 }
 
 func TestSecretRedactor_AllowlistSkipsExactMatch(t *testing.T) {
-	r := NewSecretRedactor([]string{"carsten@ccm19.de"})
-	out := r.Sanitize("ping carsten@ccm19.de and other@x.com")
-	if !strings.Contains(out, "carsten@ccm19.de") {
+	r := NewSecretRedactor([]string{"testuser@example.com"})
+	out := r.Sanitize("ping testuser@example.com and other@x.com")
+	if !strings.Contains(out, "testuser@example.com") {
 		t.Fatalf("allowlisted email was redacted: %q", out)
 	}
 	if strings.Contains(out, "other@x.com") {
@@ -290,12 +290,12 @@ func TestSecretRedactor_BearerRespectsAllowlist(t *testing.T) {
 
 func TestSecretRedactor_MultipleSecretsInOneLine(t *testing.T) {
 	r := NewSecretRedactor(nil)
-	in := "Authorization: Bearer abc123def456ghi789jkl and email carsten@example.com"
+	in := "Authorization: Bearer abc123def456ghi789jkl and email user@example.com"
 	out := r.Sanitize(in)
 	if strings.Contains(out, "abc123def456ghi789jkl") {
 		t.Errorf("bearer not redacted in multi-secret input: %q", out)
 	}
-	if strings.Contains(out, "carsten@example.com") {
+	if strings.Contains(out, "user@example.com") {
 		t.Errorf("email not redacted in multi-secret input: %q", out)
 	}
 	if !strings.Contains(out, "[REDACTED:bearer_token]") {

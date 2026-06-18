@@ -486,7 +486,7 @@ func TestSecretsSanitization_AllowedExceptionsEmpty(t *testing.T) {
 func TestSecretsSanitization_FromYAML(t *testing.T) {
 	dir := t.TempDir()
 	cfgFile := filepath.Join(dir, "config.yaml")
-	yaml := []byte("secrets_sanitization:\n  enabled: true\n  allowed_exceptions:\n    - carsten@example.com\n    - support@example.com\n")
+	yaml := []byte("secrets_sanitization:\n  enabled: true\n  allowed_exceptions:\n    - user@example.com\n    - support@example.com\n")
 	if err := os.WriteFile(cfgFile, yaml, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -500,8 +500,8 @@ func TestSecretsSanitization_FromYAML(t *testing.T) {
 	if got := len(cfg.SecretsSanitization.AllowedExceptions); got != 2 {
 		t.Fatalf("expected 2 allowed exceptions, got %d", got)
 	}
-	if cfg.SecretsSanitization.AllowedExceptions[0] != "carsten@example.com" {
-		t.Errorf("expected carsten@example.com first, got %q", cfg.SecretsSanitization.AllowedExceptions[0])
+	if cfg.SecretsSanitization.AllowedExceptions[0] != "user@example.com" {
+		t.Errorf("expected user@example.com first, got %q", cfg.SecretsSanitization.AllowedExceptions[0])
 	}
 	if cfg.SecretsSanitization.AllowedExceptions[1] != "support@example.com" {
 		t.Errorf("expected support@example.com second, got %q", cfg.SecretsSanitization.AllowedExceptions[1])

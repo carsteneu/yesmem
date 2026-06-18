@@ -309,7 +309,7 @@ func TestResolveBashCommand_ScriptSandboxEmpty(t *testing.T) {
 func TestJobWorkDir_DelegatesToResolveAgentWorkDir(t *testing.T) {
 	h, _ := mustHandler(t)
 	got := h.jobWorkDir()
-	if got == "/home/chief/memory/yesmem" {
+	if got == "/home/user/projects/yesmem" {
 		t.Fatalf("jobWorkDir() returned hardcoded dev path %q — must come from project resolver", got)
 	}
 	want := h.resolveAgentWorkDir("yesmem", "", "claude")
@@ -323,8 +323,8 @@ func TestHandlerScheduler_NoHardcodedDevPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read handler_scheduler.go: %v", err)
 	}
-	if strings.Contains(string(src), "/home/chief/memory/yesmem") {
-		t.Error("handler_scheduler.go contains hardcoded /home/chief/memory/yesmem path — use h.jobWorkDir() / resolveAgentWorkDir instead")
+	if strings.Contains(string(src), "/home/user/projects/yesmem") {
+		t.Error("handler_scheduler.go contains hardcoded /home/user/projects/yesmem path — use h.jobWorkDir() / resolveAgentWorkDir instead")
 	}
 }
 

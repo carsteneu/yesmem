@@ -69,7 +69,7 @@ export const YesMemPlugin = async (ctx: any) => {
       "tool.execute.after": composedAfter,
       "message.updated": composedMessageUpdated,
       "shell.env": async (_input: any, output: any) => {
-        output.env.YESMEM_SOCKET = `${process.env.HOME || "/home/chief"}/.claude/yesmem/daemon.sock`;
+          output.env.YESMEM_SOCKET = `${process.env.HOME}/.claude/yesmem/daemon.sock`;
         output.env.YESMEM_SOURCE_AGENT = "opencode";
         // Inject current session ID for subprocesses (including MCP server)
         if (currentSessionID) {

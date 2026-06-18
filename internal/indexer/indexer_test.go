@@ -266,9 +266,9 @@ func TestIndexSession_ExcludeProject(t *testing.T) {
 	bloomMgr := bloom.New()
 	arch := archive.New(t.TempDir())
 
-	idx := New(store, bloomMgr, arch, []string{"/home/chief"})
+	idx := New(store, bloomMgr, arch, []string{"/home/user"})
 
-	// Use the test fixture but we need a session with CWD=/home/chief
+	// Use the test fixture but we need a session with CWD=/home/user
 	// The sample fixture has CWD=/var/www/html/test-project, so it won't match.
 	// Verify that a normal session still gets indexed.
 	fixture := filepath.Join("..", "parser", "testdata", "sample-session.jsonl")

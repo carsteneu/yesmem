@@ -168,7 +168,7 @@ func TestMapOpencodeMessages_Empty(t *testing.T) {
 
 func TestBuildSession_Opencode(t *testing.T) {
 	dbID := "ses_203379163ffeOCkZGQFP71ATIH"
-	directory := "/home/chief/memory/yesmem/.worktrees/opencode-proxy"
+	directory := "/home/user/projects/yesmem/.worktrees/opencode-proxy"
 	title := "Test Session"
 	created := time.UnixMilli(1778072048326)
 	updated := time.UnixMilli(1778080000000)
