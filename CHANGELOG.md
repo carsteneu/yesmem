@@ -5,6 +5,62 @@ All notable changes to YesMem are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Add propagated-claim honesty + yesloop scratchpad verification
+- Add second-order + assumption checklist to Phase 5 REVIEW
+- Add --files flag for syncing only specific file paths
+- Per-model system prompt templates via model_templates map
+- Per-agent opencode session ID tracking for precise resume
+- Include codex_session_id in agent response
+- Per-agent codex session ID tracking for precise resume
+- Per-tool MCP approvals for all 70 yesmem tools
+- Unify PTY inject for all backends + resume for codex/opencode
+- Auto-generate code fingerprint from entity file paths at remember()
+- Two-stage Phase 5 REVIEW — Self-Review + Cold Review via task()
+- Add REVIEW→VERIFY feedback loop to pipeline
+- Native Go daemon tick for auto-trigger staleness scanning
+- Add reddit_fetch bundled skill (v12, HTML scraping docs)
+- Reddit_fetch v4 — old.reddit.com HTML scraping statt gebrochener .json API
+
+### Changed
+
+- Remove hardcoded gotcha #66986 reference from SKILL.md
+
+### Fixed
+
+- Rename reddit_fetch → reddit, sync with actual cap name
+- Add pre-sync untracked-files guard
+- Resolve zai-coding-plan routing through auto-discovery + /v1 path stripping
+- Inject metamemory block post-refine so it survives LLM refinement
+- Support provider/model format in agent model param
+- Neutral spawn boilerplate — no anti-planning hack
+- Add explicit anti-planning directive to spawn boilerplate
+- Truly minimal SYSTEM_CODEX.md — 5 lines, no directives
+- Backup config.yaml before overwriting during setup
+- Soften spawn boilerplate + remove memory-first from SYSTEM_CODEX.md
+- Two-connection PTY inject to prevent bracketed-paste swallowing \r
+- Use SIGTERM for codex, not inject-socket Ctrl+C
+- Send Ctrl+C for codex backend (not /exit\r)
+- Inject OPENAI_API_KEY from ~/.codex/auth.json for codex spawn
+- Remove --full-auto from codex args (not valid in codex 0.140.0) + NVM fallback for codex binary resolution
+- MCP tools + SYSTEM.md injection + reddit bundle v5
+- Remove misleading cost benchmark from cold review stage
+- Review fixes — dynamic project discovery, penalty harmonization, bounded wait
+- Reap terminal process to prevent zombie accumulation
+- Sync reddit_fetch bundle to v4 (HTML scraping, auto_active)
+- Wire prompt_fable through legacy config path
+
+### Documentation
+
+- Update scratchpad read description for scoped reads
+
+### Testing
+
+- Add tests for enhanced staleness decisions and penalty helper
+
 ## [2.1.17] - 2026-06-12
 
 ### Added
@@ -1581,6 +1637,234 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Integrate pulse learnings into collapse session timeline
 - Capture CC away_summary as pulse learnings
 - Add --per-commit mode to sync-public.sh
+
+### Changed
+
+- Regenerate for v2.0.6 release
+- Split index.md into file-tree + learnings.md category index
+- Copy loop var in save_cap, clarify legacy-handler merge comment
+- Merge GenerateSharedAdapterJS into GenerateAdapterJS with skipStore param, add UsesStoreAdapter
+- Remove yesmem-build-tool, refresh yesmem-planning
+- Rewrite wiki_export as native runtime:bash (v62)
+- Silence sandbox-override log when profiles match
+- Enumerate valid sandbox values in error
+- Tidy sandbox validation per code review
+- Exclude .ai-jail sandbox configs
+- Drop dead guard in WriteCapToDisk DDL path
+- Retire reddit standalones, stage bundle CAP.md exports + idempotent adapter rename
+- Pivot REPL-pattern detection to fork-driven model
+- Resync cap_search bundle template
+- Replace private paths in test fixtures with generic placeholders
+- Remove   .last-sync-hash, require --branch flag in sync-public.sh
+- Remove Notes section from parser and writer
+- Merge 4 schedule_* tools into single schedule tool with action param
+- Update catalog format and auto_active default
+- Rename capability→caps across all packages
+- BlockText helper with trailing separator for all system blocks
+- Sync-public.sh requires --branch flag, auto-generated CHANGELOG
+- Whitelist mode for docs/ in sync-public.sh
+- Harden public sync pipeline
+- Move Knowledge Index sections (Doc Index, Health, Recent Context) into Code Map turn
+- Expand Code Map — all packages get individual rows
+- Extract GenerateFullBriefing as single source of truth
+- Rewrite Code Map render to Spec Ebene 1 table format
+- Replace TreeSitter scanner with codebase-memory-mcp CLI
+- Wire TreeSitterScanner into briefing, render imports in code map, expose CodeGraph
+- Add gotreesitter v0.13.4 (pure Go tree-sitter, 206 grammars, no CGO)
+- Consistent session_flavor JSON key, remove redundant DISTINCT
+- Remove pulse content truncation from timeline
+
+### Fixed
+
+- Cache project path to avoid SQLite single-conn deadlock
+- Add all public docs to allowlist, remove stale claude-code-repl exclude
+- Harden security scanner
+- Add WithStringItems to update_plan array params for codex JSON schema compliance
+- Resolve job work_dir via project resolver instead of hardcoded dev path
+- Add file-specific entity matching to gotcha filter — old info gotchas with matching file entities are preserved (per code review)
+- Session metadata from learning IDs, exclude non-package dirs
+- Remove unreliable LOC from package pages
+- Go-only package filter, LOC aggregation, deduped health counts
+- Filter non-code paths from file index — vendor, PDFs, erledigt
+- Point codemap footer to index.md instead of files/
+- Normalize absolute file paths to relative in file index
+- Filter foreign worktrees, dot-files, absolute paths from file index
+- Move wiki-link to top of codemap block — before package table
+- Clarify wiki path encoding in imperative block
+- CLI --scan also saves to project_scan cache
+- Derive file imports from CALLS edges when IMPORTS is empty
+- Save_cap field-merge preserves scripts on metadata-only updates
+- Per-cap store() wrapper with capability injection and args stringify
+- Align wiki_export source with disk v65
+- Version-Guard in WriteCapToDisk — skip overwrite when disk version >= DB version
+- Blank first user message content on collapse
+- Cap WAL size at 10MB via journal_size_limit pragma
+- Expose origin parameter in remember tool schema
+- Guard startDaemon under go test to prevent fork bomb
+- Emit origin_tool in hybrid_search response so proxy multiplier sees it
+- Tighten phone regex to reject ipv4-like dotted strings
+- Widen generic_api_key charset to ./+= for base64 tokens
+- Broaden bearer_token regex beyond Authorization header
+- Wrap SummarizeClient at assignment instead of post-replacement
+- Wrap quickstart client+qualityClient for all 6 LLM paths
+- Wrap briefingClient with SanitizingClient when enabled
+- Redact Command/ErrorMsg, headless output and stderr
+- Sanitize SanitizingClient output even on inner error
+- Respect since/before in search and deep_search
+- Always shift cache breakpoint, including tool_result messages
+- Fail closed when sandbox unavailable
+- GetCapTableDDL prefix-overlap via cap_store_meta JOIN
+- Make adapter rename idempotent via word-boundary check
+- Correct ai-jail release asset naming and extract from tarball
+- 3-way project filter in GetActiveLearnings (briefing tests)
+- Hydrate DatabaseSQL via GetCapTableDDL in WriteCapToDisk
+- Spec-compliant CAP.md render and parse
+- Parse UNIQUE/PK/NotNull constraints from MCP cap_store create_table params
+- API key fallback chain for re-setup
+- Code review fixes for bash-mode scheduler
+- Inject adapter JS (store/web/file aliases) in proxy caps re-injection
+- Set dataDir in test helper to prevent CAP.md artifacts in source tree
+- Remove cross-project learnings fallback
+- Parse nested pattern envelope in suggestion response
+- Use already-constructed meta for WriteCapToDisk instead of re-parsing content string
+- Use job-specific section names and pass full ScheduledJob to executor
+- Translate all agent prompts to English
+- Write task to scratchpad before spawn so agent sees it in briefing
+- Pre-spawn stop stale agents, unified 10min idle timeout for all states
+- Wrap scheduled prompt with focused task-agent preamble
+- Replace max_turns with watchScheduledAgent idle-timeout (10min) + status polling
+- Add max_turns=10 to scheduled agent spawn, log errors
+- Pass project+work_dir to spawn, relay prompt with confirmation
+- Quote description in YAML frontmatter to handle colons and special chars
+- Individual MCP permissions + memory-first recall reminder
+- Remove OR-clause from frozen-stub invalidation
+- Inject pattern-suggestion into last user message (Phase 6 cache fix)
+- Resolve thread_id via _caller_pid fallback in capability handlers
+- Cap_store upsert preserves created_at (#53149)
+- Key briefing cache by project to prevent cross-project leak
+- Register_capabilities emits 4 positional args to match REPL signature
+- Address pre-merge code review findings for Capability Memory
+- Exclude capabilities from evolution pipeline, clean embedding text
+- Use projectKey() for Code Map header in worktrees
+- Resolve git worktree HEAD and project key correctly
+- CLI client robustness for subscription installs
+- Replace LFS pointer with real sse_dyt_512d.bin binary (6KB)
+- Align prompt_rewrite test inputs with updated CC target strings
+- Add pre-modification dump, update rewrite targets for CC ~2.1.117
+- Keepalive ping strips thinking — adaptive conflicts with max_tokens=1
+- Add error logging to silent-fail load functions in briefing
+- Normalize thinking.type=enabled to adaptive for opus-4-6+/sonnet-4-6
+- Merge Module nodes into File query for complete scan
+- Packed-refs fallback + unique project key for scan cache
+- Code Map injection debugging + dedup marker fix
+- Code review — lazy-init briefingText + pass projectDir
+- Consistent ## Code Map headers across all tiers
+- Suppress empty Code Map for projects with no recognized packages
+- Inject Code Map post-refine so it survives LLM compression
+- Increase queryDaemon timeout to 30s for generate_briefing
+- Pass full CWD path to briefing for Code Map scanner
+- Harden TreeSitter scanner against OOM + panics
+- Add gopath, .worktrees, testdata to scanner skip list (OOM crash)
+- Move Code Descriptions to Phase 3.75 (before heavy Narratives/Clustering)
+- Phase 4.75 rate-limit to 1 project per extraction cycle
+- Code Intelligence review fixes — real grep, glob matching, memory cleanup ordering
+- Skill-eval block scope to user text input only, skip tool_result turns
+- Preserve session flavors across extraction runs, fetch all phases for current session
+- Truncate pulse content to 150 chars in session timeline
+- Set created_at on pulse learnings from JSONL event timestamp
+- Strip context_management from fork requests
+
+### Reverted
+
+- Remove Go-specific filesystem fallbacks from code tools
+- Revert "feat(codescan): worktree-aware filesystem fallback for code tools"
+
+### Documentation
+
+- Translate CapFeatures.md and caps-vs-skills-rationale.md to English
+- Add config.yaml and settings.json references, move internal docs to yesdocs
+- Merged context redundancy analysis with implementation decisions and provenance table
+- Drop sandbox prose section from 1.0-copy
+- Opencode proxy and injection integration plan
+- Verify and correct opencode-integration implementation plan
+- Briefing codemap shrink follow-up to wiki-render
+- Swap wiki-export-level1-enrichment for wiki-render-go-rewrite
+- Cap consolidation pattern + sandbox field spec note
+- Sync against main + add capabilities/sanitize/sandbox sections
+- Add opencode source integration + wiki-export L1 enrichment plans
+- Add DiD-roadmap, learnings-wiki-export, per-cap-sandbox; refresh sanitize-followups
+- Update capability-memory design notes
+- Add database schema reference for the four SQLite stores
+- Document set_plan trigger conditions in MCP and coding-discipline injection
+- Add cap-system hardening roadmap (T1, T3, T8)
+- Add cap-builder knowledge audit trail\n\nTwo-stage workflow for distilling cap-building knowledge from past\nsessions into the yesmem-cap-builder skill.\n\nStage 1 (verbatim extraction) under cap-builder-stage1/:\n  session-bb37bd60.md (517 lines, full coverage 0..1067)\n  session-cc0ba29d.md (733 lines, coverage 0..1599)\n  session-cc0ba29d-part2.md (1003 lines, coverage 1600..4115)\n  README.md as index and hand-off\n\nStage 2 (synthesised proposal) under cap-builder-stage1/stage2/:\n  SKILL.md, recipes.md, api-reference.md, gotchas.md\n  Snapshot of the proposal before patches and live take-over.\n\nKept under yesdocs/plans/ rather than discarded so the chain from\nsession quote to skill paragraph stays auditable; future revisions\ncan re-run stage 1 against new sessions and diff against this\nbaseline.
+- Note why project-scope guard includes script name directly
+- Note B8 skip per audit grep result
+- Audit trust-multiplier locations and remember touch-points
+- Document SanitizingClient decorator-order contract
+- Clarify AllowedExceptions full-match semantics + add config example
+- Add Plan B+F implementation plan for source integrity and sanitize followups
+- Post-review hardening section for sanitization integration
+- Mark Defense-in-Depth status (verified 2026-04-29)
+- CC 2.1.119-2.1.123 feature adoption plan
+- Add system/cache-cycle.md — vollstaendige Cache-Zyklus-Architektur
+- Bash-mode-scheduler audit + auto-correct-hardening plan
+- Add plans and analyses from 2026-04-24 (private, excluded from public sync)
+- Dead-target-detection + cap-suggestion-v2 plans
+- Remove obsolete telegram adapter plan and spec
+- Update Features.md and README.md for recent development
+- Add JobsFeature.md with full scheduler documentation
+- Bash-mode scheduler implementation plan
+- Minor updates to CHANGELOG, reddit_fetch CAP, build-tool SKILL
+- Update CapFeatures.md — noise reduction, workflow detection, open items audit
+- Update CapFeatures.md adapter section to 3-primitives design
+- Translate scheduler section to English
+- Resolve stale items in CapFeatures.md (blob-pipe, naming, open issues)
+- Update CapFeatures.md with adapter layer, resolve stale items
+- Add CAP.md file format section to CapFeatures.md
+- Add yesmem-directive-blocks plan
+- Yesmem-build-tool — patterns from session bb1ded28
+- Yesmem-build-tool — 4 fixes from session 63ae4565 RED-test
+- Cap_store analysis system — architecture + 8 examples
+- Remove stale Bleve reference, update vector store description
+- Restructure Differentiators into marketing-quality categories
+- Add untracked docs/plans to .gitignore and sync-public blocklist
+- Corrected CC system prompt diff analysis (March vs April 2026)
+- Add Scheduled Agents and Headless Mode to Features.md and README.md
+- Rename yesdocs/analysen/ to yesdocs/analysis/, add CC system prompt diff
+- Align build-tool skill with CAPS-md-spec
+- Add yesmem-build-tool as bundled skill
+- Add Capability Memory spec and Phase 2 implementation plan
+- Add pulse/recap feature to Features.md and README.md
+
+### Testing
+
+- Align stale assertions with current render text and sandbox auto-install
+- Use non-pattern fixture value for generic api-key redaction
+- Drop TestInstallBundledCaps_IncludesWikiExport
+- Verify wiki_export bundled cap installs into ~/.claude/caps/
+- Add live cap parser probes for proxy_health and wiki_export
+- Origin end-to-end smoke verifying handler+store+multiplier
+- Reconstruct bash error handler tests (Task 5)
+- Add failing tests for three directive inject functions
+- Raise MCP tool budget to 24000 chars / 65 tools
+- Raise tool definition budget to 21000 chars, count to 60
+
+## [archive/knowledge-index-2026-04-16] - 2026-06-18
+
+### Added
+
+- Complete briefing in daemon RPC (add RefineBriefing + Open Work)
+- Split Code Map into separate codemap-hook
+- Auto-index projects in codebase-memory-mcp via CLI
+- Phase C Karpathy Compilation — LLM-generated package descriptions + cross-package links
+- Learning annotations in code map + get_file_index MCP tool (Phase B completion)
+- Integration test — TreeSitterScanner + CodeGraph end-to-end on own repo
+- Code Intelligence MCP handlers — search_code_index, search_code, get_code_context, get_dependency_map, graph_traverse with lazy CodeGraph init
+- In-memory CodeGraph with traversal, search, and cycle detection
+- TreeSitterScanner with AST-based signatures + import extraction for 15 languages
+- Knowledge Index Phase B — code scanner with adaptive tier rendering
+- Knowledge Index Phase A — Doc Index, Health, Recent Context in briefing
 - Re-enable eager tool-result stubbing (cache-safe with breakpoint shift)
 - Persistent timestamp + msg:N injection on all messages
 - Selective cache breakpoint shift for text-only turns
@@ -2040,39 +2324,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Regenerate for v2.0.6 release
-- Split index.md into file-tree + learnings.md category index
-- Copy loop var in save_cap, clarify legacy-handler merge comment
-- Merge GenerateSharedAdapterJS into GenerateAdapterJS with skipStore param, add UsesStoreAdapter
-- Remove yesmem-build-tool, refresh yesmem-planning
-- Rewrite wiki_export as native runtime:bash (v62)
-- Silence sandbox-override log when profiles match
-- Enumerate valid sandbox values in error
-- Tidy sandbox validation per code review
-- Exclude .ai-jail sandbox configs
-- Drop dead guard in WriteCapToDisk DDL path
-- Retire reddit standalones, stage bundle CAP.md exports + idempotent adapter rename
-- Pivot REPL-pattern detection to fork-driven model
-- Resync cap_search bundle template
-- Replace private paths in test fixtures with generic placeholders
-- Remove   .last-sync-hash, require --branch flag in sync-public.sh
-- Remove Notes section from parser and writer
-- Merge 4 schedule_* tools into single schedule tool with action param
-- Update catalog format and auto_active default
-- Rename capability→caps across all packages
-- BlockText helper with trailing separator for all system blocks
-- Sync-public.sh requires --branch flag, auto-generated CHANGELOG
-- Whitelist mode for docs/ in sync-public.sh
-- Harden public sync pipeline
-- Move Knowledge Index sections (Doc Index, Health, Recent Context) into Code Map turn
-- Expand Code Map — all packages get individual rows
-- Extract GenerateFullBriefing as single source of truth
 - Rewrite Code Map render to Spec Ebene 1 table format
 - Replace TreeSitter scanner with codebase-memory-mcp CLI
 - Wire TreeSitterScanner into briefing, render imports in code map, expose CodeGraph
 - Add gotreesitter v0.13.4 (pure Go tree-sitter, 206 grammars, no CGO)
-- Consistent session_flavor JSON key, remove redundant DISTINCT
-- Remove pulse content truncation from timeline
 - Change keepalive defaults to 5m mode with 5 pings
 - SEO optimization — meta tags, structured data, semantic HTML
 - Landing page content refresh
@@ -2174,88 +2429,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Cache project path to avoid SQLite single-conn deadlock
-- Add all public docs to allowlist, remove stale claude-code-repl exclude
-- Harden security scanner
-- Add WithStringItems to update_plan array params for codex JSON schema compliance
-- Resolve job work_dir via project resolver instead of hardcoded dev path
-- Add file-specific entity matching to gotcha filter — old info gotchas with matching file entities are preserved (per code review)
-- Session metadata from learning IDs, exclude non-package dirs
-- Remove unreliable LOC from package pages
-- Go-only package filter, LOC aggregation, deduped health counts
-- Filter non-code paths from file index — vendor, PDFs, erledigt
-- Point codemap footer to index.md instead of files/
-- Normalize absolute file paths to relative in file index
-- Filter foreign worktrees, dot-files, absolute paths from file index
-- Move wiki-link to top of codemap block — before package table
-- Clarify wiki path encoding in imperative block
-- CLI --scan also saves to project_scan cache
-- Derive file imports from CALLS edges when IMPORTS is empty
-- Save_cap field-merge preserves scripts on metadata-only updates
-- Per-cap store() wrapper with capability injection and args stringify
-- Align wiki_export source with disk v65
-- Version-Guard in WriteCapToDisk — skip overwrite when disk version >= DB version
-- Blank first user message content on collapse
-- Cap WAL size at 10MB via journal_size_limit pragma
-- Expose origin parameter in remember tool schema
-- Guard startDaemon under go test to prevent fork bomb
-- Emit origin_tool in hybrid_search response so proxy multiplier sees it
-- Tighten phone regex to reject ipv4-like dotted strings
-- Widen generic_api_key charset to ./+= for base64 tokens
-- Broaden bearer_token regex beyond Authorization header
-- Wrap SummarizeClient at assignment instead of post-replacement
-- Wrap quickstart client+qualityClient for all 6 LLM paths
-- Wrap briefingClient with SanitizingClient when enabled
-- Redact Command/ErrorMsg, headless output and stderr
-- Sanitize SanitizingClient output even on inner error
-- Respect since/before in search and deep_search
-- Always shift cache breakpoint, including tool_result messages
-- Fail closed when sandbox unavailable
-- GetCapTableDDL prefix-overlap via cap_store_meta JOIN
-- Make adapter rename idempotent via word-boundary check
-- Correct ai-jail release asset naming and extract from tarball
-- 3-way project filter in GetActiveLearnings (briefing tests)
-- Hydrate DatabaseSQL via GetCapTableDDL in WriteCapToDisk
-- Spec-compliant CAP.md render and parse
-- Parse UNIQUE/PK/NotNull constraints from MCP cap_store create_table params
-- API key fallback chain for re-setup
-- Code review fixes for bash-mode scheduler
-- Inject adapter JS (store/web/file aliases) in proxy caps re-injection
-- Set dataDir in test helper to prevent CAP.md artifacts in source tree
-- Remove cross-project learnings fallback
-- Parse nested pattern envelope in suggestion response
-- Use already-constructed meta for WriteCapToDisk instead of re-parsing content string
-- Use job-specific section names and pass full ScheduledJob to executor
-- Translate all agent prompts to English
-- Write task to scratchpad before spawn so agent sees it in briefing
-- Pre-spawn stop stale agents, unified 10min idle timeout for all states
-- Wrap scheduled prompt with focused task-agent preamble
-- Replace max_turns with watchScheduledAgent idle-timeout (10min) + status polling
-- Add max_turns=10 to scheduled agent spawn, log errors
-- Pass project+work_dir to spawn, relay prompt with confirmation
-- Quote description in YAML frontmatter to handle colons and special chars
-- Individual MCP permissions + memory-first recall reminder
-- Remove OR-clause from frozen-stub invalidation
-- Inject pattern-suggestion into last user message (Phase 6 cache fix)
-- Resolve thread_id via _caller_pid fallback in capability handlers
-- Cap_store upsert preserves created_at (#53149)
-- Key briefing cache by project to prevent cross-project leak
-- Register_capabilities emits 4 positional args to match REPL signature
-- Address pre-merge code review findings for Capability Memory
-- Exclude capabilities from evolution pipeline, clean embedding text
-- Use projectKey() for Code Map header in worktrees
-- Resolve git worktree HEAD and project key correctly
-- CLI client robustness for subscription installs
-- Replace LFS pointer with real sse_dyt_512d.bin binary (6KB)
-- Align prompt_rewrite test inputs with updated CC target strings
-- Add pre-modification dump, update rewrite targets for CC ~2.1.117
-- Keepalive ping strips thinking — adaptive conflicts with max_tokens=1
-- Add error logging to silent-fail load functions in briefing
-- Normalize thinking.type=enabled to adaptive for opus-4-6+/sonnet-4-6
-- Merge Module nodes into File query for complete scan
-- Packed-refs fallback + unique project key for scan cache
-- Code Map injection debugging + dedup marker fix
-- Code review — lazy-init briefingText + pass projectDir
 - Consistent ## Code Map headers across all tiers
 - Suppress empty Code Map for projects with no recognized packages
 - Inject Code Map post-refine so it survives LLM compression
@@ -2266,11 +2439,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Move Code Descriptions to Phase 3.75 (before heavy Narratives/Clustering)
 - Phase 4.75 rate-limit to 1 project per extraction cycle
 - Code Intelligence review fixes — real grep, glob matching, memory cleanup ordering
-- Skill-eval block scope to user text input only, skip tool_result turns
-- Preserve session flavors across extraction runs, fetch all phases for current session
-- Truncate pulse content to 150 chars in session timeline
-- Set created_at on pulse learnings from JSONL event timestamp
-- Strip context_management from fork requests
 - Remove truncation from archive block learnings and session flavors
 - Use session start from DB for collapse learning query + propagate threshold to sawtooth
 - Append no-echo instruction to rotating timestamp hints
@@ -2600,8 +2768,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Reverted
 
-- Remove Go-specific filesystem fallbacks from code tools
-- Revert "feat(codescan): worktree-aware filesystem fallback for code tools"
 - Remove eager tool-result stubbing (breaks cache anchors)
 - Revert "feat(scoring): session-correction-rate als Quality-Signal (2e)"
 - Revert "feat(storage): switch SQLite driver from modernc to ncruces/go-sqlite3"
@@ -2609,61 +2775,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- Translate CapFeatures.md and caps-vs-skills-rationale.md to English
-- Add config.yaml and settings.json references, move internal docs to yesdocs
-- Merged context redundancy analysis with implementation decisions and provenance table
-- Drop sandbox prose section from 1.0-copy
-- Opencode proxy and injection integration plan
-- Verify and correct opencode-integration implementation plan
-- Briefing codemap shrink follow-up to wiki-render
-- Swap wiki-export-level1-enrichment for wiki-render-go-rewrite
-- Cap consolidation pattern + sandbox field spec note
-- Sync against main + add capabilities/sanitize/sandbox sections
-- Add opencode source integration + wiki-export L1 enrichment plans
-- Add DiD-roadmap, learnings-wiki-export, per-cap-sandbox; refresh sanitize-followups
-- Update capability-memory design notes
-- Add database schema reference for the four SQLite stores
-- Document set_plan trigger conditions in MCP and coding-discipline injection
-- Add cap-system hardening roadmap (T1, T3, T8)
-- Add cap-builder knowledge audit trail\n\nTwo-stage workflow for distilling cap-building knowledge from past\nsessions into the yesmem-cap-builder skill.\n\nStage 1 (verbatim extraction) under cap-builder-stage1/:\n  session-bb37bd60.md (517 lines, full coverage 0..1067)\n  session-cc0ba29d.md (733 lines, coverage 0..1599)\n  session-cc0ba29d-part2.md (1003 lines, coverage 1600..4115)\n  README.md as index and hand-off\n\nStage 2 (synthesised proposal) under cap-builder-stage1/stage2/:\n  SKILL.md, recipes.md, api-reference.md, gotchas.md\n  Snapshot of the proposal before patches and live take-over.\n\nKept under yesdocs/plans/ rather than discarded so the chain from\nsession quote to skill paragraph stays auditable; future revisions\ncan re-run stage 1 against new sessions and diff against this\nbaseline.
-- Note why project-scope guard includes script name directly
-- Note B8 skip per audit grep result
-- Audit trust-multiplier locations and remember touch-points
-- Document SanitizingClient decorator-order contract
-- Clarify AllowedExceptions full-match semantics + add config example
-- Add Plan B+F implementation plan for source integrity and sanitize followups
-- Post-review hardening section for sanitization integration
-- Mark Defense-in-Depth status (verified 2026-04-29)
-- CC 2.1.119-2.1.123 feature adoption plan
-- Add system/cache-cycle.md — vollstaendige Cache-Zyklus-Architektur
-- Bash-mode-scheduler audit + auto-correct-hardening plan
-- Add plans and analyses from 2026-04-24 (private, excluded from public sync)
-- Dead-target-detection + cap-suggestion-v2 plans
-- Remove obsolete telegram adapter plan and spec
-- Update Features.md and README.md for recent development
-- Add JobsFeature.md with full scheduler documentation
-- Bash-mode scheduler implementation plan
-- Minor updates to CHANGELOG, reddit_fetch CAP, build-tool SKILL
-- Update CapFeatures.md — noise reduction, workflow detection, open items audit
-- Update CapFeatures.md adapter section to 3-primitives design
-- Translate scheduler section to English
-- Resolve stale items in CapFeatures.md (blob-pipe, naming, open issues)
-- Update CapFeatures.md with adapter layer, resolve stale items
-- Add CAP.md file format section to CapFeatures.md
-- Add yesmem-directive-blocks plan
-- Yesmem-build-tool — patterns from session bb1ded28
-- Yesmem-build-tool — 4 fixes from session 63ae4565 RED-test
-- Cap_store analysis system — architecture + 8 examples
-- Remove stale Bleve reference, update vector store description
-- Restructure Differentiators into marketing-quality categories
-- Add untracked docs/plans to .gitignore and sync-public blocklist
-- Corrected CC system prompt diff analysis (March vs April 2026)
-- Add Scheduled Agents and Headless Mode to Features.md and README.md
-- Rename yesdocs/analysen/ to yesdocs/analysis/, add CC system prompt diff
-- Align build-tool skill with CAPS-md-spec
-- Add yesmem-build-tool as bundled skill
-- Add Capability Memory spec and Phase 2 implementation plan
-- Add pulse/recap feature to Features.md and README.md
 - Restore cache keepalive cost analysis lost in overbroad revert
 - Add eager tool-result stubbing to Features.md, README, and landing page
 - Eager tool-result stubbing implementation plan
@@ -2792,16 +2903,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Testing
 
-- Align stale assertions with current render text and sandbox auto-install
-- Use non-pattern fixture value for generic api-key redaction
-- Drop TestInstallBundledCaps_IncludesWikiExport
-- Verify wiki_export bundled cap installs into ~/.claude/caps/
-- Add live cap parser probes for proxy_health and wiki_export
-- Origin end-to-end smoke verifying handler+store+multiplier
-- Reconstruct bash error handler tests (Task 5)
-- Add failing tests for three directive inject functions
-- Raise MCP tool budget to 24000 chars / 65 tools
-- Raise tool definition budget to 21000 chars, count to 60
 - Add cache keepalive integration test
 - E2E test for forked agent flow — build+gate+prompt+parse
 - Add TestCrashRecovery tests — TDD red phase
@@ -2815,6 +2916,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add comprehensive tests for generator and storage
 
 
+[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.1.17...HEAD
 [2.1.17]: https://github.com/carsteneu/yesmem/compare/v2.1.16...v2.1.17
 [2.1.16]: https://github.com/carsteneu/yesmem/compare/v2.1.15...v2.1.16
 [2.1.15]: https://github.com/carsteneu/yesmem/compare/v2.1.14...v2.1.15
@@ -2854,4 +2956,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [safety-before-rebase-2026-04-16]: https://github.com/carsteneu/yesmem/compare/pre-sanitization-2026-04-29...safety-before-rebase-2026-04-16
 [pre-sanitization-2026-04-29]: https://github.com/carsteneu/yesmem/compare/backup-opencode-proxy-20260518-1104...pre-sanitization-2026-04-29
 [backup-opencode-proxy-20260518-1104]: https://github.com/carsteneu/yesmem/compare/backup-main-20260518-1104...backup-opencode-proxy-20260518-1104
-[backup-main-20260518-1104]: https://github.com/carsteneu/yesmem/releases/tag/backup-main-20260518-1104
+[backup-main-20260518-1104]: https://github.com/carsteneu/yesmem/compare/archive/knowledge-index-2026-04-16...backup-main-20260518-1104
+[archive/knowledge-index-2026-04-16]: https://github.com/carsteneu/yesmem/releases/tag/archive/knowledge-index-2026-04-16

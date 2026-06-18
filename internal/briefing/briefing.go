@@ -197,12 +197,6 @@ func (g *Generator) Generate(projectDir string) string {
 		}
 	}
 
-	// Metamemory — Selbsteinschätzung der Wissensqualität
-	if mm := g.loadMetamemory(projectShort); mm != "" {
-		b.WriteString("\n")
-		b.WriteString(mm)
-	}
-
 	// Knowledge Index Phase A — enriched briefing sections
 	b.WriteString(g.renderKnowledgeIndex(s, projectDir, projectShort, docSources))
 
@@ -614,6 +608,12 @@ func (g *Generator) loadMetamemory(projectShort string) string {
 		sb.WriteString(fmt.Sprintf("• %d possibly outdated (valid_until expired)\n", expired))
 	}
 	return sb.String()
+}
+
+// GenerateMetamemory is a public wrapper for loadMetamemory, intended for
+// post-refine injection so the metamemory block survives LLM refinement.
+func (g *Generator) GenerateMetamemory(projectShort string) string {
+	return g.loadMetamemory(projectShort)
 }
 
 // loadGapAwareness computes what knowledge exists but isn't shown in the briefing.

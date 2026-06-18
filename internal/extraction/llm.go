@@ -23,6 +23,7 @@ type CallOption func(*callOpts)
 type callOpts struct {
 	maxTokens int    // 0 = use default (8192)
 	sessionID string // opencode session to resume
+	tools     bool   // allow MCP tools in subprocess (sets YESMEM_ALLOW_CHILD_MCP=1)
 }
 
 // WithMaxTokens sets the max output tokens for this call.
@@ -33,6 +34,12 @@ func WithMaxTokens(n int) CallOption {
 // WithSession sets the session ID to resume (opencode CLI).
 func WithSession(id string) CallOption {
 	return func(o *callOpts) { o.sessionID = id }
+}
+
+// WithTools enables MCP tool access in subprocess calls (opencode CLI).
+// Sets YESMEM_ALLOW_CHILD_MCP=1 so the child yesmem mcp process is not killed.
+func WithTools() CallOption {
+	return func(o *callOpts) { o.tools = true }
 }
 
 func applyOpts(opts []CallOption) callOpts {

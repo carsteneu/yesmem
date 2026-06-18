@@ -187,6 +187,9 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 	if pf.Beweislast {
 		InjectBeweislast(req)
 	}
+	if pf.Fable {
+		InjectFable(req)
+	}
 	if pf.ScopeDiscipline {
 		InjectScopeDiscipline(req)
 	}
@@ -651,7 +654,15 @@ func (s *Server) forwardOpenAIWithTracking(w http.ResponseWriter, origReq *http.
 		targetURL = "https://api.openai.com"
 	}
 
-	proxyReq, err := http.NewRequestWithContext(origReq.Context(), origReq.Method, targetURL+origReq.URL.RequestURI(), bytes.NewReader(body))
+	// When the upstream target has its own path component (e.g. https://api.z.ai/api/paas/v4),
+	// strip /v1 from the request URI to avoid double path segments (v4/v1/chat/completions).
+	// For plain host targets (e.g. https://api.deepseek.com), /v1 is correct.
+	requestURI := origReq.URL.RequestURI()
+	if idx := strings.Index(targetURL, "://"); idx >= 0 && strings.Contains(targetURL[idx+3:], "/") {
+		requestURI = strings.TrimPrefix(requestURI, "/v1")
+	}
+
+	proxyReq, err := http.NewRequestWithContext(origReq.Context(), origReq.Method, targetURL+requestURI, bytes.NewReader(body))
 	if err != nil {
 		http.Error(w, "create request: "+err.Error(), http.StatusBadGateway)
 		return

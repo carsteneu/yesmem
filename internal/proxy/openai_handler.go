@@ -72,10 +72,12 @@ func (s *Server) handleOpenAICompletions(w http.ResponseWriter, r *http.Request)
 	// Non-interactive requests (CLI tools, extraction pipeline) have no session headers.
 	// Skip the entire proxy pipeline — no MCP calls, no associative context, no system blocks.
 	// Just validate the request and forward upstream.
+	// YESMEM_ALLOW_CHILD_MCP header overrides: daemon child with explicit MCP permission.
+	allowChildMCP := r.Header.Get("x-yesmem-allow-mcp") == "1"
 	headerClaudeSession := r.Header.Get("X-Claude-Code-Session-Id")
 	ua := strings.ToLower(r.Header.Get("User-Agent"))
 	isCodex := strings.Contains(ua, "codex") || strings.Contains(ua, "codexcli")
-	if ocSessionID == "" && headerClaudeSession == "" && !isCodex {
+	if ocSessionID == "" && headerClaudeSession == "" && !isCodex && !allowChildMCP {
 		s.logger.Printf("%s non-interactive request — skipping proxy pipeline", fmtReq(reqIdx, s.version))
 	} else {
 		// Replace default OpenCode system prompt with custom template (if enabled and loaded)
@@ -88,7 +90,11 @@ func (s *Server) handleOpenAICompletions(w http.ResponseWriter, r *http.Request)
 				ModelDisplayName: modelDisplayName(ctx.Model),
 				HostAgentName: "OpenCode",
 			})
-			filled := fillSystemTemplate(s.customSystemPrompt, tplCtx)
+			tpl := s.resolveSystemTemplate(ctx.Model)
+			if tpl == nil {
+				tpl = s.customSystemPrompt
+			}
+			filled := fillSystemTemplate(tpl, tplCtx)
 			filled = append(filled, []byte(skillBlock)...)
 			replaceFirstSystemBlock(anthReq, string(filled))
 			s.logger.Printf("%s %sCUSTOM-SYSTEM: applied (%d bytes, skillBlock=%d)%s",

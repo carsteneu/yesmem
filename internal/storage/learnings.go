@@ -356,7 +356,8 @@ func (s *Store) GetLearningsByCategory(category, project string, limit int) ([]m
 		COALESCE(context, ''), COALESCE(domain, 'code'), COALESCE(trigger_rule, ''), COALESCE(embedding_text, ''),
 		COALESCE(source_file, ''), COALESCE(source_hash, ''), COALESCE(doc_chunk_ref, 0), COALESCE(task_type, ''), COALESCE(turns_at_creation, 0), COALESCE(origin_tool, ''), COALESCE(source_msg_from, -1), COALESCE(source_msg_to, -1),
 		COALESCE(canonical_project, ''),
-		COALESCE(attribution, '')
+		COALESCE(attribution, ''),
+		COALESCE(staleness_score, 0.0), COALESCE(staleness_reason, ''), staleness_checked_at, COALESCE(staleness_type, ''), COALESCE(code_fingerprint, '')
 		FROM learnings WHERE superseded_by IS NULL
 		AND category = ?
 		AND (canonical_project = ? OR canonical_project = '')
@@ -380,7 +381,8 @@ func (s *Store) GetLearningsSince(project string, since time.Time, limit int) ([
 		COALESCE(context, ''), COALESCE(domain, 'code'), COALESCE(trigger_rule, ''), COALESCE(embedding_text, ''),
 		COALESCE(source_file, ''), COALESCE(source_hash, ''), COALESCE(doc_chunk_ref, 0), COALESCE(task_type, ''), COALESCE(turns_at_creation, 0), COALESCE(origin_tool, ''), COALESCE(source_msg_from, -1), COALESCE(source_msg_to, -1),
 		COALESCE(canonical_project, ''),
-		COALESCE(attribution, '')
+		COALESCE(attribution, ''),
+		COALESCE(staleness_score, 0.0), COALESCE(staleness_reason, ''), staleness_checked_at, COALESCE(staleness_type, ''), COALESCE(code_fingerprint, '')
 		FROM learnings WHERE superseded_by IS NULL
 		AND (expires_at IS NULL OR expires_at > ?)
 		AND created_at > ?
@@ -489,7 +491,8 @@ func (s *Store) GetActiveLearnings(category, project, since, before string, limi
 		COALESCE(context, ''), COALESCE(domain, 'code'), COALESCE(trigger_rule, ''), COALESCE(embedding_text, ''),
 		COALESCE(source_file, ''), COALESCE(source_hash, ''), COALESCE(doc_chunk_ref, 0), COALESCE(task_type, ''), COALESCE(turns_at_creation, 0), COALESCE(origin_tool, ''), COALESCE(source_msg_from, -1), COALESCE(source_msg_to, -1),
 		COALESCE(canonical_project, ''),
-		COALESCE(attribution, '')
+		COALESCE(attribution, ''),
+		COALESCE(staleness_score, 0.0), COALESCE(staleness_reason, ''), staleness_checked_at, COALESCE(staleness_type, ''), COALESCE(code_fingerprint, '')
 		FROM learnings WHERE superseded_by IS NULL
 		AND (expires_at IS NULL OR expires_at > ?)`
 	args := []any{fmtTime(time.Now())}
@@ -547,7 +550,8 @@ func (s *Store) GetActiveLearningsBySessionIDs(sessionIDs []string) ([]models.Le
 		COALESCE(context, ''), COALESCE(domain, 'code'), COALESCE(trigger_rule, ''), COALESCE(embedding_text, ''),
 		COALESCE(source_file, ''), COALESCE(source_hash, ''), COALESCE(doc_chunk_ref, 0), COALESCE(task_type, ''), COALESCE(turns_at_creation, 0), COALESCE(origin_tool, ''), COALESCE(source_msg_from, -1), COALESCE(source_msg_to, -1),
 		COALESCE(canonical_project, ''),
-		COALESCE(attribution, '')
+		COALESCE(attribution, ''),
+		COALESCE(staleness_score, 0.0), COALESCE(staleness_reason, ''), staleness_checked_at, COALESCE(staleness_type, ''), COALESCE(code_fingerprint, '')
 		FROM learnings
 		WHERE superseded_by IS NULL
 		AND (expires_at IS NULL OR expires_at > ?)
@@ -598,7 +602,8 @@ func (s *Store) GetLearning(id int64) (*models.Learning, error) {
 		COALESCE(context, ''), COALESCE(domain, 'code'), COALESCE(trigger_rule, ''), COALESCE(embedding_text, ''),
 		COALESCE(source_file, ''), COALESCE(source_hash, ''), COALESCE(doc_chunk_ref, 0), COALESCE(task_type, ''), COALESCE(turns_at_creation, 0), COALESCE(origin_tool, ''), COALESCE(source_msg_from, -1), COALESCE(source_msg_to, -1),
 		COALESCE(canonical_project, ''),
-		COALESCE(attribution, '')
+		COALESCE(attribution, ''),
+		COALESCE(staleness_score, 0.0), COALESCE(staleness_reason, ''), COALESCE(staleness_checked_at, ''), COALESCE(staleness_type, ''), COALESCE(code_fingerprint, '')
 		FROM learnings WHERE id = ?`, id)
 
 	l := &models.Learning{}
@@ -610,7 +615,8 @@ func (s *Store) GetLearning(id int64) (*models.Learning, error) {
 		&l.MatchCount, &l.InjectCount, &l.UseCount, &l.SaveCount, &l.Stability,
 		&l.Context, &l.Domain, &l.TriggerRule, &l.EmbeddingText,
 		&l.SourceFile, &l.SourceHash, &l.DocChunkRef, &l.TaskType, &l.TurnsAtCreation, &l.OriginTool, &l.SourceMsgFrom, &l.SourceMsgTo,
-		&l.CanonicalProject, &l.Attribution)
+		&l.CanonicalProject, &l.Attribution,
+		&l.StalenessScore, &l.StalenessReason, &l.StalenessCheckedAt, &l.StalenessType, &l.CodeFingerprint)
 	if err != nil {
 		return nil, fmt.Errorf("get learning %d: %w", id, err)
 	}
@@ -747,7 +753,8 @@ func (s *Store) GetTriggeredLearnings(project string) ([]models.Learning, error)
 		COALESCE(context, ''), COALESCE(domain, 'code'), COALESCE(trigger_rule, ''), COALESCE(embedding_text, ''),
 		COALESCE(source_file, ''), COALESCE(source_hash, ''), COALESCE(doc_chunk_ref, 0), COALESCE(task_type, ''), COALESCE(turns_at_creation, 0), COALESCE(origin_tool, ''), COALESCE(source_msg_from, -1), COALESCE(source_msg_to, -1),
 		COALESCE(canonical_project, ''),
-		COALESCE(attribution, '')
+		COALESCE(attribution, ''),
+		COALESCE(staleness_score, 0.0), COALESCE(staleness_reason, ''), staleness_checked_at, COALESCE(staleness_type, ''), COALESCE(code_fingerprint, '')
 		FROM learnings
 		WHERE superseded_by IS NULL
 		AND trigger_rule != '' AND trigger_rule IS NOT NULL
@@ -773,6 +780,84 @@ func splitWords(s string) []string {
 		}
 	}
 	return words
+}
+
+// SetStalenessScore updates the staleness detection fields on a learning.
+// score: 0.0 = valid, 1.0 = stale. Pass negative to leave unchanged.
+func (s *Store) SetStalenessScore(id int64, score float64, reason, stalenessType string) error {
+	now := fmtTime(time.Now())
+	_, err := s.db.Exec(`UPDATE learnings SET staleness_score = ?, staleness_reason = ?,
+		staleness_checked_at = ?, staleness_type = ?
+		WHERE id = ? AND superseded_by IS NULL`,
+		score, reason, now, stalenessType, id)
+	if err != nil {
+		return fmt.Errorf("set staleness score %d: %w", id, err)
+	}
+	return nil
+}
+
+// GetStalenessScores returns staleness_score for a batch of learning IDs.
+// Only returns entries where staleness_score IS NOT NULL (has been checked).
+func (s *Store) GetStalenessScores(ids []int64) (map[int64]float64, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := fmt.Sprintf(`SELECT id, staleness_score FROM learnings
+		WHERE id IN (%s) AND staleness_score IS NOT NULL`, strings.Join(placeholders, ","))
+	rows, err := s.readerDB().Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(map[int64]float64)
+	for rows.Next() {
+		var id int64
+		var score float64
+		if err := rows.Scan(&id, &score); err == nil {
+			result[id] = score
+		}
+	}
+	return result, rows.Err()
+}
+
+// GetStaleLearnings returns active learnings with staleness_score >= minScore.
+func (s *Store) GetStaleLearnings(project string, minScore float64) ([]models.Learning, error) {
+	rows, err := s.readerDB().Query(`SELECT
+		l.id, l.session_id, l.category, l.content, l.project, l.confidence,
+		l.superseded_by, l.supersede_reason, l.created_at, l.expires_at, l.model_used, l.source,
+		COALESCE(l.hit_count, 0), COALESCE(l.emotional_intensity, 0.0), l.last_hit_at, COALESCE(l.session_flavor, ''), l.valid_until, l.supersedes, COALESCE(l.importance, 3), l.supersede_status, COALESCE(l.noise_count, 0), COALESCE(l.fail_count, 0),
+		COALESCE(l.match_count, 0), COALESCE(l.inject_count, 0), COALESCE(l.use_count, 0), COALESCE(l.save_count, 0), COALESCE(l.stability, 30.0),
+		COALESCE(l.context, ''), COALESCE(l.domain, 'code'), COALESCE(l.trigger_rule, ''), COALESCE(l.embedding_text, ''),
+		COALESCE(l.source_file, ''), COALESCE(l.source_hash, ''), COALESCE(l.doc_chunk_ref, 0), COALESCE(l.task_type, ''), COALESCE(l.turns_at_creation, 0), COALESCE(l.origin_tool, ''), COALESCE(l.source_msg_from, -1), COALESCE(l.source_msg_to, -1),
+		COALESCE(l.canonical_project, ''),
+		COALESCE(l.attribution, ''),
+		COALESCE(l.staleness_score, 0.0), COALESCE(l.staleness_reason, ''), l.staleness_checked_at, COALESCE(l.staleness_type, ''), COALESCE(l.code_fingerprint, '')
+		FROM learnings l
+		WHERE l.superseded_by IS NULL
+		AND l.staleness_score >= ?
+		AND (l.project = ? OR l.canonical_project = ?)
+		ORDER BY l.staleness_score DESC
+		LIMIT 100`, minScore, project, project)
+	if err != nil {
+		return nil, fmt.Errorf("GetStaleLearnings: %w", err)
+	}
+	defer rows.Close()
+	return scanLearnings(rows)
+}
+
+// StoreCodeFingerprint saves a SHA256 fingerprint of referenced code at creation time.
+func (s *Store) StoreCodeFingerprint(id int64, fingerprint string) error {
+	_, err := s.db.Exec(`UPDATE learnings SET code_fingerprint = ? WHERE id = ?`, fingerprint, id)
+	if err != nil {
+		return fmt.Errorf("StoreCodeFingerprint %d: %w", id, err)
+	}
+	return nil
 }
 
 // ResolveBatch marks multiple learnings as resolved in a single transaction.
@@ -995,7 +1080,8 @@ func (s *Store) GetRecentNarratives(project string, limit int) ([]models.Learnin
 		COALESCE(l.context, ''), COALESCE(l.domain, 'code'), COALESCE(l.trigger_rule, ''), COALESCE(l.embedding_text, ''),
 		COALESCE(l.source_file, ''), COALESCE(l.source_hash, ''), COALESCE(l.doc_chunk_ref, 0), COALESCE(l.task_type, ''), COALESCE(l.turns_at_creation, 0), COALESCE(l.origin_tool, ''), COALESCE(l.source_msg_from, -1), COALESCE(l.source_msg_to, -1),
 		COALESCE(l.canonical_project, ''),
-		COALESCE(l.attribution, '')
+		COALESCE(l.attribution, ''),
+		COALESCE(l.staleness_score, 0.0), COALESCE(l.staleness_reason, ''), l.staleness_checked_at, COALESCE(l.staleness_type, ''), COALESCE(l.code_fingerprint, '')
 		FROM learnings l
 		LEFT JOIN sessions s ON l.session_id = s.id
 		WHERE l.category = 'narrative' AND l.canonical_project = ? AND l.superseded_by IS NULL
@@ -1020,12 +1106,14 @@ func scanLearnings(rows interface {
 		var createdAt string
 		var expiresAt, sessionID, project, supersedeReason, source, lastHitAt, validUntil, supersedeStatus *string
 		var supersededBy, supersedes *int64
+		var stalenessCheckedAt *string
 		if err := rows.Scan(&l.ID, &sessionID, &l.Category, &l.Content, &project, &l.Confidence,
 			&supersededBy, &supersedeReason, &createdAt, &expiresAt, &l.ModelUsed, &source, &l.HitCount, &l.EmotionalIntensity, &lastHitAt, &l.SessionFlavor, &validUntil, &supersedes, &l.Importance, &supersedeStatus, &l.NoiseCount, &l.FailCount,
 			&l.MatchCount, &l.InjectCount, &l.UseCount, &l.SaveCount, &l.Stability,
 			&l.Context, &l.Domain, &l.TriggerRule, &l.EmbeddingText,
 			&l.SourceFile, &l.SourceHash, &l.DocChunkRef, &l.TaskType, &l.TurnsAtCreation, &l.OriginTool, &l.SourceMsgFrom, &l.SourceMsgTo,
-			&l.CanonicalProject, &l.Attribution); err != nil {
+			&l.CanonicalProject, &l.Attribution,
+			&l.StalenessScore, &l.StalenessReason, &stalenessCheckedAt, &l.StalenessType, &l.CodeFingerprint); err != nil {
 			return nil, err
 		}
 		l.CreatedAt = parseTime(createdAt)
@@ -1061,6 +1149,9 @@ func scanLearnings(rows interface {
 		}
 		if supersedeStatus != nil {
 			l.SupersedeStatus = *supersedeStatus
+		}
+		if stalenessCheckedAt != nil {
+			l.StalenessCheckedAt = *stalenessCheckedAt
 		}
 		learnings = append(learnings, l)
 	}

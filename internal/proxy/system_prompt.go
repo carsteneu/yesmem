@@ -221,3 +221,26 @@ func buildSystemContext(opts buildSystemContextOpts) TemplateContext {
 	ctx.ClaudeMdUser = readFileSafe(expandHome("~/.claude/CLAUDE.md"))
 	return ctx
 }
+
+// resolveSystemTemplate selects the appropriate template for a model.
+// Checks modelTemplates for substring match (longest key first), falls back to default.
+func (s *Server) resolveSystemTemplate(model string) []byte {
+	if s.modelTemplates == nil || len(s.modelTemplates) == 0 {
+		return s.customSystemPrompt
+	}
+	modelLower := strings.ToLower(model)
+	var bestKey string
+	for key := range s.modelTemplates {
+		if strings.Contains(modelLower, strings.ToLower(key)) {
+			if len(key) > len(bestKey) {
+				bestKey = key
+			}
+		}
+	}
+	if bestKey != "" {
+		if tpl, ok := s.modelTemplates[bestKey]; ok && tpl != nil {
+			return tpl
+		}
+	}
+	return s.customSystemPrompt
+}

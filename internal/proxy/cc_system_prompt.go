@@ -60,6 +60,10 @@ func (s *Server) applyCCSystemPrompt(req map[string]any) bool {
 		ModelDisplayName: modelDisplayName(modelID),
 		HostAgentName:    "Claude Code",
 	})
-	replaceCCSystemBlock(req, fillSystemTemplate(s.customSystemPrompt, ctx))
+	tpl := s.resolveSystemTemplate(modelID)
+	if tpl == nil {
+		tpl = s.customSystemPrompt
+	}
+	replaceCCSystemBlock(req, fillSystemTemplate(tpl, ctx))
 	return true
 }

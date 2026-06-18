@@ -540,6 +540,12 @@ func (h *Handler) handleWhoami(params map[string]any) Response {
 			result["section"]  = agent.Section
 			result["status"]   = agent.Status
 			result["is_agent"] = true
+			if agent.CodexSessionID != "" {
+				result["codex_session_id"] = agent.CodexSessionID
+			}
+			if agent.OpencodeSessionID != "" {
+				result["opencode_session_id"] = agent.OpencodeSessionID
+			}
 		}
 		if model, err := h.store.GetProxyState("session_model:" + sessionID); err == nil && model != "" {
 			result["model"] = model

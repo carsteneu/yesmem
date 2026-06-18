@@ -1281,7 +1281,7 @@ func (s *Server) registerTools() {
 			mcplib.WithNumber("max_turns", mcplib.Description("Max turns (0=unlimited)")),
 			mcplib.WithString("model", mcplib.Description("Model override")),
 			mcplib.WithString("work_dir", mcplib.Description("Working directory")),
-			mcplib.WithString("backend", mcplib.Description("claude|codex")),
+			mcplib.WithString("backend", mcplib.Description("claude|codex|opencode")),
 		), s.proxyCall("spawn_agent"))
 
 	s.srv.AddTool(

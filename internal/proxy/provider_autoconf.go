@@ -220,6 +220,10 @@ func buildAutoProviderTargets(providers []autoDiscoveredProvider) map[string]str
 	m := make(map[string]string, len(providers))
 	for _, p := range providers {
 		m[strings.ToLower(p.ModelID)] = p.UpstreamURL
+		// Also add providerID/modelID so zai-coding-plan/glm-5.2 resolves correctly.
+		// autoProviderTargets is only checked after explicit provider_targets,
+		// so the fallback order is correct.
+		m[strings.ToLower(p.ProviderID+"/"+p.ModelID)] = p.UpstreamURL
 	}
 	return m
 }

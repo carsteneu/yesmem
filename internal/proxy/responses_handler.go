@@ -87,7 +87,11 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 				ModelDisplayName:  modelDisplayName(ctx.Model),
 				HostAgentName:     "Codex",
 			})
-			filled := fillSystemTemplate(s.customSystemPrompt, tplCtx)
+			tpl := s.resolveSystemTemplate(ctx.Model)
+			if tpl == nil {
+				tpl = s.customSystemPrompt
+			}
+			filled := fillSystemTemplate(tpl, tplCtx)
 			filled = append(filled, []byte(skillBlock)...)
 			replaceFirstSystemBlock(anthReq, string(filled))
 			s.logger.Printf("[req %d] %sCUSTOM-SYSTEM: applied (%d bytes, skillBlock=%d)%s",

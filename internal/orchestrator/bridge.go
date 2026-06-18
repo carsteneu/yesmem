@@ -27,13 +27,15 @@ type AgentBridge struct {
 
 // NewAgentBridge creates a PTY, starts the command on it, and prepares a Unix socket.
 // If workDir is non-empty, the command runs in that directory.
-func NewAgentBridge(name string, args []string, sockPath string, workDir string) (*AgentBridge, error) {
+// extraEnv are additional environment variables (e.g. OPENAI_API_KEY for codex).
+func NewAgentBridge(name string, args []string, sockPath string, workDir string, extraEnv ...string) (*AgentBridge, error) {
 	cmd := exec.Command(name, args...)
 	if workDir != "" {
 		cmd.Dir = workDir
 	}
 	// Inherit full environment and ensure terminal colors work
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor", "FORCE_COLOR=1")
+	cmd.Env = append(cmd.Env, extraEnv...)
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("pty.Start: %w", err)
