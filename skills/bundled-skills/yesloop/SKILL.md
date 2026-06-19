@@ -49,6 +49,16 @@ When you spawn a yesloop agent, the scratchpad task defines the working relation
 
 **Calibration test:** Before writing the scratchpad, ask: "If the agent came back with a plan, would I be surprised?" If yes for the right reasons (it found a better approach), you prescribed the right amount. If yes for the wrong reasons (it misunderstood the goal), add context. If you'd be bored by its plan (because it matches what you'd have written), you over-prescribed — shorten and re-test.
 
+## Temp file discipline
+
+NEVER write to `/tmp/` or `~/.claude/yesmem/tmp/` in autonomous operations. `/tmp/` is unreliable across sandbox/container contexts (logs vanish, see #72938). Global paths collide when multiple agents run in parallel.
+
+Use `<worktree>/.yesmem/tmp/` instead. Project-local, always writable from any agent context, cleaned up with worktree removal.
+
+Ensure the directory exists at session start: `mkdir -p .yesmem/tmp`
+
+Exception: `/tmp/` is OK when the user explicitly directs it, or when a called tool creates its own temp files (e.g. `mktemp` inside a script you invoke).
+
 ## Execution Modes
 
 **tui-agent** (DEFAULT) — Spawned via yesmem_spawn_agent → gnome-terminal, visible, non-blocking. Report via scratchpad_write + send_to.
@@ -75,6 +85,7 @@ When you spawn a yesloop agent, the scratchpad task defines the working relation
 - Include: which files to touch, what to change, how to verify
 - Store plan in set_plan() for collapse survival
 - Each step must be independently verifiable
+- **KEIN OVERENGINEERING.** If a step looks complicated, ask: "Can I solve this with a boolean flag and 10 lines?" Usually yes. Resist: per-agent configuration (global constants suffice), persistence layers (in-memory is fine, restart-loses-state is OK), abstract Strategy interfaces, stats/metrics export, retry mechanisms with backoff. Prefer: global constants, single struct + map, simple if/return checks, freezeAgent with a new reason string as the only differentiator.
 - → scratchpad_write: plan summary with step count
 
 ### Phase 3: EXECUTE

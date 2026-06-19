@@ -412,9 +412,10 @@ func TestDetectHungAgents_StaleHeartbeat(t *testing.T) {
 	h, s := mustHandler(t)
 	now := time.Now().Format("2006-01-02 15:04:05")
 
+	// PID 99999999 is dead → freeze should fire
 	s.AgentCreate(storage.Agent{
 		ID: "hung-stale-0", Project: "p", Section: "s",
-		Status: "running", PID: os.Getpid(), CreatedAt: now,
+		Status: "running", PID: 99999999, CreatedAt: now,
 	})
 	stale := time.Now().Add(-15 * time.Minute).Format(time.RFC3339)
 	s.AgentUpdate("hung-stale-0", map[string]any{"heartbeat_at": stale})
@@ -423,7 +424,27 @@ func TestDetectHungAgents_StaleHeartbeat(t *testing.T) {
 
 	a, _ := s.AgentGet("hung-stale-0")
 	if a.Status != "frozen" {
-		t.Errorf("status=%q want frozen for hung agent", a.Status)
+		t.Errorf("status=%q want frozen for hung agent with dead PID", a.Status)
+	}
+}
+
+func TestDetectHungAgents_StaleHeartbeat_AlivePID_NotFrozen(t *testing.T) {
+	h, s := mustHandler(t)
+	now := time.Now().Format("2006-01-02 15:04:05")
+
+	// Own PID is alive — long bash call blocks heartbeat but agent is working
+	s.AgentCreate(storage.Agent{
+		ID: "hung-stale-alive-0", Project: "p", Section: "s2",
+		Status: "running", PID: os.Getpid(), CreatedAt: now,
+	})
+	stale := time.Now().Add(-15 * time.Minute).Format(time.RFC3339)
+	s.AgentUpdate("hung-stale-alive-0", map[string]any{"heartbeat_at": stale})
+
+	h.detectHungAgents()
+
+	a, _ := s.AgentGet("hung-stale-alive-0")
+	if a.Status != "running" {
+		t.Errorf("status=%q want running (PID alive — stale heartbeat alone is not hung; see #73191)", a.Status)
 	}
 }
 
@@ -583,5 +604,58 @@ func TestGetAgentMaxRuntime_NegativeMeansDefault(t *testing.T) {
 	got := h.getAgentMaxRuntime()
 	if got != 48*time.Hour {
 		t.Errorf("getAgentMaxRuntime(negative) = %v, want 48h default", got)
+	}
+}
+
+func TestIsPIDAlive_OwnPID(t *testing.T) {
+	if !isPIDAlive(os.Getpid()) {
+		t.Error("isPIDAlive(self) = false, want true")
+	}
+}
+
+func TestIsPIDAlive_DeadPID(t *testing.T) {
+	if isPIDAlive(99999999) {
+		t.Error("isPIDAlive(99999999) = true, want false")
+	}
+}
+
+func TestEnforceAgentLimits_MaxRuntime_AlivePID_NotFrozen(t *testing.T) {
+	h, s := mustHandler(t)
+	// Created 50h ago — past the 48h default max_runtime
+	old := time.Now().Add(-50 * time.Hour).Format("2006-01-02 15:04:05")
+	_ = s.AgentCreate(storage.Agent{
+		ID:        "alive-over-runtime",
+		Project:   "p",
+		Section:   "s",
+		Status:    "running",
+		PID:       os.Getpid(), // alive
+		CreatedAt: old,
+	})
+
+	h.enforceAgentLimits()
+
+	a, _ := s.AgentGet("alive-over-runtime")
+	if a.Status != "running" {
+		t.Errorf("status=%q want running (PID alive — should not freeze on max_runtime)", a.Status)
+	}
+}
+
+func TestEnforceAgentLimits_MaxRuntime_DeadPID_Frozen(t *testing.T) {
+	h, s := mustHandler(t)
+	old := time.Now().Add(-50 * time.Hour).Format("2006-01-02 15:04:05")
+	_ = s.AgentCreate(storage.Agent{
+		ID:        "dead-over-runtime",
+		Project:   "p",
+		Section:   "s2",
+		Status:    "running",
+		PID:       99999999, // dead
+		CreatedAt: old,
+	})
+
+	h.enforceAgentLimits()
+
+	a, _ := s.AgentGet("dead-over-runtime")
+	if a.Status != "frozen" {
+		t.Errorf("status=%q want frozen (PID dead — max_runtime freeze should fire)", a.Status)
 	}
 }

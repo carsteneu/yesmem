@@ -9,7 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Add .yesmem/ for agent-local temp files
 - Rewrite 'Types of memories' as proper Markdown
+
+### Fixed
+
+- PID-check detectHungAgents freeze path (#73191)
+- Check PID before max_runtime freeze (#73505)
+- Remove SYSTEM.md from excludes — it's source code, not private config
 
 ## [2.1.20] - 2026-06-19
 
