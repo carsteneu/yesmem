@@ -18,6 +18,7 @@ yesmem_dev
 .claude/worktrees/
 .claude/*.lock
 .worktrees/
+.yesmem/
 .cache/
 .claude/yesmem-ops.md
 docs/plans/mind/knowhow/

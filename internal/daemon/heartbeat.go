@@ -117,6 +117,19 @@ func (h *Handler) relayAgentMessages() {
 	}
 }
 
+// isPIDAlive returns true if the given PID is a running, non-defunct process.
+// Signal 0 is a no-op signal that succeeds only if the process can be signaled.
+func isPIDAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return p.Signal(syscall.Signal(0)) == nil
+}
+
 // crashRecovery checks running agents for dead PIDs, quarantines their sessions,
 // taints scratchpad sections, and retries up to 3 times before marking failed.
 // Consolidates the former detectDeadPIDs + agentHealthCheck logic.
@@ -129,11 +142,7 @@ func (h *Handler) crashRecovery() {
 		if a.Status != "running" || a.PID <= 0 {
 			continue
 		}
-		p, err := os.FindProcess(a.PID)
-		if err != nil {
-			continue
-		}
-		if sigErr := p.Signal(syscall.Signal(0)); sigErr == nil {
+		if isPIDAlive(a.PID) {
 			continue
 		}
 
@@ -245,11 +254,17 @@ func (h *Handler) enforceAgentLimits() {
 			continue
 		}
 
-		// Check runtime limit
+		// Check runtime limit — but only freeze if the PID is actually dead.
+		// A live PID means the agent is working past its configured budget
+		// (e.g. long refactors); the hung-agent detector handles truly stuck
+		// processes via heartbeat_at staleness. See learning #73505.
 		created, err := time.Parse("2006-01-02 15:04:05", agent.CreatedAt)
 		if err == nil && time.Since(created) > maxRuntime {
-			log.Printf("[heartbeat] agent %s exceeded max_runtime (%v), freezing", agent.ID, maxRuntime)
-			h.freezeAgent(agent.ID, fmt.Sprintf("max_runtime %v exceeded", maxRuntime))
+			if isPIDAlive(agent.PID) {
+				continue
+			}
+			log.Printf("[heartbeat] agent %s exceeded max_runtime (%v) and PID %d is dead, freezing", agent.ID, maxRuntime, agent.PID)
+			h.freezeAgent(agent.ID, fmt.Sprintf("max_runtime %v exceeded, PID dead", maxRuntime))
 			continue
 		}
 
@@ -436,9 +451,14 @@ func (h *Handler) detectHungAgents() {
 		}
 		staleness := time.Since(hbTime)
 		if staleness > hungAgentThreshold {
-			reason := fmt.Sprintf("unresponsive: last heartbeat %s ago", staleness.Round(time.Second))
-			log.Printf("[heartbeat] agent %s %s, freezing", agent.ID, reason)
-			h.freezeAgent(agent.ID, reason)
+			// A stale heartbeat alone is not "hung" — long bash calls block
+			// heartbeats while the agent keeps working. Only freeze if the
+			// PID is actually dead. See learning #73191.
+			if !isPIDAlive(agent.PID) {
+				reason := fmt.Sprintf("unresponsive: last heartbeat %s ago, PID dead", staleness.Round(time.Second))
+				log.Printf("[heartbeat] agent %s %s, freezing", agent.ID, reason)
+				h.freezeAgent(agent.ID, reason)
+			}
 		}
 	}
 }
