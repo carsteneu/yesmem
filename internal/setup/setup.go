@@ -37,7 +37,7 @@ func Run(interactive bool) error {
 	fmt.Println()
 	fmt.Println("  YesMem Install", buildinfo.Version)
 	fmt.Println("  ====================")
-	fmt.Println("  Long-term memory for Claude Code")
+	fmt.Println("  Long-term memory for coding agents")
 	fmt.Println()
 
 	if interactive {
@@ -66,9 +66,36 @@ func runDefaults(home, dataDir, binaryPath string) error {
 		}
 	}
 
-	// If OpenCode detected — interactive provider setup (OpenCode takes precedence)
+	// Multi-Agent: if OpenCode AND Claude/Codex detected, let user choose
+	if hasOpenCode && (hasClaude || hasCodex) {
+		fmt.Println("  Multiple agents detected.")
+		fmt.Println()
+		options := []string{"OpenCode (choose model — free tier or paid provider)"}
+		if hasClaude {
+			options = append(options, "Claude Code (Sonnet/Opus via Anthropic)")
+		}
+		if hasCodex {
+			options = append(options, "Codex (GPT-5.5)")
+		}
+		fmt.Println("  Which backend should YesMem use?")
+		idx := promptChoice(options, 0)
+		fmt.Println()
+		switch idx {
+		case 0:
+			return runOpenCodeSetup(home, dataDir, binaryPath)
+		case 1:
+			if hasClaude {
+				return runNonInteractiveClaude(home, dataDir, binaryPath)
+			}
+			return runNonInteractiveCodex(home, dataDir, binaryPath)
+		case 2:
+			return runNonInteractiveCodex(home, dataDir, binaryPath)
+		}
+	}
+
+	// OpenCode only — interactive provider/model setup
 	if hasOpenCode {
-		fmt.Println("  OpenCode detected \u2192 interactive provider selection")
+		fmt.Println("  OpenCode detected → interactive provider selection")
 		return runOpenCodeSetup(home, dataDir, binaryPath)
 	}
 
@@ -954,7 +981,7 @@ func generateConfig(model string, autoExtract bool, apiKey, openaiKey, openaiBas
 
 	return fmt.Sprintf(`# ============================================================================
 # YesMem Configuration
-# Long-term memory system for Claude Code
+# Long-term memory system for coding agents
 # ============================================================================
 
 # --- Extraction Pipeline ---
@@ -1529,7 +1556,7 @@ func setupSystemd(home, binaryPath string) error {
 
 	// Daemon unit
 	daemonUnit := fmt.Sprintf(`[Unit]
-Description=YesMem — Long-term memory for Claude Code
+Description=YesMem — Long-term memory for coding agents
 After=network-online.target
 Wants=network-online.target
 
@@ -1548,7 +1575,7 @@ WantedBy=default.target
 
 	// Proxy unit — separate process, survives terminal closes
 	proxyUnit := fmt.Sprintf(`[Unit]
-Description=YesMem Proxy — Infinite-thread context for Claude Code
+Description=YesMem Proxy — Infinite-thread context for coding agents
 After=network-online.target
 Wants=network-online.target
 

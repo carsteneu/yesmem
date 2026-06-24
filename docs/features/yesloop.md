@@ -8,6 +8,28 @@ YesLoop is the autonomous execution layer on top of YesMem. A normal agent sessi
 
 YesLoop exists because interactive babysitting does not scale. Long tasks drift, context rots, agents get stuck in loops, and the human becomes the bottleneck. YesLoop replaces the human-in-the-loop with structural guards.
 
+## Cross-backend — the differentiator
+
+YesLoop runs on three agent backends. Bare model names auto-resolve against the auto-discovered provider map.
+
+| Backend | Binary | Models | Example |
+|---|---|---|---|
+| `claude` | `claude` | Claude Opus, Sonnet, Haiku | `spawn_agent(backend="claude")` |
+| `codex` | `codex` | GPT-5.x, o4-mini | `spawn_agent(backend="codex")` |
+| `opencode` | `opencode` | Any OpenAI-compatible: Zai GLM-5.2, DeepSeek, Ollama, Mistral, local LLMs | `spawn_agent(backend="opencode", model="glm-5.2")` |
+
+Claude Code's `/loop`, `/goal`, and `/workflows` are Claude-only. Codex has no equivalent orchestration. YesLoop is the only autonomous pipeline that works on all three — including fully open-source stacks (`opencode` + GLM-5.2 + Ollama) with no Anthropic or OpenAI dependency.
+
+### Backend-mix examples
+
+Because YesLoop agents coordinate via scratchpad + `send_to` regardless of backend, you can mix backends per role:
+
+- **Plan + Implement + Review split**: Claude Opus plans the task, Codex implements it, GLM-5.2 reviews the diff — three yesloop agents in three worktrees, coordinated via scratchpad sections.
+- **Local-only dev**: `opencode` + local Ollama model runs the whole pipeline without any paid API key.
+- **Cost-optimized**: GLM-5.2 (via `opencode`) for routine yesloops, Claude Opus for cold-review subagents — pick the best model per phase, not per pipeline.
+
+Backend-mix orchestration across many agents is the planned `yesloopultra` feature.
+
 ## The 6-Phase Pipeline
 
 Every YesLoop run moves through the same six phases. The agent does this itself, no orchestration from your side.

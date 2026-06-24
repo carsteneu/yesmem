@@ -89,9 +89,9 @@ func TestHasOpenCodeConfig_MissingModelsJSON(t *testing.T) {
 	dir := t.TempDir()
 	writeMinimalFile(t, filepath.Join(dir, ".config", "opencode", "opencode.json"), `{}`)
 	writeMinimalFile(t, filepath.Join(dir, ".local", "share", "opencode", "auth.json"), `{}`)
-	// models.json missing
-	if hasOpenCodeConfig(dir) {
-		t.Fatalf("expected OpenCode NOT detected (models.json missing)")
+	// models.json missing — but opencode.json alone is enough now
+	if !hasOpenCodeConfig(dir) {
+		t.Fatalf("expected OpenCode detected (opencode.json present, models.json auto-downloaded)")
 	}
 }
 
@@ -99,9 +99,9 @@ func TestHasOpenCodeConfig_MissingAuthJSON(t *testing.T) {
 	dir := t.TempDir()
 	writeMinimalFile(t, filepath.Join(dir, ".config", "opencode", "opencode.json"), `{}`)
 	writeMinimalFile(t, filepath.Join(dir, ".cache", "opencode", "models.json"), `{}`)
-	// auth.json missing
-	if hasOpenCodeConfig(dir) {
-		t.Fatalf("expected OpenCode NOT detected (auth.json missing)")
+	// auth.json missing — free-tier users don't have auth.json
+	if !hasOpenCodeConfig(dir) {
+		t.Fatalf("expected OpenCode detected (opencode.json present, auth.json optional for free tier)")
 	}
 }
 

@@ -38,25 +38,44 @@ func resolveOpenCodeProvider(home string) (baseURL, apiKey, extractionModel, nar
 		return "", "", "", "", fmt.Errorf("load models.json: %w", err)
 	}
 
-	// 2. Load auth.json
+	// 2. Load auth.json (optional — free-tier users have no auth.json)
 	auth, err := loadAuth(home)
 	if err != nil {
 		return "", "", "", "", fmt.Errorf("load auth.json: %w", err)
 	}
 
-	// 3. Filter: openai-compatible providers with API keys
+	// 3. Filter: opencode free-tier provider + openai-compatible providers with API key
+	// Free-tier users (no auth.json) see only the 'opencode' provider (opencode.ai/zen).
+	// Paid users see 'opencode' + any provider they have a key for.
 	var providers []filteredProvider
 	for id, entry := range models {
-		if entry.NPM != "@ai-sdk/openai-compatible" {
+		baseURL := entry.API
+		key := auth[id]
+
+		// opencode provider is the free-tier default — always available
+		if id == "opencode" {
+			if baseURL == "" {
+				baseURL = "https://opencode.ai/zen/v1"
+			}
+			if entry.NPM != "@ai-sdk/openai-compatible" {
+				continue
+			}
+			providers = append(providers, filteredProvider{
+				ID:      id,
+				Label:   fmt.Sprintf("%s (free tier, %s)", id, baseURL),
+				BaseURL: baseURL,
+			})
 			continue
 		}
-		key := auth[id]
+
+		// Other providers require an API key
 		if key == "" {
 			continue
 		}
-		baseURL := entry.API
+		if entry.NPM != "@ai-sdk/openai-compatible" {
+			continue
+		}
 		if baseURL == "" {
-			// First-party provider without explicit API URL — use default
 			switch id {
 			case "openai":
 				baseURL = "https://api.openai.com/v1"
@@ -65,7 +84,7 @@ func resolveOpenCodeProvider(home string) (baseURL, apiKey, extractionModel, nar
 			}
 		}
 		if !strings.HasPrefix(baseURL, "http") {
-			continue // skip template variables like ${BASE_URL}
+			continue
 		}
 		providers = append(providers, filteredProvider{
 			ID:      id,
@@ -75,7 +94,7 @@ func resolveOpenCodeProvider(home string) (baseURL, apiKey, extractionModel, nar
 	}
 
 	if len(providers) == 0 {
-		return "", "", "", "", fmt.Errorf("no OpenAI-compatible providers with API keys found in OpenCode config")
+		return "", "", "", "", fmt.Errorf("no OpenCode providers found (free tier or configured API keys)")
 	}
 
 	// Sort alphabetically
@@ -84,7 +103,7 @@ func resolveOpenCodeProvider(home string) (baseURL, apiKey, extractionModel, nar
 	})
 
 	// 4. Show provider list
-	fmt.Println("  Detected OpenAI-compatible providers with API keys:")
+	fmt.Println("  Detected OpenAI-compatible providers:")
 	fmt.Println()
 	options := make([]string, len(providers))
 	for i, p := range providers {
@@ -102,6 +121,13 @@ func resolveOpenCodeProvider(home string) (baseURL, apiKey, extractionModel, nar
 	entry := models[selected.ID]
 	modelIDs := make([]string, 0, len(entry.Models))
 	for modelID := range entry.Models {
+		// For opencode free-tier provider: only show actual free models.
+		// models.json lists 71 models under 'opencode' but most are paid models
+		// (claude-*, gpt-*, gemini-*) accessible via opencode account — these need
+		// OAuth/session, not usable by the daemon's direct HTTP client.
+		if selected.ID == "opencode" && !isFreeTierModel(modelID) {
+			continue
+		}
 		modelIDs = append(modelIDs, modelID)
 	}
 	sort.Strings(modelIDs)
@@ -168,6 +194,27 @@ func ensureV1(url string) string {
 	return url + "/v1"
 }
 
+// isFreeTierModel returns true if the model ID is an actual free-tier model
+// on opencode.ai/zen (not a paid model rebranded under the opencode provider).
+// Free-tier markers: "-free" suffix, or known free model name patterns.
+func isFreeTierModel(modelID string) bool {
+	id := strings.ToLower(modelID)
+	if strings.HasSuffix(id, "-free") {
+		return true
+	}
+	// Known free-tier model name patterns (without -free suffix)
+	freePatterns := []string{
+		"big-pickle", "ring-", "mimo-", "nemotron-", "hy3-",
+		"ling-", "minimax-m", "north-", "trinity-", "kimi-k2.5",
+	}
+	for _, p := range freePatterns {
+		if strings.Contains(id, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // loadModels reads opencode's models.json cache.
 func loadModels(home string) (map[string]modelsEntry, error) {
 	path := filepath.Join(home, ".cache", "opencode", "models.json")
@@ -186,12 +233,14 @@ func loadModels(home string) (map[string]modelsEntry, error) {
 }
 
 // loadAuth reads opencode's auth.json and returns providerID → apiKey map.
+// Returns empty map (no error) if auth.json doesn't exist — free-tier users
+// (opencode.ai/zen) have no auth.json.
 func loadAuth(home string) (map[string]string, error) {
 	path := filepath.Join(home, ".local", "share", "opencode", "auth.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("auth.json not found at %s", path)
+			return map[string]string{}, nil
 		}
 		return nil, err
 	}

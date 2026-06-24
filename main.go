@@ -261,7 +261,7 @@ func yesmemDataDir() string {
 }
 
 func printUsage() {
-	fmt.Println("YesMem — Long-term memory for Claude Code")
+	fmt.Println("YesMem — Long-term memory for coding agents")
 	fmt.Println()
 	fmt.Println("Usage: yesmem <command>")
 	fmt.Println()

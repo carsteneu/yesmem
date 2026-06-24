@@ -88,9 +88,13 @@ func TestLoadAuth_ValidFile(t *testing.T) {
 
 func TestLoadAuth_FileMissing(t *testing.T) {
 	dir := t.TempDir()
-	_, err := loadAuth(dir)
-	if err == nil {
-		t.Fatalf("expected error when auth.json missing")
+	// Free-tier users have no auth.json — loadAuth returns empty map, no error
+	auth, err := loadAuth(dir)
+	if err != nil {
+		t.Fatalf("expected no error when auth.json missing, got: %v", err)
+	}
+	if len(auth) != 0 {
+		t.Fatalf("expected empty auth map, got %d entries", len(auth))
 	}
 }
 
@@ -104,14 +108,12 @@ func TestLoadAuth_MalformedJSON(t *testing.T) {
 }
 
 // TestResolveOpenCodeProvider_NoProviders verifies error when no openai-compatible
-// providers with API keys are found.
+// providers exist at all (free-tier or otherwise).
 func TestResolveOpenCodeProvider_NoProviders(t *testing.T) {
 	dir := t.TempDir()
-	// models.json has openai-compatible provider but auth.json has no matching key
+	// models.json has only non-openai-compatible providers
 	writeMinimalFile(t, filepath.Join(dir, ".cache", "opencode", "models.json"),
-		`{"deepseek":{"npm":"@ai-sdk/openai-compatible","api":"https://api.deepseek.com","models":{"x":{"id":"x"}}}}`)
-	writeMinimalFile(t, filepath.Join(dir, ".local", "share", "opencode", "auth.json"),
-		`{"other":{"type":"api","key":"sk-other"}}`)
+		`{"anthropic":{"npm":"@ai-sdk/anthropic","api":"","models":{"x":{"id":"x"}}}}`)
 
 	_, _, _, _, err := resolveOpenCodeProvider(dir)
 	if err == nil {
