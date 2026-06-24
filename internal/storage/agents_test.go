@@ -258,22 +258,26 @@ func TestAgentDeleteOrphaned(t *testing.T) {
 func TestAgentNextID(t *testing.T) {
 	s := newTestStore(t)
 
+	today := time.Now().UTC().Format("20060102")
+	first := "agent-" + today + "-01"
+	second := "agent-" + today + "-02"
+
 	// No agents yet
 	id, err := s.AgentNextID("proj")
 	if err != nil {
 		t.Fatalf("AgentNextID: %v", err)
 	}
-	if id != "agent-0" {
-		t.Errorf("expected agent-0, got %q", id)
+	if id != first {
+		t.Errorf("expected %q, got %q", first, id)
 	}
 
-	// After creating some
+	// After creating some (mixed old/new format — only today's new-format IDs count)
 	s.AgentCreate(Agent{ID: "agent-0", Project: "proj", Section: "sec1", Status: "running"})
-	s.AgentCreate(Agent{ID: "agent-1", Project: "proj", Section: "sec2", Status: "running"})
+	s.AgentCreate(Agent{ID: first, Project: "proj", Section: "sec2", Status: "running"})
 
 	id, _ = s.AgentNextID("proj")
-	if id != "agent-2" {
-		t.Errorf("expected agent-2, got %q", id)
+	if id != second {
+		t.Errorf("expected %q, got %q", second, id)
 	}
 }
 

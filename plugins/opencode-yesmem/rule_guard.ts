@@ -73,25 +73,43 @@ const FIRST_PARTY_DEFAULTS: Record<string, string> = {
       if (config?.extraction?.model) model = config.extraction.model;
     } catch {}
 
-    // 2. Find provider in models.json that owns this model
+    // 2. Find provider in models.json that owns this model WITH a key
     const models = await loadModelsJSON();
     const auth = await loadAuthJSON();
     let apiUrl = "https://api.deepseek.com";
     let apiKey = "";
     let npm = "";
+    let fallbackApiUrl = "";
+    let fallbackApiKey = "";
 
     for (const [providerId, provider] of Object.entries(models)) {
       const p = provider as any;
       if (p.models && p.models[model]) {
-        apiUrl = p.api || FIRST_PARTY_DEFAULTS[providerId] || "";
-        apiKey = auth[providerId]?.key || "";
-        npm = p.npm || "";
-        break;
+        const key = auth[providerId]?.key || "";
+        const url = p.api || FIRST_PARTY_DEFAULTS[providerId] || "";
+        if (key) {
+          apiUrl = url;
+          apiKey = key;
+          npm = p.npm || "";
+          break; // take first provider with a key
+        }
+        if (!fallbackApiKey) {
+          fallbackApiUrl = url;
+          fallbackApiKey = key; // empty, but keep the URL
+        }
       }
+    }
+
+    // Fallback: use keyless provider if no keyed provider found
+    if (!apiKey && fallbackApiUrl) {
+      apiUrl = fallbackApiUrl;
+      apiKey = fallbackApiKey;
     }
 
     return { model, apiUrl, apiKey, npm };
   }
+
+  export { resolveGuardConfig };
 
 type GuardResult = { decision: string; violations?: string[]; suggestion?: string };
 

@@ -1,6 +1,9 @@
 package proxy
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestTimestampStore_StoreAndGet(t *testing.T) {
 	ts := NewTimestampStore()
@@ -232,6 +235,29 @@ func TestBuildMeta_NoTsHintOnMsg2(t *testing.T) {
 	want := "[Di 2026-05-12 12:00:00] [msg:2]"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestBuildMeta_SkillEvalNoDoublePrefix(t *testing.T) {
+	// buildSkillEvalBlock returns content already wrapped in [skill-eval]...[/skill-eval].
+	// BuildMeta must NOT prepend "[skill-eval] " when markers are already present.
+	block := buildSkillEvalBlock("silent")
+	meta := &TimestampMeta{Timestamp: "[Test 12:00:00]", SkillEval: block}
+	got := BuildMeta(1, meta)
+	if strings.Count(got, "[skill-eval]") != 1 {
+		t.Errorf("expected 1 [skill-eval] marker, got %d: %s", strings.Count(got, "[skill-eval]"), got)
+	}
+	if strings.Count(got, "[/skill-eval]") != 1 {
+		t.Errorf("expected 1 [/skill-eval] marker, got %d", strings.Count(got, "[/skill-eval]"))
+	}
+}
+
+func TestBuildMeta_SkillEvalPlainContentGetsPrefix(t *testing.T) {
+	// When SkillEval is plain text without markers, BuildMeta adds the prefix.
+	meta := &TimestampMeta{Timestamp: "[Test 12:00:00]", SkillEval: "check skills"}
+	got := BuildMeta(1, meta)
+	if !strings.Contains(got, "[skill-eval] check skills") {
+		t.Errorf("expected prefixed skill-eval, got: %s", got)
 	}
 }
 

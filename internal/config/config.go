@@ -5,7 +5,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/carsteneu/yesmem/internal/embedding"
 	"github.com/carsteneu/yesmem/internal/models"
@@ -468,7 +470,8 @@ func Default() *Config {
 				"haiku":    130000,
 				"gpt-5":    180000,
 				"codex":    180000,
-				"deepseek": 500000,
+				"deepseek": 600000,
+				"glm-5.2":  500000,
 			},
 			CustomSystemPrompt: CustomSystemPromptConfig{
 				EnabledOpenCode:   true,
@@ -577,10 +580,151 @@ func MergeDefaults(path string) error {
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
+	if err := backupFile(path); err != nil {
+		return fmt.Errorf("backup config: %w", err)
+	}
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 	return nil
+}
+
+// Save writes config to a YAML file, creating a timestamped backup of any existing file.
+func Save(path string, cfg *Config) error {
+	if err := backupFile(path); err != nil {
+		return fmt.Errorf("backup config: %w", err)
+	}
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	return nil
+}
+
+// backupFile creates a timestamped backup copy of path if the file exists.
+func backupFile(path string) error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil // no existing file to back up
+	} else if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	backupPath := path + ".bak." + time.Now().Format("20060102T150405")
+	return os.WriteFile(backupPath, data, 0644)
+}
+
+// GetValue reads a specific value from config.yaml by dot-path.
+// e.g. "extraction.model" returns the extraction model.
+// Returns nil if the path does not exist (no error).
+func GetValue(path, dotPath string) (any, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil // no config file = no value
+		}
+		return nil, fmt.Errorf("read config: %w", err)
+	}
+
+	var raw map[string]any
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("parse config: %w", err)
+	}
+
+	parts := strings.Split(dotPath, ".")
+	current := any(raw)
+	for _, part := range parts {
+		m, ok := current.(map[string]any)
+		if !ok {
+			return nil, nil // path not found
+		}
+		current, ok = m[part]
+		if !ok {
+			return nil, nil // path not found
+		}
+	}
+	return current, nil
+}
+
+// SetValue sets a specific value in config.yaml by dot-path, creates a backup,
+// and writes the modified config back. Creates the file with defaults if it
+// does not exist.
+// e.g. SetValue("config.yaml", "extraction.model", "opus")
+// Deeply nested paths create intermediate maps as needed.
+func SetValue(path, dotPath string, value any) error {
+	// Read existing config or start fresh
+	var raw map[string]any
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("read config: %w", err)
+		}
+		raw = map[string]any{} // start fresh
+	} else {
+		if err := yaml.Unmarshal(data, &raw); err != nil {
+			return fmt.Errorf("parse config: %w", err)
+		}
+	}
+
+	// Navigate/create path and set value
+	parts := strings.Split(dotPath, ".")
+	current := raw
+	for i, part := range parts {
+		if i == len(parts)-1 {
+			current[part] = value
+			break
+		}
+		next, ok := current[part]
+		if !ok {
+			nextMap := map[string]any{}
+			current[part] = nextMap
+			current = nextMap
+		} else if m, ok := next.(map[string]any); ok {
+			current = m
+		} else {
+			// Overwrite scalar with map to continue path
+			nextMap := map[string]any{}
+			current[part] = nextMap
+			current = nextMap
+		}
+	}
+
+	// Backup and write
+	if err := backupFile(path); err != nil {
+		return fmt.Errorf("backup config: %w", err)
+	}
+	out, err := yaml.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	return os.WriteFile(path, out, 0644)
+}
+
+// CoerceValue attempts to parse a string as the most specific type.
+// Order: int, float, bool, then string fallback. This ensures YAML
+// round-trips produce correct types (ints not quoted strings, etc.).
+func CoerceValue(s string) any {
+	if s == "" {
+		return s
+	}
+	// Try int first (most specific)
+	if v, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return v
+	}
+	// Try float
+	if v, err := strconv.ParseFloat(s, 64); err == nil {
+		return v
+	}
+	// Try bool
+	if v, err := strconv.ParseBool(s); err == nil {
+		return v
+	}
+	return s
 }
 
 // NormalizeLLMProvider maps legacy aliases to canonical provider names.

@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add done-verify state machine (Layer 3)
+- Add resolveSpawnModel helper for bare model name resolution
+- Idle-self-check state machine
+- Dead-agent-detection for yesloop agents
+- SKILL.md v3 — automated DONE-guard + DISMISSAL-PATTERN + findings-table
+- Deterministic regex DONE-guard + heartbeat integration
+- Detection-first setup wizard + fix 4 template bugs in generateConfig
+- SKILL.md v2 — artifact-prescription + structured phase blocks
+- Staged skill suggestion on user messages
+- Config.yaml read-write for set_config/get_config + CLI
+
+### Fixed
+
+- Replace MergeDefaults with MigrateConfig, add missing migrations
+- Deepseek token threshold 500k→600k, add glm-5.2 500k
+- Complete template — all sections, fields, and defaults
+- Unique agent IDs never recycled
+- Include coding-variant providers in model map
+- Deterministic provider dedup + document coding-variant assumption
+- Wire resolveSpawnModel into spawnAgentProcess
+- EnsureV1 for base_url, dynamic summarize_model, complete_provider
+- EN-only relay messages and markers
+- Address 3 Important code review findings
+- YAML indentation bugs in generateConfig + add E2E tests
+- Remove double [skill-eval] prefix in BuildMeta
+- Backup config.yaml before MigrateConfig and MergeDefaults writes
+- Fix resolveGuardConfig provider selection + skill_nudge dedup
+- Make Phase 5 Cold Review mandatory with scratchpad evidence
+- Proxy_state dual-write + type coercion for config.yaml writes
+
+### Documentation
+
+- Document 6-layer phase-completion guarantee + feature entry
+- Update CHANGELOG and add yesloop documentation
+
+## [2.1.21] - 2026-06-19
+
 ### Changed
 
 - Add .yesmem/ for agent-local temp files
@@ -2950,7 +2989,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add comprehensive tests for generator and storage
 
 
-[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.1.20...HEAD
+[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.1.21...HEAD
+[2.1.21]: https://github.com/carsteneu/yesmem/compare/v2.1.20...v2.1.21
 [2.1.20]: https://github.com/carsteneu/yesmem/compare/v2.1.19...v2.1.20
 [2.1.19]: https://github.com/carsteneu/yesmem/compare/v2.1.18...v2.1.19
 [2.1.18]: https://github.com/carsteneu/yesmem/compare/v2.1.17...v2.1.18

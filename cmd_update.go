@@ -82,12 +82,14 @@ func runMigrateCmd() {
 	}
 	fmt.Println("  Directories: OK")
 
-	// 3. Config-Merge: load existing config (fills defaults for new fields), write back
+	// 3. Config migration: insert missing fields as commented snippets (preserves comments)
 	cfgPath := filepath.Join(dataDir, "config.yaml")
-	if err := config.MergeDefaults(cfgPath); err != nil {
-		fmt.Fprintf(os.Stderr, "  Config merge warning: %v\n", err)
+	if n, err := config.MigrateConfig(cfgPath); err != nil {
+		fmt.Fprintf(os.Stderr, "  Config migration warning: %v\n", err)
+	} else if n > 0 {
+		fmt.Printf("  Config migration: OK (%d fields added)\n", n)
 	} else {
-		fmt.Println("  Config merge: OK")
+		fmt.Println("  Config migration: OK (no changes needed)")
 	}
 
 	// 4. Hooks: ensure all yesmem hooks are registered in settings.json

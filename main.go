@@ -157,8 +157,10 @@ func main() {
 		runCheckUpdate()
 	case "update":
 		runUpdate()
-case "migrate":
+	case "migrate":
 		runMigrateCmd()
+	case "config":
+		runConfig(os.Args[2:])
 	case "scratchpad":
 		runScratchpad()
 	case "cap-store":

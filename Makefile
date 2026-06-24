@@ -34,7 +34,7 @@ deploy: build
 		cp configs/SYSTEM.md $(HOME)/.claude/yesmem/SYSTEM.md; \
 	fi
 	mkdir -p $(HOME)/.local/share/yesmem/plugins/opencode-yesmem
-	cp plugins/opencode-yesmem/*.ts plugins/opencode-yesmem/package.json $(HOME)/.local/share/yesmem/plugins/opencode-yesmem/
+	cp plugins/opencode-yesmem/*.ts plugins/opencode-yesmem/RULES.md plugins/opencode-yesmem/package.json $(HOME)/.local/share/yesmem/plugins/opencode-yesmem/
 	$(MAKE) restart-services
 	@echo "deployed $(VERSION) → $(INSTALL)"
 

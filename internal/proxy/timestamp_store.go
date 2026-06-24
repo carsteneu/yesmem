@@ -141,7 +141,13 @@ func BuildMeta(msgN int, meta *TimestampMeta) string {
 			parts = append(parts, "[think-reminder] "+meta.ThinkReminder)
 		}
 		if meta.SkillEval != "" {
-			parts = append(parts, "[skill-eval] "+meta.SkillEval)
+			// buildSkillEvalBlock already wraps content in [skill-eval]...[/skill-eval] markers.
+			// Only prepend the tag when the content lacks them (e.g. test fixtures).
+			if strings.HasPrefix(meta.SkillEval, "[skill-eval]") {
+				parts = append(parts, meta.SkillEval)
+			} else {
+				parts = append(parts, "[skill-eval] "+meta.SkillEval)
+			}
 		}
 		if meta.Rules != "" {
 			parts = append(parts, "[rules] "+meta.Rules)

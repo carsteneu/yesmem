@@ -47,11 +47,6 @@ const opencodeDBSnippet = `
   opencode_db: ~/.local/share/opencode/opencode.db
 `
 
-const agentsDefaultBackendSnippet = `
-  # Default backend for spawned agents: claude or opencode
-  default_backend: claude
-`
-
 const modelFeaturesBlock = `
   # --- Per-Model Feature Gates ---
   # Control which yesmem behavioral features are active per model/provider.
@@ -161,7 +156,15 @@ func MigrateConfig(path string) (int, error) {
 
 	// ━━ agents section: default_backend ━━
 	if !strings.Contains(content, "default_backend:") && strings.Contains(content, "agents:") {
-		content = insertAtEndOfSection(content, "agents:", agentsDefaultBackendSnippet)
+		backend := "claude"
+		if strings.Contains(content, "provider: openai_compatible") || strings.Contains(content, "provider: opencode") {
+			backend = "opencode"
+		}
+		snippet := fmt.Sprintf(`
+  # Default backend for spawned agents: claude or opencode
+  default_backend: %s
+`, backend)
+		content = insertAtEndOfSection(content, "agents:", snippet)
 		added++
 	}
 
@@ -186,6 +189,89 @@ exclude_projects:
 		added++
 	}
 
+	// ━━ Missing top-level sections ━━
+	if !strings.Contains(content, "caps_dir:") {
+		content = appendToEnd(content, `
+# --- Caps Directory ---
+# Custom directory for capability files (CAP.md). Empty = use ~/.claude/caps/.
+caps_dir: ""
+`)
+		added++
+	}
+	if !strings.Contains(content, "default_sandbox_profile:") {
+		content = appendToEnd(content, `
+# --- Sandbox ---
+# Default sandbox profile for spawned agents.
+default_sandbox_profile: ""
+`)
+		added++
+	}
+	if !strings.Contains(content, "secrets_sanitization:") {
+		content = appendToEnd(content, `
+# --- Secrets Sanitization ---
+# Redact secrets from extraction content.
+secrets_sanitization:
+  enabled: false
+  allowed_exceptions: []
+`)
+		added++
+	}
+	if !strings.Contains(content, "http:") {
+		content = appendToEnd(content, `
+# --- HTTP Server (optional) ---
+http:
+  enabled: false
+  listen: "127.0.0.1:9377"
+  auth_token: ""
+`)
+		added++
+	}
+
+	// ━━ Missing forked_agents fields ━━
+	if strings.Contains(content, "forked_agents:") {
+		var faAdds []string
+		if !strings.Contains(content, "max_forks_per_session:") {
+			faAdds = append(faAdds, "  max_forks_per_session: 50")
+		}
+		if !strings.Contains(content, "max_cost_per_session:") {
+			faAdds = append(faAdds, "  max_cost_per_session: 5")
+		}
+		if len(faAdds) > 0 {
+			content = insertAtEndOfSection(content, "forked_agents:", strings.Join(faAdds, "\n"))
+			added += len(faAdds)
+		}
+	}
+
+	// ━━ Missing proxy fields ━━
+	if strings.Contains(content, "proxy:") {
+		var pxAdds []string
+		if !strings.Contains(content, "openai_target:") {
+			pxAdds = append(pxAdds, "  openai_target: \"https://api.openai.com\"")
+		}
+		if !strings.Contains(content, "reset_cache:") {
+			pxAdds = append(pxAdds, "  reset_cache: false")
+		}
+		if !strings.Contains(content, "cache_keepalive_min_messages:") {
+			pxAdds = append(pxAdds, "  cache_keepalive_min_messages: 10")
+		}
+		if len(pxAdds) > 0 {
+			content = insertAtEndOfSection(content, "proxy:", strings.Join(pxAdds, "\n"))
+			added += len(pxAdds)
+		}
+	}
+
+	// ━━ token_thresholds: deepseek/glm-5.2 ━━
+	if strings.Contains(content, "token_thresholds:") {
+		if !strings.Contains(content, "deepseek:") {
+			content = insertAtEndOfSection(content, "token_thresholds:", "    deepseek: 600000")
+			added++
+		}
+		if !strings.Contains(content, "glm-5.2:") {
+			content = insertAtEndOfSection(content, "token_thresholds:", "    glm-5.2: 500000")
+			added++
+		}
+	}
+
 	// ━━ think_reminder_min_chars — inject into deepseek model_features ━━
 	if strings.Contains(content, "model_features:") && !strings.Contains(content, "think_reminder_min_chars") {
 		// Insert after the last "think_reminder: true" line inside a deepseek section
@@ -203,6 +289,9 @@ exclude_projects:
 		return 0, nil
 	}
 
+	if err := backupFile(path); err != nil {
+		return 0, fmt.Errorf("backup config: %w", err)
+	}
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		return 0, fmt.Errorf("write config: %w", err)
 	}
