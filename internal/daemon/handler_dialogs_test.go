@@ -752,6 +752,12 @@ func TestHandleWhoami_Agent(t *testing.T) {
 	if m["status"] != "running" {
 		t.Errorf("status=%v, want running", m["status"])
 	}
+	// Project must be surfaced from agent record so spawned agents can use
+	// it verbatim for scratchpad_write/read calls — prevents scope drift
+	// when orchestrator spawns with project=path and agent guesses basename.
+	if m["project"] != "proj-a" {
+		t.Errorf("project=%v, want proj-a (agent.Project should surface)", m["project"])
+	}
 }
 
 func TestHandleWhoami_EmptySession(t *testing.T) {

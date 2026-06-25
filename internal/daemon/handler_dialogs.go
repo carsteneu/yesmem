@@ -540,6 +540,13 @@ func (h *Handler) handleWhoami(params map[string]any) Response {
 			result["section"]  = agent.Section
 			result["status"]   = agent.Status
 			result["is_agent"] = true
+			// Surface the project string the agent was spawned under so agents
+			// can use it verbatim for scratchpad_write/read calls — prevents
+			// scope drift between orchestrator spawn (project=path) and agent
+			// guess (project=basename). See yesloop scratchpad-scope fix.
+			if agent.Project != "" {
+				result["project"] = agent.Project
+			}
 			if agent.CodexSessionID != "" {
 				result["codex_session_id"] = agent.CodexSessionID
 			}

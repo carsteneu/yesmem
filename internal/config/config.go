@@ -792,15 +792,19 @@ func (c *Config) ResolvedAPIKey() string {
 		return ""
 	}
 	if IsOpenAIProvider(c.LLM.Provider) {
-		if k := os.Getenv("OPENAI_API_KEY"); k != "" {
+		// Config-wins-over-env: an explicit openai_api_key in config.yaml
+		// (e.g. a DeepSeek key paired with api.deepseek.com) must NOT be
+		// silently overridden by OPENAI_API_KEY from .bashrc. Env is only a
+		// fallback when config has no key set.
+		if k := strings.TrimSpace(c.API.OpenAIAPIKey); k != "" {
 			return k
 		}
-		return c.API.OpenAIAPIKey
+		return os.Getenv("OPENAI_API_KEY")
 	}
-	if k := os.Getenv("ANTHROPIC_API_KEY"); k != "" {
+	if k := strings.TrimSpace(c.API.APIKey); k != "" {
 		return k
 	}
-	return c.API.APIKey
+	return os.Getenv("ANTHROPIC_API_KEY")
 }
 
 // ResolvedOpenAIBaseURL returns the configured OpenAI-compatible base URL.
@@ -808,10 +812,10 @@ func (c *Config) ResolvedOpenAIBaseURL() string {
 	if c == nil {
 		return ""
 	}
-	if k := os.Getenv("OPENAI_BASE_URL"); k != "" {
-		return strings.TrimSpace(k)
+	if k := strings.TrimSpace(c.API.OpenAIBaseURL); k != "" {
+		return k
 	}
-	return strings.TrimSpace(c.API.OpenAIBaseURL)
+	return strings.TrimSpace(os.Getenv("OPENAI_BASE_URL"))
 }
 
 // DefaultPricing returns hardcoded per-million-token pricing as fallback defaults.

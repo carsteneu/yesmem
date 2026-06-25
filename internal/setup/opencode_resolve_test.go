@@ -115,7 +115,7 @@ func TestResolveOpenCodeProvider_NoProviders(t *testing.T) {
 	writeMinimalFile(t, filepath.Join(dir, ".cache", "opencode", "models.json"),
 		`{"anthropic":{"npm":"@ai-sdk/anthropic","api":"","models":{"x":{"id":"x"}}}}`)
 
-	_, _, _, _, err := resolveOpenCodeProvider(dir)
+	_, _, _, _, _, err := resolveOpenCodeProvider(dir)
 	if err == nil {
 		t.Fatalf("expected error: no matching providers")
 	}
@@ -129,7 +129,7 @@ func TestResolveOpenCodeProvider_TemplateVariableURL(t *testing.T) {
 	writeMinimalFile(t, filepath.Join(dir, ".local", "share", "opencode", "auth.json"),
 		`{"weird":{"type":"api","key":"sk-weird"}}`)
 
-	_, _, _, _, err := resolveOpenCodeProvider(dir)
+	_, _, _, _, _, err := resolveOpenCodeProvider(dir)
 	if err == nil {
 		t.Fatalf("expected error: template URL provider should be filtered out")
 	}

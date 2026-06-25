@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -143,12 +144,12 @@ func (h *Handler) checkOneAgent(agent storage.Agent) {
 
 	case yesloopIdleStateRemarkRequest:
 		content := h.readAgentScratchpad(agent)
-		if content != "" && CountCompletedPhases(content) >= 6 {
+		if content != "" && CountCompletedPhases(content) >= 6 && phase5ColdReviewPresent(content) {
 			h.transitionTo(agent, state, yesloopIdleStateCommitRequest)
 			h.sendIdleRelay(agent, state, 3)
 			return
 		}
-		h.maybeRefire(agent, state, 2, "phases not completed")
+		h.maybeRefire(agent, state, 2, "phases not completed or phase 5 cold review missing")
 
 	case yesloopIdleStateCommitRequest:
 		content := h.readAgentScratchpad(agent)
@@ -207,6 +208,27 @@ func (h *Handler) readAgentScratchpad(agent storage.Agent) string {
 	return sections[0].Content
 }
 
+// phase5ColdReviewPresent validates that Phase 5's scratchpad block actually
+// contains a Cold Review / Stage 2 trace — not just a Status: COMPLETE header
+// the agent wrote without doing the work. Catches the rationalization pattern
+// where agents claim COMPLETE but document "Stage 2: Blocked" in the body.
+func phase5ColdReviewPresent(content string) bool {
+	phases := splitPhases(content)
+	block, ok := phases[5]
+	if !ok {
+		return false
+	}
+	lower := strings.ToLower(block)
+	// Hard veto: any "blocked" in the Phase 5 block means the agent did not
+	// complete Stage 2 — regardless of what else the block says.
+	if strings.Contains(lower, "blocked") {
+		return false
+	}
+	// Phase 5 block must contain at least one of these positive trace markers.
+	stage2Re := regexp.MustCompile(`(?i)\b(stage 2|cold review|task\(\)|subagent)\b`)
+	return stage2Re.MatchString(block)
+}
+
 // sendIdleRelay sends a relay message to a yesloop agent via the inject socket.
 // Uses a single-write approach (without 3s delay) since the agent is already idle
 // and the message doesn't require bracketed-paste splitting.
@@ -214,7 +236,7 @@ func (h *Handler) sendIdleRelay(agent storage.Agent, state *yesloopIdleState, re
 	var msg string
 	switch relayNum {
 	case 1:
-		msg = "Have you completed all 6 phases. If not do it now. Enter evidence in scratchpad and mark as PROVEN."
+		msg = "Have you completed all 6 phases? If not do it now. For each phase prove you have done each, IF you have proven mark each phase in scratchpad with [x] showing it is done. MANDATORY: Make sure that you have also done phase 5 with all code reviews including Stage 2 cold review via task subagent. REVIEW BLOCKED without subagent trace is not acceptable. Mandatory: only mark as PROVEN if it IS proven."
 	case 2:
 		msg = "Mark all 6 phases as done with x in scratchpad."
 	case 3:

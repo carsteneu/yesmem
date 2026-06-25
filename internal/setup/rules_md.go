@@ -282,7 +282,7 @@ func extractTriggers(desc string) []string {
 		"subagent-driven-development": {"implementation plan", "independent tasks", "dispatch agent", "parallel agents"},
 		"dispatching-parallel-agents": {"parallel tasks", "independent work", "no shared state", "no dependencies", "run concurrently"},
 		"executing-plans":            {"execution plan", "review checkpoints", "written plan", "implement plan"},
-		"finishing-a-development-branch": {"implementation complete", "all tests pass", "ready to merge", "finish branch", "done implementing"},
+		"finishing-a-development-branch": {"branch is ready to merge", "merge into main", "create a pull request", "finish the branch", "prepare merge", "branch is done and staged", "ready for merge or pr"},
 		"receiving-code-review":      {"code review feedback", "review comments", "PR feedback", "review suggestion", "unclear feedback"},
 		"requesting-code-review":     {"review my code", "check my work", "before merging", "verify requirements", "code review please"},
 		"using-git-worktrees":        {"feature isolation", "isolated workspace", "git worktree", "new branch work", "parallel branch"},

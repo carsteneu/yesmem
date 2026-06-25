@@ -264,7 +264,61 @@ func TestCheckYesloopIdle_RemarkToCommit(t *testing.T) {
 	}
 }
 
-// TestCheckYesloopIdle_CommitToDone transitions on send_to orchestrator evidence.
+// TestCheckYesloopIdle_RemarkToCommit_Phase5ColdReviewMissing verifies that
+// a scratchpad claiming all 6 phases COMPLETE but Phase 5 has only "REVIEW
+// BLOCKED" without a subagent / task() / cold review trace does NOT transition
+// to COMMIT_REQUEST. This catches the rationalization pattern where the agent
+// writes Status: COMPLETE but documents Stage 2 as blocked in the body.
+func TestCheckYesloopIdle_RemarkToCommit_Phase5ColdReviewMissing(t *testing.T) {
+	resetIdleState()
+	h, s := mustHandler(t)
+
+	makeYesloopAgent(t, h, s, "remark-blocked-1", "sess-rb1", testPID, false, 11*time.Minute)
+
+	// First tick: set idleSince
+	h.checkYesloopIdle()
+
+	yesloopIdleAgentsMu.Lock()
+	state, _ := yesloopIdleAgents["remark-blocked-1"]
+	state.idleSince = time.Now().Add(-11 * time.Minute)
+	state.state = yesloopIdleStateRemarkRequest
+	yesloopIdleAgentsMu.Unlock()
+
+	// 6 phases COMPLETE but Phase 5 has no Stage 2 / task() / subagent trace.
+	// Mirrors the VM failure case: "Stage 2 Cold Review: Blocked because no Subagent infrastructure"
+	content := `### Phase 1: ANALYZE
+**Status:** COMPLETE
+Goal understood
+
+### Phase 2: PLAN
+**Status:** COMPLETE
+Plan stored
+
+### Phase 3: EXECUTE
+**Status:** COMPLETE
+
+### Phase 4: VERIFY
+**Status:** COMPLETE
+Tests run: ok
+
+### Phase 5: REVIEW
+**Status:** COMPLETE
+Stage 1 Self-Review: Done
+Stage 2 Cold Review: Blocked because no Subagent infrastructure available
+
+### Phase 6: FINISH
+**Status:** COMPLETE
+Deploy executed: yes
+send_to orchestrator: yes
+`
+	s.ScratchpadWrite("testproj", "yesloop-remark-blocked-1", content, "")
+
+	h.checkYesloopIdle()
+
+	if hasIdleState("remark-blocked-1", yesloopIdleStateCommitRequest) {
+		t.Error("agent with Phase 5 'Stage 2 Blocked' (no subagent trace) must NOT transition to COMMIT_REQUEST")
+	}
+}
 func TestCheckYesloopIdle_CommitToDone(t *testing.T) {
 	resetIdleState()
 	h, s := mustHandler(t)
