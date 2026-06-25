@@ -227,6 +227,17 @@ The `/swarm` skill provides a structured protocol for multi-agent orchestration:
 - **Budget strategies:** quality (all Opus), balanced (Opus orchestrator + Sonnet workers), economy (all Sonnet)
 - **Status ping:** orchestrator checks agent status every 5 minutes
 
+### 22.14b YesLoop
+
+Fire-and-forget autonomous task loop for single-agent scoped work. See [YesLoop](../yesloop.md) for full documentation and [YesLoop feature](yesloop.md) for the compact summary.
+
+- **Single agent, single worktree** — no inter-agent coordination overhead
+- **6-phase pipeline** — ANALYZE → PLAN → EXECUTE → VERIFY → REVIEW → FINISH, all autonomous
+- **6 defense-in-depth layers** for phase-completion guarantee (idle self-check, done-verify, done-guard, dead detection, hung detection, structured skill blocks)
+- **Scratchpad-driven** — brief at start, progress markers during execution, DONE report at end
+- **Differs from /swarm:** YesLoop is one agent in one worktree; /swarm dispatches multiple agents with DAG dependencies
+- **Differs from persistent-orchestrator:** YesLoop is a fresh spawn per task; persistent-orchestrator resumes existing sessions through sequential Implement → Review → Commit stages
+
 ### 22.15 Persistent-Orchestrator Skill
 
 Resume-based multi-agent pipeline for structured Implement → Review → Commit workflows (`skills/persistent-orchestrator.md`):

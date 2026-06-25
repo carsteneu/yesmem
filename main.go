@@ -157,8 +157,10 @@ func main() {
 		runCheckUpdate()
 	case "update":
 		runUpdate()
-case "migrate":
+	case "migrate":
 		runMigrateCmd()
+	case "config":
+		runConfig(os.Args[2:])
 	case "scratchpad":
 		runScratchpad()
 	case "cap-store":
@@ -259,7 +261,7 @@ func yesmemDataDir() string {
 }
 
 func printUsage() {
-	fmt.Println("YesMem — Long-term memory for Claude Code")
+	fmt.Println("YesMem — Long-term memory for coding agents")
 	fmt.Println()
 	fmt.Println("Usage: yesmem <command>")
 	fmt.Println()

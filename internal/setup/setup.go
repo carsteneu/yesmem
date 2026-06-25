@@ -37,7 +37,7 @@ func Run(interactive bool) error {
 	fmt.Println()
 	fmt.Println("  YesMem Install", buildinfo.Version)
 	fmt.Println("  ====================")
-	fmt.Println("  Long-term memory for Claude Code")
+	fmt.Println("  Long-term memory for coding agents")
 	fmt.Println()
 
 	if interactive {
@@ -47,6 +47,79 @@ func Run(interactive bool) error {
 }
 
 func runDefaults(home, dataDir, binaryPath string) error {
+	// Step 1: Detect installed agents
+	agents := detectAgents(home)
+
+	fmt.Println("  Detecting agents...")
+	hasOpenCode := false
+	hasClaude := false
+	hasCodex := false
+	for _, a := range agents {
+		fmt.Printf("    \u2192 \u2713 %s\n", a)
+		switch a {
+		case "opencode":
+			hasOpenCode = true
+		case "claude":
+			hasClaude = true
+		case "codex":
+			hasCodex = true
+		}
+	}
+
+	// Multi-Agent: if OpenCode AND Claude/Codex detected, let user choose
+	if hasOpenCode && (hasClaude || hasCodex) {
+		fmt.Println("  Multiple agents detected.")
+		fmt.Println()
+		options := []string{"OpenCode (choose model — free tier or paid provider)"}
+		if hasClaude {
+			options = append(options, "Claude Code (Sonnet/Opus via Anthropic)")
+		}
+		if hasCodex {
+			options = append(options, "Codex (GPT-5.5)")
+		}
+		fmt.Println("  Which backend should YesMem use?")
+		idx := promptChoice(options, 0)
+		fmt.Println()
+		switch idx {
+		case 0:
+			return runOpenCodeSetup(home, dataDir, binaryPath)
+		case 1:
+			if hasClaude {
+				return runNonInteractiveClaude(home, dataDir, binaryPath)
+			}
+			return runNonInteractiveCodex(home, dataDir, binaryPath)
+		case 2:
+			return runNonInteractiveCodex(home, dataDir, binaryPath)
+		}
+	}
+
+	// OpenCode only — interactive provider/model setup
+	if hasOpenCode {
+		fmt.Println("  OpenCode detected → interactive provider selection")
+		return runOpenCodeSetup(home, dataDir, binaryPath)
+	}
+
+	// If Claude + Codex detected — non-interactive defaults using Anthropic via CLI
+	if hasClaude && hasCodex {
+		fmt.Println("  Claude + Codex \u2192 non-interactive defaults")
+		return runNonInteractiveClaudeCodex(home, dataDir, binaryPath)
+	}
+
+	// If Codex only — non-interactive defaults with OpenAI-compatible
+	if hasCodex {
+		fmt.Println("  Codex only \u2192 non-interactive defaults")
+		return runNonInteractiveCodex(home, dataDir, binaryPath)
+	}
+
+	// If Claude only — non-interactive defaults
+	if hasClaude {
+		fmt.Println("  Claude Code \u2192 non-interactive defaults")
+		return runNonInteractiveClaude(home, dataDir, binaryPath)
+	}
+
+	// No agents found — fall back to original interactive wizard
+	fmt.Println("  No agents detected \u2192 interactive setup")
+	fmt.Println()
 	chosenModel := DefaultExtractionModel
 	autoExtract := true
 	autoStart := runtime.GOOS == "linux" || runtime.GOOS == "darwin"
@@ -79,7 +152,7 @@ func runDefaults(home, dataDir, binaryPath string) error {
 		}
 		apiKey = promptAPIKey(envKey)
 		if apiKey == "" {
-			fmt.Println("  → No API key provided, falling back to Claude Code subscription")
+			fmt.Println("  \u2192 No API key provided, falling back to Claude Code subscription")
 			provider = "cli"
 			apiKey, _ = findClaudeCodeKey(home)
 		}
@@ -107,7 +180,138 @@ func runDefaults(home, dataDir, binaryPath string) error {
 	binaryPath = ensurePermanentLocation(home, binaryPath)
 	primaryModel := "deepseek/deepseek-reasoner"
 	smallModel := "deepseek/deepseek-chat"
-	return executeSetup(home, dataDir, binaryPath, chosenModel, apiKey, provider, chosenTerminal, autoExtract, autoStart, primaryModel, smallModel, nil)
+	providerKeys := map[string]string{}
+	if provider == "openai_compatible" && apiKey != "" {
+		providerKeys["deepseek"] = apiKey
+	}
+	return executeSetup(home, dataDir, binaryPath, chosenModel, apiKey, provider, chosenTerminal, autoExtract, autoStart, primaryModel, smallModel, providerKeys, apiKey, "", "", "", "")
+}
+
+func runOpenCodeSetup(home, dataDir, binaryPath string) error {
+	baseURL, apiKey, extractionModel, narrativeModel, err := resolveOpenCodeProvider(home)
+	if err != nil {
+		return fmt.Errorf("resolve OpenCode provider: %w", err)
+	}
+
+	chosenModel := extractionModel
+	if chosenModel == "" {
+		chosenModel = DefaultExtractionModel
+	}
+	qualityModel := narrativeModel
+	if qualityModel == "" {
+		qualityModel = "sonnet"
+	}
+	// summarizeModel uses the lighter extraction model (not hardcoded haiku)
+	// so DeepSeek users get deepseek-v4-flash, Anthropic users get haiku, etc.
+	summarizeModel := chosenModel
+
+	autoExtract := true
+	autoStart := runtime.GOOS == "linux" || runtime.GOOS == "darwin"
+	chosenTerminal := orchestrator.DetectTerminal()
+
+	fmt.Println()
+	fmt.Println("  Installing:")
+	fmt.Printf("    Extraction model:   %s\n", chosenModel)
+	fmt.Printf("    Narrative model:    %s\n", narrativeModel)
+	fmt.Printf("    LLM Provider:       openai_compatible\n")
+	fmt.Printf("    API Base URL:       %s\n", baseURL)
+	fmt.Printf("    Config:             %s/config.yaml\n", dataDir)
+	fmt.Println()
+
+	binaryPath = ensurePermanentLocation(home, binaryPath)
+	primaryModel := "deepseek/deepseek-reasoner"
+	smallModel := "deepseek/deepseek-chat"
+	providerKeys := map[string]string{}
+	if apiKey != "" {
+		providerKeys["deepseek"] = apiKey
+	}
+	return executeSetup(home, dataDir, binaryPath, chosenModel, apiKey, "openai_compatible", chosenTerminal, autoExtract, autoStart, primaryModel, smallModel, providerKeys, apiKey, baseURL, narrativeModel, qualityModel, summarizeModel)
+}
+
+// runNonInteractiveClaudeCodex handles Claude + Codex detected: use Anthropic via CLI.
+// Codex's default model is opus-4-7, used as narrative_model.
+func runNonInteractiveClaudeCodex(home, dataDir, binaryPath string) error {
+	apiKey, _ := findClaudeCodeKey(home)
+
+	autoExtract := true
+	autoStart := runtime.GOOS == "linux" || runtime.GOOS == "darwin"
+	chosenTerminal := orchestrator.DetectTerminal()
+
+	chosenModel := "sonnet"
+	narrativeModel := "opus-4-7"
+	qualityModel := "sonnet"
+	summarizeModel := "haiku"
+
+	fmt.Println()
+	fmt.Println("  Installing:")
+	fmt.Printf("    Extraction model:   %s\n", chosenModel)
+	fmt.Printf("    Narrative model:    %s\n", narrativeModel)
+	fmt.Printf("    LLM Provider:       cli\n")
+	fmt.Printf("    Config:             %s/config.yaml\n", dataDir)
+	fmt.Println()
+
+	binaryPath = ensurePermanentLocation(home, binaryPath)
+	primaryModel := "deepseek/deepseek-reasoner"
+	smallModel := "deepseek/deepseek-chat"
+	return executeSetup(home, dataDir, binaryPath, chosenModel, apiKey, "cli", chosenTerminal, autoExtract, autoStart, primaryModel, smallModel, nil, "", "", narrativeModel, qualityModel, summarizeModel)
+}
+
+// runNonInteractiveCodex handles Codex only: use OpenAI-compatible defaults.
+func runNonInteractiveCodex(home, dataDir, binaryPath string) error {
+	apiKey := readAuthJSONKey(home, "openai")
+	if apiKey == "" {
+		apiKey = os.Getenv("OPENAI_API_KEY")
+	}
+
+	autoExtract := true
+	autoStart := runtime.GOOS == "linux" || runtime.GOOS == "darwin"
+	chosenTerminal := orchestrator.DetectTerminal()
+
+	chosenModel := "gpt-5.5-codex"
+	narrativeModel := "gpt-5.5-codex"
+	qualityModel := "gpt-5.5-codex"
+	summarizeModel := "gpt-5.5-codex"
+	baseURL := "https://api.openai.com/v1"
+
+	fmt.Println()
+	fmt.Println("  Installing:")
+	fmt.Printf("    Extraction model:   %s\n", chosenModel)
+	fmt.Printf("    LLM Provider:       openai_compatible\n")
+	fmt.Printf("    API Base URL:       %s\n", baseURL)
+	fmt.Printf("    Config:             %s/config.yaml\n", dataDir)
+	fmt.Println()
+
+	binaryPath = ensurePermanentLocation(home, binaryPath)
+	primaryModel := "deepseek/deepseek-reasoner"
+	smallModel := "deepseek/deepseek-chat"
+	return executeSetup(home, dataDir, binaryPath, chosenModel, apiKey, "openai_compatible", chosenTerminal, autoExtract, autoStart, primaryModel, smallModel, nil, apiKey, baseURL, narrativeModel, qualityModel, summarizeModel)
+}
+
+// runNonInteractiveClaude handles Claude only: use Anthropic via CLI.
+func runNonInteractiveClaude(home, dataDir, binaryPath string) error {
+	apiKey, _ := findClaudeCodeKey(home)
+
+	autoExtract := true
+	autoStart := runtime.GOOS == "linux" || runtime.GOOS == "darwin"
+	chosenTerminal := orchestrator.DetectTerminal()
+
+	chosenModel := "sonnet"
+	narrativeModel := "opus"
+	qualityModel := "sonnet"
+	summarizeModel := "haiku"
+
+	fmt.Println()
+	fmt.Println("  Installing:")
+	fmt.Printf("    Extraction model:   %s\n", chosenModel)
+	fmt.Printf("    Narrative model:    %s\n", narrativeModel)
+	fmt.Printf("    LLM Provider:       cli\n")
+	fmt.Printf("    Config:             %s/config.yaml\n", dataDir)
+	fmt.Println()
+
+	binaryPath = ensurePermanentLocation(home, binaryPath)
+	primaryModel := "deepseek/deepseek-reasoner"
+	smallModel := "deepseek/deepseek-chat"
+	return executeSetup(home, dataDir, binaryPath, chosenModel, apiKey, "cli", chosenTerminal, autoExtract, autoStart, primaryModel, smallModel, nil, "", "", narrativeModel, qualityModel, summarizeModel)
 }
 
 func runInteractive(home, dataDir, binaryPath string) error {
@@ -315,10 +519,10 @@ func runInteractive(home, dataDir, binaryPath string) error {
 	// Binary copy (before executeSetup so binaryPath is correct)
 	binaryPath = ensurePermanentLocation(home, binaryPath)
 
-	return executeSetup(home, dataDir, binaryPath, chosenModel, apiKey, provider, chosenTerminal, autoExtract, autoStart, primaryModel, smallModel, providerKeys)
+	return executeSetup(home, dataDir, binaryPath, chosenModel, apiKey, provider, chosenTerminal, autoExtract, autoStart, primaryModel, smallModel, providerKeys, apiKey, "", "", "", "")
 }
 
-func executeSetup(home, dataDir, binaryPath, model, apiKey, provider, terminal string, autoExtract, autoStart bool, primaryModel, smallModel string, providerKeys map[string]string) error {
+func executeSetup(home, dataDir, binaryPath, model, apiKey, provider, terminal string, autoExtract, autoStart bool, primaryModel, smallModel string, providerKeys map[string]string, openaiKey, openaiBaseURL, narrativeModel, qualityModel, summarizeModel string) error {
 	hookDir := filepath.Join(home, ".claude", "hooks")
 	lang := detectSystemLanguage()
 
@@ -345,7 +549,7 @@ func executeSetup(home, dataDir, binaryPath, model, apiKey, provider, terminal s
 				os.WriteFile(backupPath, data, 0644)
 			}
 		}
-		cfgContent := generateConfig(model, autoExtract, apiKey, provider, terminal)
+		cfgContent := generateConfig(model, autoExtract, apiKey, openaiKey, openaiBaseURL, provider, terminal, narrativeModel, qualityModel, summarizeModel)
 		return model, os.WriteFile(cfgPath, []byte(cfgContent), 0644)
 	})
 
@@ -726,11 +930,28 @@ func startProxyDirect(binaryPath string) {
 	}
 }
 
-func generateConfig(model string, autoExtract bool, apiKey, provider, terminal string) string {
+func generateConfig(model string, autoExtract bool, apiKey, openaiKey, openaiBaseURL, provider, terminal, narrativeModel, qualityModel, summarizeModel string) string {
 	lang := detectSystemLanguage()
 	langs := fmt.Sprintf("[%s, en]", lang)
 	if lang == "en" {
 		langs = "[en]"
+	}
+
+	// agents.default_backend depends on provider
+	agentsBackend := "claude"
+	if provider == "openai_compatible" {
+		agentsBackend = "opencode"
+	}
+
+	// Default model values for backward compatibility
+	if narrativeModel == "" {
+		narrativeModel = "opus"
+	}
+	if qualityModel == "" {
+		qualityModel = "sonnet"
+	}
+	if summarizeModel == "" {
+		summarizeModel = "haiku"
 	}
 
 	keyLine := "${ANTHROPIC_API_KEY}"
@@ -739,17 +960,28 @@ func generateConfig(model string, autoExtract bool, apiKey, provider, terminal s
 	}
 
 	apiBlock := "api_key: " + keyLine
+	llmBlock := "provider: " + provider
 	if provider == "openai" || provider == "openai_compatible" {
-		openaiKey := apiKey
-		if openaiKey == "" {
-			openaiKey = "${OPENAI_API_KEY}"
+		oaiKey := openaiKey
+		if oaiKey == "" {
+			oaiKey = apiKey
 		}
-		apiBlock = "api_key: " + keyLine + "\n  openai_api_key: " + openaiKey + "\n  openai_base_url: ${OPENAI_BASE_URL}"
+		if oaiKey == "" {
+			oaiKey = "${OPENAI_API_KEY}"
+		}
+		oaiURL := openaiBaseURL
+		if oaiURL == "" {
+			oaiURL = "${OPENAI_BASE_URL}"
+		}
+		apiBlock = "api_key: " + keyLine + "\n  openai_api_key: " + oaiKey + "\n  openai_base_url: " + oaiURL
+		llmBlock = "provider: " + provider + "\n  openai_base_url: " + oaiURL + "\n  complete_provider: opencode"
+	} else {
+		llmBlock = "provider: " + provider + "\n  complete_provider: \"\""
 	}
 
 	return fmt.Sprintf(`# ============================================================================
 # YesMem Configuration
-# Long-term memory system for Claude Code
+# Long-term memory system for coding agents
 # ============================================================================
 
 # --- Extraction Pipeline ---
@@ -764,7 +996,7 @@ extraction:
   # These summaries become the input for Pass 2 extraction.
   # Haiku is ideal: summarization is a compression task, not creative.
   # Shortnames: "haiku", "sonnet", "opus" — or full Anthropic model ID
-  summarize_model: haiku
+  summarize_model: %s
 
   # Pass 2 — Extraction model. Reads summaries and extracts structured learnings.
   # This is the model you chose during setup.
@@ -776,16 +1008,16 @@ extraction:
 
   # Narrative generation — session handovers, project profiles, persona traits.
   # Needs strong language understanding for coherent narrative text.
-  narrative_model: opus
+  narrative_model: %s
 
   # Quality refinement — deduplicates, rates relevance, resolves contradictions.
   # Also used for Persona synthesis. Falls back to narrative_model if not set.
-  quality_model: sonnet
+  quality_model: %s
 
   # How much session content is sent to the LLM:
   # "full"        = everything (best quality, higher cost)
   # "prefiltered" = rule-based pre-filter (saves tokens, may miss things)
-  mode: full
+  mode: prefiltered
 
   # Sessions larger than chunk_size tokens are split into parts
   # and processed sequentially. Larger chunks = better context, more cost.
@@ -824,10 +1056,10 @@ llm:
   # ⚠ OAuth tokens (from Claude Code login) are exclusively for Claude Code
   #   and Claude.ai — using them with provider: "api" violates Anthropic's ToS.
   #   If you logged into Claude Code via OAuth, use provider: "cli" only.
-  provider: %s
+  %s
 
   # Path to claude binary (only needed for provider: "cli" if not in PATH)
-  # claude_binary: /usr/local/bin/claude
+  claude_binary: ""
 
   # Daily spending limits per model tier (USD). Prevents cost explosion
   # with many parallel sessions or large backlogs. 0 = no limit.
@@ -836,7 +1068,7 @@ llm:
   daily_budget_quality_usd: 10.0   # Budget for narrative + Pass 2 (quality)
 
   # Max cost per single LLM call (USD). Safety net against runaway prompts.
-  # max_budget_per_call_usd: 0.50
+  max_budget_per_call_usd: 1.0
 
 # --- Evolution ---
 # Automatic evolution of knowledge over time.
@@ -883,7 +1115,7 @@ briefing:
   languages: %s
 
   # Include open/unfinished tasks in the briefing?
-  # remind_open_work: true
+  remind_open_work: true
 
   # Include synthesized user profile in the briefing.
   # The profile summarizes the user's role, expertise, and communication style.
@@ -917,239 +1149,175 @@ proxy:
   # Upstream API — where the proxy forwards requests to.
   target: "https://api.anthropic.com"
 
-  # Upstream API for OpenAI-format requests (used when provider is openai/openai_compatible).
-  # openai_target: "https://api.openai.com"
+  # Upstream API for OpenAI-format requests.
+  openai_target: "https://api.openai.com"
 
   # Per-provider target URLs for OpenAI-compatible providers.
-  # Keys are matched as case-insensitive prefixes against the model name.
-  # e.g., "deepseek" matches "deepseek-v4-pro" → routes to api.deepseek.com
-  provider_targets:
-    deepseek: "https://api.deepseek.com"
+  # Auto-discovery fills this from opencode config when auto_configure_providers is true.
+  provider_targets: {}
 
   # Automatically discover and configure provider routing from opencode config.
-  # When true, yesmem reads opencode.json and models.json to auto-populate
-  # provider_targets and set baseURL for new providers. Set to false to disable.
   auto_configure_providers: true
 
   # Compress when conversation context exceeds this token count.
-  # Lower = more frequent compression (saves cost, loses more detail).
-  # Higher = less frequent compression (better context, higher cost).
   token_threshold: 250000
 
   # Model-specific thresholds override the global token_threshold.
-  # Keys are matched as substrings against the model name in each request.
-  # Example: "opus" matches "claude-opus-4-6", "gpt-5" matches "gpt-5.4-codex".
   token_thresholds:
     opus: 180000
     sonnet: 180000
     haiku: 130000
     gpt-5: 180000
     codex: 180000
+    deepseek: 600000
+    glm-5.2: 500000
 
-  # Stub down to this floor token count during compaction.
-  # Lower = more aggressive compression per cycle.
   token_minimum_threshold: 100000
-
-  # How many recent messages stay uncompressed during compaction.
-  # These are never compressed so the current working context is preserved.
   keep_recent: 10
-
-  # Sawtooth caching keeps a frozen cached prefix between stub-cycles.
-  # Disable only for debugging or if upstream cache semantics change.
   sawtooth_enabled: true
-
-  # Cache TTL for all injected cache_control blocks.
-  # "ephemeral" = 5 minutes, cheapest and safest
-  # "1h"        = 1 hour, survives pauses but costs more on cache writes
-  #
-  # Important: all cache_control blocks in a request are normalized to this TTL.
   cache_ttl: "ephemeral"
 
-  # Cache keepalive prevents prompt cache expiry during idle periods.
-  # Sends periodic no-op API calls to maintain the cached prefix lifespan.
   cache_keepalive_enabled: true
-
-  # Keepalive mode: "auto" (detect from API response), "5m", "1h".
-  # auto: checks ephemeral_1h_input_tokens in response to determine TTL.
-  # 5m/1h: fixed mode, no detection, pings at corresponding interval.
-  cache_keepalive_mode: "auto"
-
-  # Pings per idle phase when cache TTL is 5 minutes.
-  cache_keepalive_pings_5m: 6
-
-  # Pings per idle phase when cache TTL is 1 hour.
+  cache_keepalive_mode: "5m"
+  cache_keepalive_min_messages: 10
+  cache_keepalive_pings_5m: 5
   cache_keepalive_pings_1h: 1
-
-  # Scale down input_tokens reported to Claude Code to suppress "Context low" warning.
-  # Claude Code has a hardcoded 180k token budget and warns at ~160k (89%%).
-  # Since the proxy manages context compression, CC's warning is misleading.
-  # 0 = disabled (report real tokens), 0.7 = report 70%% of actual tokens.
-  # At 0.7, CC sees ~112k when real usage is 160k — well below the warning threshold.
   usage_deflation_factor: 0.7
+  reset_cache: false
 
-  # Strip the disclaimer that Claude Code adds to CLAUDE.md content:
-  # "IMPORTANT: this context may or may not be relevant to your tasks"
-  # This disclaimer subordinates CLAUDE.md/MEMORY.md instructions, making the model
-  # treat them as optional. Stripping it gives user instructions full authority.
+  # --- Prompt Feature Flags (top-level, applied to all models) ---
   prompt_ungate: true
-
-  # System prompt rewriting (based on Claude Code source analysis):
-  # prompt_rewrite: strips output-throttling directives ("Output efficiency", "short and concise")
-  #   and injects quality directives that Anthropic uses internally but withholds from external users
-  #   (verification before completion, false claims mitigation, collaborator mode, explanations).
   prompt_rewrite: false
-
-  # Prompt enhancements (YesMem-specific):
-  # prompt_enhance: reinforces CLAUDE.md/MEMORY.md authority, adds comment discipline guidance,
-  #   and injects persona-based tone preferences (verbose/concise) from the persona system.
   prompt_enhance: false
-
-  # Minimum effort level for model responses.
-  # Options: "" (off), "low", "medium", "high", "max"
-  # effort_floor: ""
-
-  # Skill evaluation injection mode.
-  # "true"   = forced visible evaluation every turn (verbose)
-  # "silent" = evaluate internally, output only on skill match (default)
-  # "false"  = disable skill-eval injection entirely
+  effort_floor: ""
   skill_eval_inject: "silent"
-
-  # Code navigation mode when Claude Code opens files in the IDE.
-  # "block" = block code-nav tool calls (default, prevents file-vs-shell mode switches)
-  # "nudge" = allow but inject file content into the prompt
-  # "off"   = no code-nav intervention
-  # code_nav_mode: "block"
-
-  # Permanently disable code-nav after N user dismissals per session.
-  # code_nav_dismiss_count: 5
+  code_nav_mode: "block"
+  code_nav_dismiss_count: 5
 
   # --- Prompt Profile Flags ---
   # Profile-aware prompt injection layers. shared_prompt is the base for ALL
-  # profiles (Claude, Codex, Opencode). Each profile only needs to set the flags
-  # it enables — a missing or false flag means "inherit from shared_prompt".
-  #
-  # Field guide:
-  #   prompt_beweislast        = "Burden of proof" — verify before claiming, cite evidence
-  #   prompt_output_discipline = No meta-commentary, no visible deliberation, no framing sentences
-  #   prompt_scope_discipline  = Execute what was asked, don't bundle unrelated changes
-  #   prompt_delegation_contract = Fire-and-forget execution when user says "do it"
-  #   prompt_clarify_first     = Ask before implementing ambiguous requests
-  #   prompt_coding_discipline = TDD, read-before-propose, no half-finished implementations
-  #   prompt_tool_prefs        = Inject tool-use preference directives (system-reminders)
-  #   prompt_tool_prefs        = Inject tool-use preference directives (system-reminders)
+  # profiles. claude_prompt/codex_prompt/opencode_prompt override per-profile.
+  # A missing or false flag in a profile means "inherit from shared_prompt".
+  prompt_beweislast: true
+  prompt_output_discipline: true
+  prompt_scope_discipline: true
+  prompt_delegation_contract: true
+  prompt_clarify_first: true
+  prompt_code_tools_first: true
+  prompt_coding_discipline: true
+  prompt_fable: true
+  prompt_pattern_suggest: true
+  prompt_tool_prefs: true
+  prompt_wiki_first: true
+
   shared_prompt:
     prompt_beweislast: true
     prompt_output_discipline: true
     prompt_scope_discipline: true
-    prompt_delegation_contract: true
+    prompt_delegation_contract: false
     prompt_clarify_first: true
     prompt_code_tools_first: true
+    prompt_coding_discipline: true
+    prompt_fable: true
+    prompt_enhance: false
+    prompt_pattern_suggest: false
+    prompt_rewrite: false
+    prompt_tool_prefs: false
+    prompt_ungate: false
+    prompt_wiki_first: false
 
-  # claude_prompt: {}    # empty = inherit from shared_prompt + legacy flat fields
-
-  # codex_prompt: {}
-
-  # opencode_prompt: {}
+  # Per-profile overrides (empty = inherit from shared_prompt + flat fields)
+  claude_prompt: null
+  codex_prompt: null
+  opencode_prompt: null
 
   # --- Per-Model Feature Gates ---
-  # Control which yesmem behavioral features are active per model/provider.
-  # Keys are model name prefixes matched case-insensitively (longest wins).
-  # Models not listed fall back to feature_defaults.
-  #
-  # Gate reference:
-  #   skill_eval      = Inject [skill-eval] block — checks which skills apply to the task
-  #   briefing        = Inject yesmem briefing at session start (learnings, recent sessions)
-  #   rules_reminder  = Periodic reminder of project rules/guidelines from CLAUDE.md/OPENCODE.md
-  #   plan_checkpoint = Inject plan checkpoint reminders during long implementation sessions
-    #   think_reminder       = Inject hybrid_search() hint (check memory before assuming)
-    #   think_reminder_min_chars = Min user text length to trigger reminder (0=always)
-    model_features:
-      claude:
-        skill_eval: true
-        briefing: true
-        rules_reminder: true
-        plan_checkpoint: true
-        think_reminder: true
-        deepseek:
-          skill_eval: true
-          briefing: true
-          think_reminder: true
-          think_reminder_min_chars: 10
-          rules_reminder: true
-          timestamps: true
-          plan_checkpoint: false
-    gpt:
-      skill_eval: true
-      briefing: true
-      think_reminder: false
-      rules_reminder: true
-    openai:
-      skill_eval: true
-      briefing: true
-      think_reminder: false
-      rules_reminder: true
+  feature_defaults:
+    assoc_context: false
+    briefing: true
+    plan_checkpoint: true
+    rules_reminder: true
+    skill_eval: true
+    think_reminder: true
+    think_reminder_min_chars: 0
+    timestamps: true
 
-    feature_defaults:
-      # Fallback for models not listed above.
-      # Defaults: all on — new models get full features until proven otherwise.
-      skill_eval: true
+  model_features:
+    claude:
+      assoc_context: true
       briefing: true
-      rules_reminder: true
       plan_checkpoint: true
+      rules_reminder: true
+      skill_eval: true
       think_reminder: true
+      think_reminder_min_chars: 0
+      timestamps: false
+    deepseek:
+      assoc_context: true
+      briefing: true
+      plan_checkpoint: false
+      rules_reminder: true
+      skill_eval: true
+      think_reminder: true
+      think_reminder_min_chars: 0
       timestamps: true
+    gpt:
+      assoc_context: true
+      briefing: true
+      plan_checkpoint: false
+      rules_reminder: true
+      skill_eval: true
+      think_reminder: false
+      think_reminder_min_chars: 0
+      timestamps: false
+    openai:
+      assoc_context: true
+      briefing: true
+      plan_checkpoint: false
+      rules_reminder: true
+      skill_eval: true
+      think_reminder: false
+      think_reminder_min_chars: 0
+      timestamps: false
 
-    # --- Custom System Prompt ---
-    # Replaces the default system prompt with SYSTEM.md for supported pipelines.
-    # OpenCode and Claude Code pipelines each independently toggleable.
-    # model_templates provides per-model overrides (substring matched, longest key first).
-    custom_system_prompt:
-      enabled_opencode: true
-      enabled_claude_code: true
-      enabled_codex: true
-      template_path: ~/.claude/yesmem/SYSTEM.md
-      model_templates:
-        codex: ~/.claude/yesmem/SYSTEM_CODEX.md
+  # --- Custom System Prompt ---
+  custom_system_prompt:
+    enabled_opencode: true
+    enabled_claude_code: false
+    enabled_codex: false
+    template_path: ~/.claude/yesmem/SYSTEM.md
+    model_templates: {}
 
 # --- Forked Agents (Background Learning Extraction) ---
 # Spawns async API calls after each assistant response to extract learnings,
 # evaluate injected memories, and detect contradictions — without blocking
 # the main conversation.
 forked_agents:
-  enabled: true
-
-  # Model for fork calls. Empty = same model as the main thread (recommended).
-  # Override with: haiku, sonnet, opus (resolved via LLM provider).
-  model: ""
+  enabled: false
+  model: sonnet
+  debug: false
 
   # Minimum tokens in conversation before first fork fires.
   # Lower = more frequent extraction, higher cost.
   token_growth_trigger: 20000
 
   # Maximum forks per session. 0 = unlimited.
-  max_forks_per_session: 0
+  max_forks_per_session: 50
 
   # Maximum USD cost per session for fork calls. 0 = unlimited.
-  max_cost_per_session: 0.0
+  max_cost_per_session: 5
 
   # Detailed fork logging in proxy.log (gate decisions, extracted learnings, evaluations).
   debug: false
 
 # --- Embedding (Semantic Search) ---
-# Vector embeddings enable semantic search over learnings.
-# "Find similar concepts" instead of just exact text search.
 embedding:
-  # "static" = built-in multilingual static embeddings (default, fast, no dependencies)
-  # "none"   = disable vector search
   provider: sse
   search:
-    # "" = auto (brute_force under threshold, IVF above)
-    # "brute_force" = always brute-force cosine scan
-    # "ivf" = always IVF index (even under threshold)
     method: ""
-    ivf_threshold: 5000
+    ivf_threshold: 50000
     ivf:
-      # k: 0 = auto (sqrt(n))
+      k: 0
       nprobe: 15
 
 # --- API ---
@@ -1231,29 +1399,45 @@ claudemd:
   output_file: "yesmem-ops.md"
 
   # Model for operative reference generation. Empty = use narrative_model.
-  # model: ""
+  model: ""
+
+# --- Caps Directory (optional) ---
+# Custom directory for capability files (CAP.md). Empty = use ~/.claude/caps/.
+caps_dir: ""
 
 # --- Sandbox (Agent Security) ---
 # Default sandbox profile for spawned agents.
 # Options: "none" (no sandbox), "standard" (network-restricted), "strict" (filesystem + network restricted)
-# default_sandbox_profile: ""
+default_sandbox_profile: ""
 
 # --- Secrets Sanitization ---
 # Redact secrets (API keys, tokens, passwords) from extraction content.
-# secrets_sanitization:
-#   enabled: false
-#   allowed_exceptions:
-#     - user@example.com
+secrets_sanitization:
+  enabled: false
+  allowed_exceptions: []
 
-# --- Paths (optional) ---
+# --- HTTP Server (optional) ---
+# HTTP API server for external tool integration. Default: disabled.
+# When enabled, exposes endpoints for query, remember, and search operations.
+# auth_token is required when enabled — protects against unauthorized access.
+http:
+  enabled: false
+  listen: "127.0.0.1:9377"
+  auth_token: ""
+
+# --- Paths ---
 # All paths have sensible defaults under ~/.claude/yesmem/.
 # Only set these if you need a custom location.
-# paths:
-#   db: ~/.claude/yesmem/yesmem.db
-#   bleve_index: ~/.claude/yesmem/bleve-index
-#   archive: ~/.claude/yesmem/archive
-#   claude_projects: ~/.claude/projects
-#   opencode_db: ~/.local/share/opencode/opencode.db
+paths:
+  db: ~/.claude/yesmem/yesmem.db
+  bleve_index: ~/.claude/yesmem/bleve-index
+  archive: ~/.claude/yesmem/archive
+  claude_projects: ~/.claude/projects
+  opencode_db: ~/.local/share/opencode/opencode.db
+
+# --- Indexer ---
+# Directories excluded from session indexing.
+exclude_projects: []
 
 # --- Agents ---
 # Controls how agent terminals are spawned.
@@ -1262,27 +1446,20 @@ agents:
   # Options: ghostty, kitty, gnome-terminal, alacritty, wezterm, xterm
   # Empty = auto-detect (uses x-terminal-emulator fallback)
   terminal: %s
+
   # Default backend for spawned agents: claude or opencode
-  default_backend: claude
+  default_backend: %s
 
   # Terminal for showing yesmem-agents session output (viewer).
   # Falls back to terminal if empty.
-  # viewer_terminal: ""
+  viewer_terminal: ""
 
-  # Safety limits for spawned agents.
-    # max_runtime: 30m       # Max wall-clock time per agent
-    # max_turns: 50          # Max conversation turns per agent
-    # max_depth: 3           # Max agent nesting depth (agents spawning agents)
-    # token_budget: 0        # Max tokens (input+output) per agent. 0 = no limit.
-
-  # --- Indexer ---
-  # Directories excluded from session indexing.
-  # Use to prevent home directory, temp directory, or other non-project
-  # directories from accumulating sessions in the knowledge base.
-  exclude_projects:
-    - /home/%s
-    - /tmp
-  `, model, autoExtract, provider, langs, apiBlock, terminal, os.Getenv("USER"))
+  # Safety limits for spawned agents. 0 = unlimited.
+  max_runtime: ""
+  max_turns: 0
+  max_depth: 0
+  token_budget: 0
+  `, summarizeModel, model, narrativeModel, qualityModel, autoExtract, llmBlock, langs, apiBlock, terminal, agentsBackend)
 }
 
 // detectSystemLanguage reads the system locale and returns ISO 639-1 code.
@@ -1379,7 +1556,7 @@ func setupSystemd(home, binaryPath string) error {
 
 	// Daemon unit
 	daemonUnit := fmt.Sprintf(`[Unit]
-Description=YesMem — Long-term memory for Claude Code
+Description=YesMem — Long-term memory for coding agents
 After=network-online.target
 Wants=network-online.target
 
@@ -1398,7 +1575,7 @@ WantedBy=default.target
 
 	// Proxy unit — separate process, survives terminal closes
 	proxyUnit := fmt.Sprintf(`[Unit]
-Description=YesMem Proxy — Infinite-thread context for Claude Code
+Description=YesMem Proxy — Infinite-thread context for coding agents
 After=network-online.target
 Wants=network-online.target
 

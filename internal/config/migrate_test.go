@@ -42,7 +42,48 @@ func TestMigrateConfig_AddsEffortFloor(t *testing.T) {
 func TestMigrateConfig_SkipsExistingFields(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	os.WriteFile(path, []byte("proxy:\n  enabled: true\n  skill_eval_inject: \"true\"\n  effort_floor: \"high\"\n  auto_configure_providers: true\n  model_features:\n    claude:\n      skill_eval: true\n\npaths:\n  opencode_db: /custom/opencode.db\n\nexclude_projects:\n  - /home/testuser\n  - /tmp\n"), 0644)
+	// Config with all fields already present — MigrateConfig should add nothing
+	os.WriteFile(path, []byte(`proxy:
+  enabled: true
+  skill_eval_inject: "true"
+  effort_floor: "high"
+  auto_configure_providers: true
+  openai_target: "https://api.openai.com"
+  reset_cache: false
+  cache_keepalive_min_messages: 10
+  model_features:
+    claude:
+      skill_eval: true
+      think_reminder_min_chars: 0
+
+paths:
+  opencode_db: /custom/opencode.db
+
+agents:
+  default_backend: claude
+
+exclude_projects:
+  - /home/testuser
+  - /tmp
+
+caps_dir: ""
+default_sandbox_profile: ""
+secrets_sanitization:
+  enabled: false
+http:
+  enabled: false
+
+forked_agents:
+  max_forks_per_session: 50
+  max_cost_per_session: 5
+
+token_thresholds:
+  deepseek: 600000
+  glm-5.2: 500000
+
+pricing:
+  deepseek-v4-flash: {input: 0.14, output: 0.56}
+`), 0644)
 
 	n, err := MigrateConfig(path)
 	if err != nil {
@@ -177,7 +218,48 @@ func TestMigrateConfig_AddsModelFeatures(t *testing.T) {
 func TestMigrateConfig_IdempotentModelFeatures(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	os.WriteFile(path, []byte("proxy:\n  enabled: true\n  skill_eval_inject: \"silent\"\n  effort_floor: \"\"\n  auto_configure_providers: true\n  model_features:\n    claude:\n      skill_eval: true\n\npaths:\n  opencode_db: /custom/opencode.db\n\nexclude_projects:\n  - /home/testuser\n  - /tmp\n"), 0644)
+	// Config that already has all fields MigrateConfig checks for
+	os.WriteFile(path, []byte(`proxy:
+  enabled: true
+  skill_eval_inject: "silent"
+  effort_floor: ""
+  auto_configure_providers: true
+  openai_target: "https://api.openai.com"
+  reset_cache: false
+  cache_keepalive_min_messages: 10
+  model_features:
+    claude:
+      skill_eval: true
+      think_reminder_min_chars: 0
+
+paths:
+  opencode_db: /custom/opencode.db
+
+agents:
+  default_backend: claude
+
+exclude_projects:
+  - /home/testuser
+  - /tmp
+
+caps_dir: ""
+default_sandbox_profile: ""
+secrets_sanitization:
+  enabled: false
+http:
+  enabled: false
+
+forked_agents:
+  max_forks_per_session: 50
+  max_cost_per_session: 5
+
+token_thresholds:
+  deepseek: 600000
+  glm-5.2: 500000
+
+pricing:
+  deepseek-v4-flash: {input: 0.14, output: 0.56}
+`), 0644)
 
 	n, err := MigrateConfig(path)
 	if err != nil {
@@ -214,5 +296,39 @@ func TestMigrateConfig_AddsAgentsDefaultBackend(t *testing.T) {
 	data, _ = os.ReadFile(path)
 	if c := strings.Count(string(data), "default_backend:"); c != 1 {
 		t.Errorf("default_backend should appear exactly once after second run, got %d", c)
+	}
+}
+
+func TestMigrateConfig_CreatesBackup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	original := "proxy:\n  enabled: true\nextraction:\n  model: sonnet\n"
+	os.WriteFile(path, []byte(original), 0644)
+
+	if _, err := MigrateConfig(path); err != nil {
+		t.Fatal(err)
+	}
+
+	// Check that a timestamped backup was created in the same directory
+	entries, _ := os.ReadDir(dir)
+	var backups []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "config.yaml.bak.") {
+			backups = append(backups, e.Name())
+		}
+	}
+	if len(backups) == 0 {
+		t.Error("expected backup file config.yaml.bak.<timestamp> after migration")
+	} else if len(backups) > 1 {
+		t.Errorf("expected 1 backup, got %d: %v", len(backups), backups)
+	}
+
+	// Verify backup content matches original
+	if len(backups) > 0 {
+		backupData, _ := os.ReadFile(filepath.Join(dir, backups[0]))
+		content := strings.TrimSpace(string(backupData))
+		if content != strings.TrimSpace(original) {
+			t.Errorf("backup content mismatch:\n got:  %s\nwant: %s", content, original)
+		}
 	}
 }

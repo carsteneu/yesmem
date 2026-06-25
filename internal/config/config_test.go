@@ -715,3 +715,281 @@ paths:
 		t.Errorf("Paths.OpencodeDB = %q, want /custom/path/opencode.db", cfg.Paths.OpencodeDB)
 	}
 }
+
+func TestSaveCreatesBackupAndWrites(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	// Write initial YAML
+	initial := []byte("extraction:\n  model: haiku\n")
+	if err := os.WriteFile(cfgPath, initial, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := Default()
+	cfg.Extraction.Model = "opus"
+
+	if err := Save(cfgPath, cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Verify config was written
+	loaded, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("load saved: %v", err)
+	}
+	if loaded.Extraction.Model != "opus" {
+		t.Errorf("saved model = %q, want opus", loaded.Extraction.Model)
+	}
+
+	// Verify backup was created
+	matches, _ := filepath.Glob(dir + "/config.yaml.bak.*")
+	if len(matches) == 0 {
+		t.Fatal("expected backup file, got none")
+	}
+	data, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != string(initial) {
+		t.Errorf("backup content mismatch:\ngot:  %q\nwant: %q", string(data), string(initial))
+	}
+}
+
+func TestSaveNoExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	cfg := Default()
+	cfg.Extraction.Model = "sonnet"
+
+	if err := Save(cfgPath, cfg); err != nil {
+		t.Fatalf("Save to new path: %v", err)
+	}
+	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
+		t.Fatal("Save did not create config file")
+	}
+}
+
+func TestGetValue(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	os.WriteFile(cfgPath, []byte(`
+extraction:
+  model: opus
+  chunk_size: 30000
+proxy:
+  token_threshold: 250000
+`), 0644)
+
+	tests := []struct {
+		path string
+		want any
+	}{
+		{"extraction.model", "opus"},
+		{"extraction.chunk_size", 30000},
+		{"proxy.token_threshold", 250000},
+	}
+
+	for _, tt := range tests {
+		got, err := GetValue(cfgPath, tt.path)
+		if err != nil {
+			t.Errorf("GetValue(%q): %v", tt.path, err)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("GetValue(%q) = %v (type %T), want %v (type %T)", tt.path, got, got, tt.want, tt.want)
+		}
+	}
+}
+
+func TestGetValueMissingKey(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	os.WriteFile(cfgPath, []byte("extraction:\n  model: opus\n"), 0644)
+
+	got, err := GetValue(cfgPath, "extraction.nonexistent")
+	if err != nil {
+		t.Fatalf("GetValue missing key: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("GetValue missing key = %v, want nil", got)
+	}
+}
+
+func TestGetValueMissingFile(t *testing.T) {
+	got, err := GetValue("/nonexistent/config.yaml", "extraction.model")
+	if err != nil {
+		t.Fatalf("GetValue missing file: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("GetValue missing file = %v, want nil", got)
+	}
+}
+
+func TestGetValueDeepNested(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	os.WriteFile(cfgPath, []byte(`
+llm:
+  provider: openai_compatible
+proxy:
+  model_features:
+    deepseek:
+      skill_eval: true
+`), 0644)
+
+	got, err := GetValue(cfgPath, "proxy.model_features.deepseek.skill_eval")
+	if err != nil {
+		t.Fatalf("GetValue deep: %v", err)
+	}
+	if got != true {
+		t.Fatalf("GetValue deep = %v, want true", got)
+	}
+}
+
+func TestSetValue(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	os.WriteFile(cfgPath, []byte("extraction:\n  model: haiku\n  chunk_size: 25000\n"), 0644)
+
+	if err := SetValue(cfgPath, "extraction.model", "opus"); err != nil {
+		t.Fatalf("SetValue: %v", err)
+	}
+
+	got, err := GetValue(cfgPath, "extraction.model")
+	if err != nil {
+		t.Fatalf("GetValue after set: %v", err)
+	}
+	if got != "opus" {
+		t.Fatalf("after SetValue, model = %v, want opus", got)
+	}
+
+	// Verify backup exists
+	matches, _ := filepath.Glob(dir + "/config.yaml.bak.*")
+	if len(matches) == 0 {
+		t.Fatal("expected backup after SetValue")
+	}
+
+	// Verify other keys preserved
+	chunk, err := GetValue(cfgPath, "extraction.chunk_size")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chunk != 25000 {
+		t.Fatalf("chunk_size changed from 25000 to %v", chunk)
+	}
+}
+
+func TestSetValueCreatesNewKey(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	os.WriteFile(cfgPath, []byte("extraction:\n  model: haiku\n"), 0644)
+
+	if err := SetValue(cfgPath, "extraction.chunk_size", 50000); err != nil {
+		t.Fatalf("SetValue new key: %v", err)
+	}
+
+	got, err := GetValue(cfgPath, "extraction.chunk_size")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 50000 {
+		t.Fatalf("new key value = %v, want 50000", got)
+	}
+}
+
+func TestSetValueDeepPath(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	os.WriteFile(cfgPath, []byte("proxy:\n  token_threshold: 200000\n"), 0644)
+
+	if err := SetValue(cfgPath, "proxy.model_features.deepseek.skill_eval", true); err != nil {
+		t.Fatalf("SetValue deep: %v", err)
+	}
+
+	got, err := GetValue(cfgPath, "proxy.model_features.deepseek.skill_eval")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != true {
+		t.Fatalf("deep set value = %v, want true", got)
+	}
+
+	// Original key preserved
+	orig, err := GetValue(cfgPath, "proxy.token_threshold")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if orig != 200000 {
+		t.Fatalf("original key changed to %v", orig)
+	}
+}
+
+func TestSetValueCreatesFileIfMissing(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	// No initial file
+
+	if err := SetValue(cfgPath, "extraction.model", "haiku"); err != nil {
+		t.Fatalf("SetValue no file: %v", err)
+	}
+
+	got, err := GetValue(cfgPath, "extraction.model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "haiku" {
+		t.Fatalf("SetValue created file value = %v, want haiku", got)
+	}
+}
+
+func TestSetValueInt(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	os.WriteFile(cfgPath, []byte("proxy:\n  token_threshold: 200000\n"), 0644)
+
+	// Set int value
+	if err := SetValue(cfgPath, "proxy.token_threshold", 300000); err != nil {
+		t.Fatalf("SetValue int: %v", err)
+	}
+
+	got, err := GetValue(cfgPath, "proxy.token_threshold")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 300000 {
+		t.Fatalf("SetValue int = %v (type %T), want 300000", got, got)
+	}
+}
+
+func TestCoerceValue(t *testing.T) {
+	tests := []struct {
+		input string
+		want  any
+	}{
+		{"", ""},
+		{"300000", int64(300000)},
+		{"0", int64(0)},
+		{"-5", int64(-5)},
+		{"3.14", float64(3.14)},
+		{"0.5", float64(0.5)},
+		{"true", true},
+		{"false", false},
+		{"TRUE", true},
+		{"FALSE", false},
+		{"hello", "hello"},
+		{"opus", "opus"},
+		{"300000", int64(300000)},        // int beats float
+		{"42.0", float64(42.0)},          // has decimal, stays float
+		{"true_value", "true_value"},      // not a bool
+	}
+
+	for _, tt := range tests {
+		got := CoerceValue(tt.input)
+		if got != tt.want {
+			t.Errorf("CoerceValue(%q) = %v (type %T), want %v (type %T)", tt.input, got, got, tt.want, tt.want)
+		}
+	}
+}
+

@@ -306,12 +306,8 @@ func (h *Handler) spawnAgentProcess(id, sessionID, project, section, prompt, soc
 		} else {
 			agentArgs = []string{}
 		}
-		if model != "" {
-			if strings.Contains(model, "/") {
-				agentArgs = append(agentArgs, "--model", model)
-			} else {
-				agentArgs = append(agentArgs, "--model", fmt.Sprintf("deepseek/%s", model))
-			}
+		if resolved := h.resolvedAgentModel(model, "opencode"); resolved != "" {
+			agentArgs = append(agentArgs, "--model", resolved)
 		}
 	case "codex":
 		agentBin = resolveAgentBinary(backend)

@@ -133,6 +133,71 @@ func TestBuildAutoProviderTargets(t *testing.T) {
 	}
 }
 
+func TestBuildModelProviderMap(t *testing.T) {
+	providers := []autoDiscoveredProvider{
+		{ModelID: "glm-5.2", ProviderID: "zai", UpstreamURL: "https://api.z.ai"},
+		{ModelID: "glm-5.2", ProviderID: "zai-coding-plan", UpstreamURL: "https://api.z.ai"},
+		{ModelID: "deepseek-v4-pro", ProviderID: "zai", UpstreamURL: "https://api.z.ai"},
+	}
+	m := buildModelProviderMap(providers)
+	// Both zai and zai-coding-plan carry glm-5.2; alphabetically first wins → zai.
+	if m["glm-5.2"] != "zai" {
+		t.Fatalf("glm-5.2 should map to zai (alphabetically first), got %q", m["glm-5.2"])
+	}
+	if m["deepseek-v4-pro"] != "zai" {
+		t.Fatalf("deepseek-v4-pro should map to zai, got %q", m["deepseek-v4-pro"])
+	}
+	if _, present := m["zai-coding-plan"]; present {
+		t.Fatal("providerID should not appear as a key (only bare modelIDs are keys)")
+	}
+}
+
+func TestBuildModelProviderMapCodingVariantIncludedWhenOnlyProvider(t *testing.T) {
+	// Only a coding-variant provider carries this modelID — it must be included.
+	// This is the real-world glm-5.2 case: zai-coding-plan is the only provider.
+	providers := []autoDiscoveredProvider{
+		{ModelID: "glm-5.2", ProviderID: "zai-coding-plan", UpstreamURL: "https://api.z.ai"},
+	}
+	m := buildModelProviderMap(providers)
+	if m["glm-5.2"] != "zai-coding-plan" {
+		t.Fatalf("glm-5.2 should map to zai-coding-plan when it's the only provider, got %q", m["glm-5.2"])
+	}
+}
+
+func TestBuildModelProviderMapEmpty(t *testing.T) {
+	m := buildModelProviderMap(nil)
+	if m == nil {
+		t.Fatal("expected non-nil empty map")
+	}
+	if len(m) != 0 {
+		t.Fatalf("expected empty map, got %v", m)
+	}
+}
+
+func TestBuildModelProviderMapDuplicateDeterministic(t *testing.T) {
+	// Two providers serve the same bare modelID. The alphabetically
+	// first ProviderID must win deterministically regardless of input order,
+	// because buildModelProviderMap sorts before dedup.
+	providers := []autoDiscoveredProvider{
+		{ModelID: "glm-5.2", ProviderID: "zai", UpstreamURL: "https://api.z.ai"},
+		{ModelID: "glm-5.2", ProviderID: "openrouter", UpstreamURL: "https://openrouter.ai"},
+	}
+	m := buildModelProviderMap(providers)
+	if m["glm-5.2"] != "openrouter" {
+		t.Fatalf("alphabetically first ProviderID should win; got %q, want openrouter", m["glm-5.2"])
+	}
+
+	// Reverse input order — same result (sort makes it order-independent).
+	providers = []autoDiscoveredProvider{
+		{ModelID: "glm-5.2", ProviderID: "openrouter", UpstreamURL: "https://openrouter.ai"},
+		{ModelID: "glm-5.2", ProviderID: "zai", UpstreamURL: "https://api.z.ai"},
+	}
+	m = buildModelProviderMap(providers)
+	if m["glm-5.2"] != "openrouter" {
+		t.Fatalf("alphabetically first ProviderID should win regardless of input order; got %q, want openrouter", m["glm-5.2"])
+	}
+}
+
 func TestResolveOpenAITargetWithAutoDiscovery(t *testing.T) {
 	s := &Server{
 		autoProviderTargets: map[string]string{

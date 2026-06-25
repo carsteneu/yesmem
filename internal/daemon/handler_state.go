@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/carsteneu/yesmem/internal/briefing"
+	"github.com/carsteneu/yesmem/internal/config"
 	"github.com/carsteneu/yesmem/internal/models"
 	"github.com/carsteneu/yesmem/internal/storage"
 )
@@ -211,78 +214,105 @@ func (h *Handler) handleDeleteProxyStatePrefix(params map[string]any) Response {
 	return jsonResponse(map[string]any{"deleted": n})
 }
 
-// handleSetConfig allows runtime config overrides via MCP.
-// Supported keys:
-//   token_threshold        — global override (int, e.g. 300000)
-//   token_threshold:<model> — per-model override (e.g. token_threshold:deepseek=500000)
-// Optional session_id: if set, override applies only to that session.
+// handleSetConfig sets a config value.
+// Without session_id: writes to config.yaml (persistent, by dot-path).
+// With session_id: writes to proxy_state only (runtime override for that session).
+// e.g. set_config("extraction.model", "opus")
+//      set_config("token_threshold", "300000", "session_id": "sess-1")
 func (h *Handler) handleSetConfig(params map[string]any) Response {
 	key, _ := params["key"].(string)
 	value, _ := params["value"].(string)
 	if key == "" || value == "" {
 		return errorResponse("key and value required")
 	}
-	// Split model suffix: "token_threshold:deepseek" → base="token_threshold", model="deepseek"
-	base := key
-	modelSuffix := ""
-	if idx := strings.Index(key, ":"); idx >= 0 {
-		base = key[:idx]
-		modelSuffix = key[idx+1:]
+
+	// Session-specific: proxy_state runtime override (not persistent)
+	if sessionID, ok := params["session_id"].(string); ok && sessionID != "" {
+		stateKey := "config_override:" + key + ":" + sessionID
+		if err := h.store.SetProxyState(stateKey, value); err != nil {
+			return errorResponse(fmt.Sprintf("set session config: %v", err))
+		}
+		return jsonResponse(map[string]string{
+			"status": "ok", "key": key, "value": value,
+			"scope": "session:" + sessionID, "source": "proxy_state",
+		})
 	}
-	allowed := map[string]bool{"token_threshold": true}
-	if !allowed[base] {
-		return errorResponse(fmt.Sprintf("unknown config key %q (allowed: token_threshold, token_threshold:<model>)", key))
-	}
-	sessionID, _ := params["session_id"].(string)
-	stateKey := "config_override:" + base
-	if modelSuffix != "" {
-		stateKey += ":" + modelSuffix
-	}
-	if sessionID != "" {
-		stateKey += ":" + sessionID
-	}
-	if err := h.store.SetProxyState(stateKey, value); err != nil {
+
+	// Global: write to config.yaml (persistent)
+	cfgPath := filepath.Join(h.dataDir, "config.yaml")
+	if err := config.SetValue(cfgPath, key, config.CoerceValue(value)); err != nil {
 		return errorResponse(fmt.Sprintf("set config: %v", err))
 	}
-	scope := "global"
-	if modelSuffix != "" {
-		scope = "model:" + modelSuffix
-	}
-	if sessionID != "" {
-		if scope != "global" {
-			scope += "+"
+
+	// Dual-write to proxy_state for keys the proxy reads at runtime.
+	// refreshConfigOverrides (internal/proxy/proxy.go) reads config_override:<key>
+	// directly from proxy_state — it does NOT go through handleGetConfig.
+	proxyKey := strings.TrimPrefix(key, "proxy.")
+	if proxyKey != key || key == "token_threshold" {
+		if err := h.store.SetProxyState("config_override:"+proxyKey, value); err != nil {
+			// Non-fatal: config.yaml is the primary store
+			log.Printf("set config proxy_state dual-write: %v", err)
 		}
-		scope += "session:" + sessionID
 	}
-	return jsonResponse(map[string]string{"status": "ok", "key": key, "value": value, "scope": scope})
+
+	return jsonResponse(map[string]string{
+		"status": "ok", "key": key, "value": value,
+		"scope": "config.yaml", "source": "config.yaml",
+	})
 }
 
-// handleGetConfig reads runtime config overrides.
-// Checks session-specific override first, then falls back to global.
+// handleGetConfig reads a config value.
+// Priority: 1) session-specific proxy_state 2) global proxy_state 3) config.yaml
+// e.g. get_config("extraction.model")
+// Optional session_id: checks session-specific override first.
 func (h *Handler) handleGetConfig(params map[string]any) Response {
 	key, _ := params["key"].(string)
 	if key == "" {
 		return errorResponse("key required")
 	}
-	sessionID, _ := params["session_id"].(string)
-	// Try session-specific first
-	if sessionID != "" {
+
+	// 1. Check session-specific proxy_state override
+	if sessionID, ok := params["session_id"].(string); ok && sessionID != "" {
 		stateKey := "config_override:" + key + ":" + sessionID
 		value, err := h.store.GetProxyState(stateKey)
 		if err != nil {
 			return errorResponse(fmt.Sprintf("get config: %v", err))
 		}
 		if value != "" {
-			return jsonResponse(map[string]string{"key": key, "value": value, "scope": "session:" + sessionID})
+			return jsonResponse(map[string]string{
+				"key": key, "value": value, "scope": "session:" + sessionID, "source": "proxy_state",
+			})
 		}
 	}
-	// Fall back to global
+
+	// 2. Check global proxy_state override
 	stateKey := "config_override:" + key
 	value, err := h.store.GetProxyState(stateKey)
 	if err != nil {
 		return errorResponse(fmt.Sprintf("get config: %v", err))
 	}
-	return jsonResponse(map[string]string{"key": key, "value": value, "scope": "global"})
+	if value != "" {
+		return jsonResponse(map[string]string{
+			"key": key, "value": value, "scope": "global", "source": "proxy_state",
+		})
+	}
+
+	// 3. Read from config.yaml
+	cfgPath := filepath.Join(h.dataDir, "config.yaml")
+	raw, err := config.GetValue(cfgPath, key)
+	if err != nil {
+		return errorResponse(fmt.Sprintf("read config: %v", err))
+	}
+	if raw != nil {
+		str := fmt.Sprintf("%v", raw)
+		return jsonResponse(map[string]string{
+			"key": key, "value": str, "scope": "config.yaml", "source": "config.yaml",
+		})
+	}
+
+	return jsonResponse(map[string]string{
+		"key": key, "value": "", "scope": "", "source": "",
+	})
 }
 
 // handleTrackGap records a knowledge gap via daemon.

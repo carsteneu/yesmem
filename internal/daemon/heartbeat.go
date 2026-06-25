@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 
@@ -23,17 +24,27 @@ func (h *Handler) startAgentHeartbeat(ctx context.Context) {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 	var tick int
+	var doneVerifyTick int
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			tick++
+			doneVerifyTick++
 			h.relayAgentMessages()
 			if tick%5 == 0 {
 				h.crashRecovery()
 				h.detectHungAgents()
 				h.processBashJobErrors()
+			}
+			if tick%30 == 0 {
+				h.checkYesloopDoneGuard()
+				h.checkYesloopIdle()
+			}
+			if doneVerifyTick >= 300 {
+				h.checkYesloopDoneVerify()
+				doneVerifyTick = 0
 			}
 			h.enforceAgentLimits()
 			h.detectOrphanedAgents()
@@ -181,11 +192,37 @@ func (h *Handler) crashRecovery() {
 		runtime := crashRuntime(a.CreatedAt)
 		context := fmt.Sprintf("FAILED: Agent '%s' (section '%s') crashed after %d attempts. Runtime: %s.", a.ID, a.Section, a.RetryCount+1, runtime)
 		if sections, err := h.store.ScratchpadRead(a.Project, a.Section); err == nil && len(sections) > 0 {
-			sp := sections[0].Content
+			fullContent := sections[0].Content
+			sp := fullContent
 			if len(sp) > 200 {
 				sp = sp[:200] + "..."
 			}
 			context += fmt.Sprintf(" Letzter Status: %s", sp)
+
+			// Dead-agent-detection for yesloop agents: check if agent had partial
+			// phase work but never completed Phase 6 → structured GATE-ESCALATION.
+			if strings.HasPrefix(a.Section, "yesloop-") {
+				result := ValidatePhaseBlocks(fullContent)
+				completed := CountCompletedPhases(fullContent)
+				if completed > 0 && !result.Compliant {
+					escalation := fmt.Sprintf(
+						"DEAD_AGENT: Agent %s (%s) terminated without completing Phase 6.\n  Runtime: %s\n  Completed: %d/6 phases\n  Missing phases: %v\n  Field errors: %s",
+						a.ID, a.Section, runtime, completed,
+						result.MissingPhases, summarizeErrors(result),
+					)
+					log.Printf("[heartbeat] %s", escalation)
+					if a.CallerSession != "" {
+						h.Handle(Request{
+							Method: "send_to",
+							Params: map[string]any{
+								"target":   a.CallerSession,
+								"content":  escalation,
+								"msg_type": "status",
+							},
+						})
+					}
+				}
+			}
 		}
 		h.store.AgentUpdate(a.ID, map[string]any{"status": "failed", "stopped_at": now, "error": "3 retries exhausted, final crash"})
 		if a.CallerSession != "" {
@@ -527,4 +564,78 @@ func (h *Handler) sendOrchestratorStatusPing() {
 		})
 		log.Printf("[heartbeat] status ping → %s: %s", info.orchestrator.ID, msg)
 	}
+}
+
+// checkYesloopDoneGuard validates yesloop agent scratchpad sections for
+// DONE compliance. If an agent claims all 6 phases COMPLETE but the
+// phase blocks fail validation, the agent is frozen and the orchestrator
+// notified. Runs every ~30s from startAgentHeartbeat.
+func (h *Handler) checkYesloopDoneGuard() {
+	agents, err := h.store.AgentList("")
+	if err != nil {
+		return
+	}
+	for _, agent := range agents {
+		if agent.Status != "running" {
+			continue
+		}
+		// Only check yesloop agents (section starts with "yesloop-")
+		if !strings.HasPrefix(agent.Section, "yesloop-") {
+			continue
+		}
+		if agent.Project == "" || agent.Section == "" {
+			continue
+		}
+		sections, err := h.store.ScratchpadRead(agent.Project, agent.Section)
+		if err != nil || len(sections) == 0 {
+			continue
+		}
+		content := sections[0].Content
+		if content == "" {
+			continue
+		}
+
+		result := ValidatePhaseBlocks(content)
+
+		// Only escalate if all 6 phases are present (agent claims DONE)
+		// but validation fails. Missing phases = still in progress.
+		if len(result.MissingPhases) > 0 {
+			continue
+		}
+		if result.Compliant {
+			continue // all phases valid, nothing to do
+		}
+
+		// DONE claimed but validation failed → freeze agent + notify orchestrator
+		log.Printf("[heartbeat] DONE-GUARD: agent %s (%s) claims DONE but phase validation FAILED:\n%s",
+			agent.ID, agent.Section, result.String())
+
+		h.freezeAgent(agent.ID, fmt.Sprintf("DONE-GUARD: phase validation failed — %s", summarizeErrors(result)))
+
+		if agent.CallerSession != "" {
+			h.Handle(Request{
+				Method: "send_to",
+				Params: map[string]any{
+					"target":   agent.CallerSession,
+					"content":  fmt.Sprintf("⛔ DONE-GUARD: Agent %s (%s) claims DONE but phase validation FAILED. Frozen.\n%s", agent.ID, agent.Section, result.String()),
+					"msg_type": "status",
+				},
+			})
+		}
+	}
+}
+
+// summarizeErrors produces a compact one-line summary of validation errors.
+func summarizeErrors(r ValidationResult) string {
+	if r.Compliant {
+		return "compliant"
+	}
+	var parts []string
+	for _, fe := range r.FieldErrors {
+		parts = append(parts, fmt.Sprintf("Phase%d:%s", fe.Phase, fe.Field))
+	}
+	if len(parts) == 0 {
+		return fmt.Sprintf("missing phase blocks: %v", r.MissingPhases)
+	}
+	return strings.Join(parts, ", ")
 }

@@ -344,18 +344,25 @@ func (s *Store) MigrateAgentsSchema() error {
 	return nil
 }
 
-// AgentNextID returns the next available agent ID (globally unique, e.g. "agent-3").
+// AgentNextID returns a globally-unique agent ID of form "agent-<YYYYMMDD>-NN"
+// where NN is a per-day counter (zero-padded to 2 digits). IDs are never
+// recycled — removing an agent does not free its slot. The daily counter
+// resets at UTC midnight.
 func (s *Store) AgentNextID(project string) (string, error) {
+	today := time.Now().UTC().Format("20060102")
+	prefix := "agent-" + today + "-"
 	var maxNum sql.NullInt64
 	err := s.readerDB().QueryRow(
-		`SELECT MAX(CAST(REPLACE(id, 'agent-', '') AS INTEGER)) FROM agents WHERE id LIKE 'agent-%'`).Scan(&maxNum)
+		`SELECT MAX(CAST(REPLACE(id, ?, '') AS INTEGER)) FROM agents WHERE id LIKE ? || '%'`,
+		prefix, prefix,
+	).Scan(&maxNum)
 	if err != nil {
-		return "agent-0", nil
+		return prefix + "01", nil
 	}
 	if !maxNum.Valid {
-		return "agent-0", nil
+		return prefix + "01", nil
 	}
-	return fmt.Sprintf("agent-%d", maxNum.Int64+1), nil
+	return fmt.Sprintf("%s%02d", prefix, maxNum.Int64+1), nil
 }
 
 // AgentCascadeStop stops all agents in the supervision tree rooted at parentSessionID.

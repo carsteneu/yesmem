@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -373,4 +374,52 @@ func runAutoDiscovery(logger *log.Logger) map[string]string {
 	}
 
 	return buildAutoProviderTargets(active)
+}
+
+// BuildModelProviderMap returns a map of lowercase bare modelID → providerID,
+// for resolving bare model names (e.g. "glm-5.2") to "providerID/modelID" strings
+// (e.g. "zai-coding-plan/glm-5.2"). Used by the daemon when spawning agents to avoid
+// hardcoding provider prefixes.
+//
+// All discovered providers are included. If multiple providers carry the same
+// modelID, the alphabetically-first ProviderID wins (deterministic across
+// restarts). User must resolve ambiguities explicitly via "provider/model".
+//
+// Returns nil on any non-fatal error (no models.json, no opencode.json, etc.).
+// The map is built fresh on each call; callers should cache the result.
+func BuildModelProviderMap() map[string]string {
+	models, err := loadModelsJSON("")
+	if err != nil || models == nil {
+		return nil
+	}
+	oc, err := loadOpenCodeConfig("")
+	if err != nil || oc == nil {
+		return nil
+	}
+	auth, _ := loadOpenCodeAuth("")
+	active, _ := discoverOpenAICompatibleProviders(models, oc, auth)
+	if len(active) == 0 {
+		return nil
+	}
+	return buildModelProviderMap(active)
+}
+
+// buildModelProviderMap converts discovered providers to a lowercase
+// modelID → providerID map. All providers are included; when multiple
+// providers carry the same modelID, the alphabetically-first ProviderID wins
+// (deterministic across daemon restarts; discovery order itself is
+// non-deterministic because it iterates maps). Users must resolve ambiguous
+// models explicitly via "provider/model".
+func buildModelProviderMap(providers []autoDiscoveredProvider) map[string]string {
+	sort.Slice(providers, func(i, j int) bool {
+		return providers[i].ProviderID < providers[j].ProviderID
+	})
+	m := make(map[string]string, len(providers))
+	for _, p := range providers {
+		key := strings.ToLower(p.ModelID)
+		if _, exists := m[key]; !exists {
+			m[key] = p.ProviderID
+		}
+	}
+	return m
 }

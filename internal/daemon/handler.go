@@ -126,6 +126,12 @@ type Handler struct {
 	// Code graph per project — lazy initialized on first MCP tool access
 	codeGraphMu sync.RWMutex
 	codeGraphs  map[string]*codeGraphEntry
+
+	// Auto-discovered modelID → providerID map, lazy initialized on first agent spawn.
+	// Used by resolveSpawnModel to resolve bare model names ("glm-5.2") to
+	// "providerID/modelID" ("zai/glm-5.2"). Coding variants excluded upstream.
+	modelProviderMapOnce sync.Once
+	modelProviderMap     map[string]string
 }
 
 // recentLearning holds a recently remembered learning with its ID for injection.

@@ -48,16 +48,16 @@ func TestHandleSetProxyState_RequiresKey(t *testing.T) {
 func TestHandleSetConfig_GlobalOverride(t *testing.T) {
 	h, _ := mustHandler(t)
 
-	resp := h.handleSetConfig(map[string]any{"key": "token_threshold", "value": "300000"})
+	resp := h.handleSetConfig(map[string]any{"key": "proxy.token_threshold", "value": "300000"})
 	if resp.Error != "" {
 		t.Fatalf("set config error: %s", resp.Error)
 	}
 	m := resultMap(t, resp)
-	if m["scope"] != "global" {
-		t.Errorf("expected global scope, got %q", m["scope"])
+	if m["scope"] != "config.yaml" {
+		t.Errorf("expected scope 'config.yaml', got %q", m["scope"])
 	}
 
-	resp = h.handleGetConfig(map[string]any{"key": "token_threshold"})
+	resp = h.handleGetConfig(map[string]any{"key": "proxy.token_threshold"})
 	if resp.Error != "" {
 		t.Fatalf("get config error: %s", resp.Error)
 	}
@@ -65,21 +65,21 @@ func TestHandleSetConfig_GlobalOverride(t *testing.T) {
 	if m["value"] != "300000" {
 		t.Errorf("expected '300000', got %q", m["value"])
 	}
-	if m["scope"] != "global" {
-		t.Errorf("expected global scope, got %q", m["scope"])
+	if m["source"] != "config.yaml" {
+		t.Errorf("expected source 'config.yaml', got %q", m["source"])
 	}
 }
 
 func TestHandleSetConfig_SessionOverride(t *testing.T) {
 	h, _ := mustHandler(t)
 
-	// Set global first
-	h.handleSetConfig(map[string]any{"key": "token_threshold", "value": "200000"})
-	// Set session-specific
-	h.handleSetConfig(map[string]any{"key": "token_threshold", "value": "400000", "session_id": "sess-1"})
+	// Set global first (writes to config.yaml)
+	h.handleSetConfig(map[string]any{"key": "proxy.token_threshold", "value": "200000"})
+	// Set session-specific (writes to proxy_state only)
+	h.handleSetConfig(map[string]any{"key": "proxy.token_threshold", "value": "400000", "session_id": "sess-1"})
 
 	// Session-specific should win
-	resp := h.handleGetConfig(map[string]any{"key": "token_threshold", "session_id": "sess-1"})
+	resp := h.handleGetConfig(map[string]any{"key": "proxy.token_threshold", "session_id": "sess-1"})
 	m := resultMap(t, resp)
 	if m["value"] != "400000" {
 		t.Errorf("session override should win, got %q", m["value"])
@@ -87,20 +87,27 @@ func TestHandleSetConfig_SessionOverride(t *testing.T) {
 	if m["scope"] != "session:sess-1" {
 		t.Errorf("expected session scope, got %q", m["scope"])
 	}
+	if m["source"] != "proxy_state" {
+		t.Errorf("expected source 'proxy_state', got %q", m["source"])
+	}
 
-	// Without session_id, get global
-	resp = h.handleGetConfig(map[string]any{"key": "token_threshold"})
+	// Without session_id, read from config.yaml
+	resp = h.handleGetConfig(map[string]any{"key": "proxy.token_threshold"})
 	m = resultMap(t, resp)
 	if m["value"] != "200000" {
-		t.Errorf("expected global value '200000', got %q", m["value"])
+		t.Errorf("expected config.yaml value '200000', got %q", m["value"])
 	}
 }
 
-func TestHandleSetConfig_RejectsUnknownKey(t *testing.T) {
+func TestHandleSetConfig_AcceptsAnyKey(t *testing.T) {
 	h, _ := mustHandler(t)
-	resp := h.handleSetConfig(map[string]any{"key": "unknown_key", "value": "x"})
-	if resp.Error == "" {
-		t.Fatal("expected error for unknown config key")
+	resp := h.handleSetConfig(map[string]any{"key": "extraction.model", "value": "opus"})
+	if resp.Error != "" {
+		t.Fatalf("expected any key to be accepted, got error: %s", resp.Error)
+	}
+	m := resultMap(t, resp)
+	if m["value"] != "opus" {
+		t.Errorf("expected value 'opus', got %q", m["value"])
 	}
 }
 

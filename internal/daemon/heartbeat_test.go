@@ -659,3 +659,98 @@ func TestEnforceAgentLimits_MaxRuntime_DeadPID_Frozen(t *testing.T) {
 		t.Errorf("status=%q want frozen (PID dead — max_runtime freeze should fire)", a.Status)
 	}
 }
+
+// yesloopPartialScratchpad is a yesloop agent that completed Phases 1-3 but
+// never reached Phase 6 (typical dead-agent scenario).
+const yesloopPartialScratchpad = `### Phase 1: ANALYZE
+**Status:** COMPLETE
+**Goal understood:** Fix issue with X
+**Codebase explored:** internal/daemon/
+
+### Phase 2: PLAN
+**Status:** COMPLETE
+**Plan stored via set_plan:** yes
+**Files in scope:** done_gate.go, heartbeat.go
+**Test strategy:** unit tests
+
+### Phase 3: EXECUTE
+**Status:** COMPLETE
+**Plan items:** 4 total
+
+### Phase 4: VERIFY
+**Status:** COMPLETE
+**Tests run:** go test ./... → exit 0
+
+### Phase 5: REVIEW
+**Status:** IN PROGRESS
+**Stage 1: Self-Review**`
+
+func TestCrashRecovery_YesloopDeadAgent_PartialPhase_Escalates(t *testing.T) {
+	h, s := mustHandler(t)
+	now := time.Now().Format("2006-01-02 15:04:05")
+
+	s.AgentCreate(storage.Agent{
+		ID: "dead-yesloop-0", Project: "test", Section: "yesloop-fix-issue",
+		Status: "running", PID: 99999999, CreatedAt: now,
+		CallerSession: "sess-orch",
+	})
+	s.AgentUpdate("dead-yesloop-0", map[string]any{"retry_count": 3})
+	s.ScratchpadWrite("test", "yesloop-fix-issue", yesloopPartialScratchpad, "")
+
+	// Should not panic — escalation path fires for yesloop agents with partial phase work
+	h.crashRecovery()
+
+	a, err := s.AgentGet("dead-yesloop-0")
+	if err != nil {
+		t.Fatalf("AgentGet: %v", err)
+	}
+	if a.Status != "failed" {
+		t.Errorf("status=%q want failed", a.Status)
+	}
+}
+
+func TestCrashRecovery_YesloopDeadAgent_AllComplete_NoPanic(t *testing.T) {
+	h, s := mustHandler(t)
+	now := time.Now().Format("2006-01-02 15:04:05")
+
+	s.AgentCreate(storage.Agent{
+		ID: "dead-yesloop-complete-0", Project: "test", Section: "yesloop-done-task",
+		Status: "running", PID: 99999999, CreatedAt: now,
+	})
+	s.AgentUpdate("dead-yesloop-complete-0", map[string]any{"retry_count": 3})
+	s.ScratchpadWrite("test", "yesloop-done-task", validV3Content, "")
+
+	// All 6 phases COMPLETE → escalation not triggered (result.Compliant == true)
+	h.crashRecovery()
+
+	a, err := s.AgentGet("dead-yesloop-complete-0")
+	if err != nil {
+		t.Fatalf("AgentGet: %v", err)
+	}
+	if a.Status != "failed" {
+		t.Errorf("status=%q want failed", a.Status)
+	}
+}
+
+func TestCrashRecovery_NonYesloopAgent_SkipsYesloopEscalation(t *testing.T) {
+	h, s := mustHandler(t)
+	now := time.Now().Format("2006-01-02 15:04:05")
+
+	// Non-yesloop section — should not trigger DEAD_AGENT escalation
+	s.AgentCreate(storage.Agent{
+		ID: "dead-regular-0", Project: "test", Section: "regular-work",
+		Status: "running", PID: 99999999, CreatedAt: now,
+	})
+	s.AgentUpdate("dead-regular-0", map[string]any{"retry_count": 3})
+	s.ScratchpadWrite("test", "regular-work", yesloopPartialScratchpad, "")
+
+	h.crashRecovery()
+
+	a, err := s.AgentGet("dead-regular-0")
+	if err != nil {
+		t.Fatalf("AgentGet: %v", err)
+	}
+	if a.Status != "failed" {
+		t.Errorf("status=%q want failed", a.Status)
+	}
+}
