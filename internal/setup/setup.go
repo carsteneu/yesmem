@@ -178,8 +178,13 @@ func runDefaults(home, dataDir, binaryPath string) error {
 	fmt.Println()
 
 	binaryPath = ensurePermanentLocation(home, binaryPath)
-	primaryModel := "deepseek/deepseek-reasoner"
-	smallModel := "deepseek/deepseek-chat"
+	// runDefaults "opencode" userType assumes DeepSeek (see providerKeys below).
+	// Pass the DeepSeek baseURL so derivePrimaryAndSmallModel produces the two-tier pair.
+	baseURLForDerive := ""
+	if provider == "openai_compatible" {
+		baseURLForDerive = "https://api.deepseek.com/v1"
+	}
+	primaryModel, smallModel := derivePrimaryAndSmallModel(provider, chosenModel, "", baseURLForDerive)
 	providerKeys := map[string]string{}
 	if provider == "openai_compatible" && apiKey != "" {
 		providerKeys["deepseek"] = apiKey
@@ -188,7 +193,7 @@ func runDefaults(home, dataDir, binaryPath string) error {
 }
 
 func runOpenCodeSetup(home, dataDir, binaryPath string) error {
-	baseURL, apiKey, extractionModel, narrativeModel, err := resolveOpenCodeProvider(home)
+	baseURL, apiKey, providerID, extractionModel, narrativeModel, err := resolveOpenCodeProvider(home)
 	if err != nil {
 		return fmt.Errorf("resolve OpenCode provider: %w", err)
 	}
@@ -205,6 +210,14 @@ func runOpenCodeSetup(home, dataDir, binaryPath string) error {
 	// so DeepSeek users get deepseek-v4-flash, Anthropic users get haiku, etc.
 	summarizeModel := chosenModel
 
+	// Free-tier users (no apiKey) use the opencode binary via CLIClient,
+	// which handles auth internally via OAuth/session — no HTTP API key needed.
+	// Paid users use openai_compatible for direct HTTP calls.
+	provider := "openai_compatible"
+	if apiKey == "" {
+		provider = "opencode"
+	}
+
 	autoExtract := true
 	autoStart := runtime.GOOS == "linux" || runtime.GOOS == "darwin"
 	chosenTerminal := orchestrator.DetectTerminal()
@@ -213,19 +226,22 @@ func runOpenCodeSetup(home, dataDir, binaryPath string) error {
 	fmt.Println("  Installing:")
 	fmt.Printf("    Extraction model:   %s\n", chosenModel)
 	fmt.Printf("    Narrative model:    %s\n", narrativeModel)
-	fmt.Printf("    LLM Provider:       openai_compatible\n")
-	fmt.Printf("    API Base URL:       %s\n", baseURL)
+	fmt.Printf("    LLM Provider:       %s\n", provider)
+	if apiKey != "" {
+		fmt.Printf("    API Base URL:       %s\n", baseURL)
+	} else {
+		fmt.Printf("    Auth:               opencode binary (free tier)\n")
+	}
 	fmt.Printf("    Config:             %s/config.yaml\n", dataDir)
 	fmt.Println()
 
 	binaryPath = ensurePermanentLocation(home, binaryPath)
-	primaryModel := "deepseek/deepseek-reasoner"
-	smallModel := "deepseek/deepseek-chat"
+	primaryModel, smallModel := derivePrimaryAndSmallModel(provider, chosenModel, providerID, baseURL)
 	providerKeys := map[string]string{}
-	if apiKey != "" {
-		providerKeys["deepseek"] = apiKey
+	if apiKey != "" && providerID != "" {
+		providerKeys[providerID] = apiKey
 	}
-	return executeSetup(home, dataDir, binaryPath, chosenModel, apiKey, "openai_compatible", chosenTerminal, autoExtract, autoStart, primaryModel, smallModel, providerKeys, apiKey, baseURL, narrativeModel, qualityModel, summarizeModel)
+	return executeSetup(home, dataDir, binaryPath, chosenModel, apiKey, provider, chosenTerminal, autoExtract, autoStart, primaryModel, smallModel, providerKeys, apiKey, baseURL, narrativeModel, qualityModel, summarizeModel)
 }
 
 // runNonInteractiveClaudeCodex handles Claude + Codex detected: use Anthropic via CLI.
@@ -251,8 +267,7 @@ func runNonInteractiveClaudeCodex(home, dataDir, binaryPath string) error {
 	fmt.Println()
 
 	binaryPath = ensurePermanentLocation(home, binaryPath)
-	primaryModel := "deepseek/deepseek-reasoner"
-	smallModel := "deepseek/deepseek-chat"
+	primaryModel, smallModel := derivePrimaryAndSmallModel("cli", chosenModel, "", "")
 	return executeSetup(home, dataDir, binaryPath, chosenModel, apiKey, "cli", chosenTerminal, autoExtract, autoStart, primaryModel, smallModel, nil, "", "", narrativeModel, qualityModel, summarizeModel)
 }
 
@@ -282,8 +297,7 @@ func runNonInteractiveCodex(home, dataDir, binaryPath string) error {
 	fmt.Println()
 
 	binaryPath = ensurePermanentLocation(home, binaryPath)
-	primaryModel := "deepseek/deepseek-reasoner"
-	smallModel := "deepseek/deepseek-chat"
+	primaryModel, smallModel := derivePrimaryAndSmallModel("openai_compatible", chosenModel, "openai", baseURL)
 	return executeSetup(home, dataDir, binaryPath, chosenModel, apiKey, "openai_compatible", chosenTerminal, autoExtract, autoStart, primaryModel, smallModel, nil, apiKey, baseURL, narrativeModel, qualityModel, summarizeModel)
 }
 
@@ -309,8 +323,7 @@ func runNonInteractiveClaude(home, dataDir, binaryPath string) error {
 	fmt.Println()
 
 	binaryPath = ensurePermanentLocation(home, binaryPath)
-	primaryModel := "deepseek/deepseek-reasoner"
-	smallModel := "deepseek/deepseek-chat"
+	primaryModel, smallModel := derivePrimaryAndSmallModel("cli", chosenModel, "", "")
 	return executeSetup(home, dataDir, binaryPath, chosenModel, apiKey, "cli", chosenTerminal, autoExtract, autoStart, primaryModel, smallModel, nil, "", "", narrativeModel, qualityModel, summarizeModel)
 }
 
@@ -642,6 +655,18 @@ func executeSetup(home, dataDir, binaryPath, model, apiKey, provider, terminal s
 		return "up to date", nil
 	})
 
+	// 7b.2 Install opencode commands (for opencode TUI users)
+	withSpinner("Installing opencode commands", func() (string, error) {
+		installed, err := InstallOpencodeCommands(home)
+		if err != nil {
+			return "", err
+		}
+		if installed > 0 {
+			return fmt.Sprintf("%d commands", installed), nil
+		}
+		return "up to date", nil
+	})
+
 	// 7c. Install bundled capabilities
 	withSpinner("Installing capabilities", func() (string, error) {
 		installed, err := InstallBundledCaps(home)
@@ -857,6 +882,38 @@ func modelToProviderID(model string) string {
 		return "openai"
 	default:
 		return ""
+	}
+}
+
+// derivePrimaryAndSmallModel picks opencode's primaryModel/smallModel pair based
+// on the chosen provider, model, providerID (from resolveOpenCodeProvider), and
+// baseURL. Replaces the former hardcoded deepseek-reasoner/chat default that
+// was wrong for every non-DeepSeek user (big-pickle, glm-5.2, claude, gpt).
+//
+// Mapping:
+//   - provider "opencode" (free-tier): opencode/<chosenModel> for both
+//   - provider "cli" or "api" (Anthropic): anthropic/<chosenModel>, anthropic/haiku
+//   - provider "openai_compatible" with deepseek baseURL: two-tier deepseek-reasoner + deepseek-chat
+//   - provider "openai_compatible" with providerID hint: <providerID>/<chosenModel> for both
+//   - provider "openai_compatible" with openai.com baseURL: openai/<chosenModel> for both
+//   - fallback: bare chosenModel for both (daemon resolves)
+func derivePrimaryAndSmallModel(provider, chosenModel, providerID, baseURL string) (primaryModel, smallModel string) {
+	switch {
+	case provider == "opencode":
+		return "opencode/" + chosenModel, "opencode/" + chosenModel
+	case provider == "cli" || provider == "api":
+		return "anthropic/" + chosenModel, "anthropic/haiku"
+	case provider == "openai_compatible" && strings.Contains(strings.ToLower(baseURL), "deepseek.com"):
+		// DeepSeek two-tier: intentionally overrides chosenModel. opencode.json's
+		// deepseek provider block only knows the reasoner/chat IDs, not the
+		// deepseek-v4-pro/flash names the user picked in resolveOpenCodeProvider.
+		return "deepseek/deepseek-reasoner", "deepseek/deepseek-chat"
+	case provider == "openai_compatible" && providerID != "":
+		return providerID + "/" + chosenModel, providerID + "/" + chosenModel
+	case provider == "openai_compatible" && strings.Contains(strings.ToLower(baseURL), "openai.com"):
+		return "openai/" + chosenModel, "openai/" + chosenModel
+	default:
+		return chosenModel, chosenModel
 	}
 }
 
@@ -1698,7 +1755,13 @@ func verifyLLMConnection(apiKey, model, provider string) error {
 	if err != nil {
 		return fmt.Errorf("could not create LLM client: %w", err)
 	}
-	_, err = client.Complete("Reply with OK.", "ping")
+	// opencode CLI subprocess needs a real system prompt to produce text output
+	// (without it, the opencode binary often returns empty "no text events")
+	systemMsg := "Reply with OK."
+	if provider == "opencode" {
+		systemMsg = "You are a connection-test assistant. The user will send 'ping'. Respond with exactly 'OK' and nothing else. No tool calls, no thinking, just the word OK."
+	}
+	_, err = client.Complete(systemMsg, "ping")
 	if err != nil {
 		return fmt.Errorf("LLM call failed: %w", err)
 	}
@@ -1804,6 +1867,42 @@ func InstallBundledSkills(home string) (int, error) {
 			}
 			installed++
 		}
+	}
+	return installed, nil
+}
+
+// InstallOpencodeCommands copies embedded command files to ~/.config/opencode/commands/.
+// Uses SHA-256 hash to skip unchanged files. Returns number of installed/updated files.
+func InstallOpencodeCommands(home string) (int, error) {
+	cmdsDir := filepath.Join(home, ".config", "opencode", "commands")
+	installed := 0
+
+	entries, err := skills.BundledOpencodeCommands.ReadDir("bundled-commands/opencode")
+	if err != nil {
+		return 0, fmt.Errorf("read bundled opencode commands: %w", err)
+	}
+
+	os.MkdirAll(cmdsDir, 0755)
+	for _, f := range entries {
+		if f.IsDir() {
+			continue
+		}
+		data, err := skills.BundledOpencodeCommands.ReadFile(filepath.Join("bundled-commands", "opencode", f.Name()))
+		if err != nil {
+			continue
+		}
+		dst := filepath.Join(cmdsDir, f.Name())
+		newHash := fmt.Sprintf("%x", sha256.Sum256(data))
+		if existing, err := os.ReadFile(dst); err == nil {
+			oldHash := fmt.Sprintf("%x", sha256.Sum256(existing))
+			if oldHash == newHash {
+				continue
+			}
+		}
+		if err := os.WriteFile(dst, data, 0644); err != nil {
+			return installed, fmt.Errorf("write opencode command %s: %w", f.Name(), err)
+		}
+		installed++
 	}
 	return installed, nil
 }

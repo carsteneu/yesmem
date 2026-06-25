@@ -30,18 +30,20 @@ type filteredProvider struct {
 
 // resolveOpenCodeProvider interactively guides the user through selecting an
 // OpenAI-compatible provider from their OpenCode configuration.
-// Returns the resolved baseURL, apiKey, extraction model, and narrative model.
-func resolveOpenCodeProvider(home string) (baseURL, apiKey, extractionModel, narrativeModel string, err error) {
+// Returns the resolved baseURL, apiKey, providerID (the selected provider's key
+// in models.json, e.g. "deepseek", "opencode", "zai-coding-plan"), extraction
+// model, and narrative model.
+func resolveOpenCodeProvider(home string) (baseURL, apiKey, providerID, extractionModel, narrativeModel string, err error) {
 	// 1. Load models.json
 	models, err := loadModels(home)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("load models.json: %w", err)
+		return "", "", "", "", "", fmt.Errorf("load models.json: %w", err)
 	}
 
 	// 2. Load auth.json (optional — free-tier users have no auth.json)
 	auth, err := loadAuth(home)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("load auth.json: %w", err)
+		return "", "", "", "", "", fmt.Errorf("load auth.json: %w", err)
 	}
 
 	// 3. Filter: opencode free-tier provider + openai-compatible providers with API key
@@ -94,7 +96,7 @@ func resolveOpenCodeProvider(home string) (baseURL, apiKey, extractionModel, nar
 	}
 
 	if len(providers) == 0 {
-		return "", "", "", "", fmt.Errorf("no OpenCode providers found (free tier or configured API keys)")
+		return "", "", "", "", "", fmt.Errorf("no OpenCode providers found (free tier or configured API keys)")
 	}
 
 	// Sort alphabetically
@@ -133,7 +135,7 @@ func resolveOpenCodeProvider(home string) (baseURL, apiKey, extractionModel, nar
 	sort.Strings(modelIDs)
 
 	if len(modelIDs) == 0 {
-		return "", "", "", "", fmt.Errorf("no models found for provider %q", selected.ID)
+		return "", "", "", "", "", fmt.Errorf("no models found for provider %q", selected.ID)
 	}
 
 	// 7. Interactive model selection
@@ -179,7 +181,8 @@ func resolveOpenCodeProvider(home string) (baseURL, apiKey, extractionModel, nar
 	// ensureV1: normalize URL to end with /v1 so daemon's normalizeOpenAIURL
 	// (which appends /chat/completions only when URL ends in /v1) works.
 	baseURL = ensureV1(selected.BaseURL)
-	return baseURL, apiKey, extractionModel, narrativeModel, nil
+	providerID = selected.ID
+	return baseURL, apiKey, providerID, extractionModel, narrativeModel, nil
 }
 
 // ensureV1 appends /v1 to an OpenAI-compatible base URL if not already present.

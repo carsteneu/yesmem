@@ -13,3 +13,10 @@ var BundledCommands embed.FS
 //
 //go:embed bundled-skills/*
 var BundledSkills embed.FS
+
+// BundledOpencodeCommands contains command files that should be installed to
+// ~/.config/opencode/commands/ for opencode TUI users. Same format as
+// Claude Code skills but different target directory.
+//
+//go:embed bundled-commands/opencode/*
+var BundledOpencodeCommands embed.FS

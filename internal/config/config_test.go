@@ -165,9 +165,17 @@ func TestResolvedAPIKeyAnthropicAndOpenAI(t *testing.T) {
 			t.Fatalf("ResolvedAPIKey() = %q, want anthropic key", got)
 		}
 
+		// Config-wins-over-env: explicit config.yaml value is authoritative.
+		// Env only fills in when config is empty.
 		t.Setenv("ANTHROPIC_API_KEY", "env-anthropic")
+		if got := cfg.ResolvedAPIKey(); got != "cfg-anthropic" {
+			t.Fatalf("ResolvedAPIKey() with env = %q, want cfg-anthropic (config wins)", got)
+		}
+
+		// Empty config → env fallback
+		cfg.API.APIKey = ""
 		if got := cfg.ResolvedAPIKey(); got != "env-anthropic" {
-			t.Fatalf("ResolvedAPIKey() with env = %q, want env-anthropic", got)
+			t.Fatalf("ResolvedAPIKey() fallback = %q, want env-anthropic", got)
 		}
 	})
 
@@ -184,9 +192,18 @@ func TestResolvedAPIKeyAnthropicAndOpenAI(t *testing.T) {
 			t.Fatalf("ResolvedAPIKey() = %q, want cfg-openai", got)
 		}
 
+		// Config-wins-over-env: explicit openai_api_key in config must
+		// override OPENAI_API_KEY from env. Regression test for the
+		// .bashrc-OPENAI_API_KEY-overwrites-config.yaml-DeepSeek-key bug.
 		t.Setenv("OPENAI_API_KEY", "env-openai")
+		if got := cfg.ResolvedAPIKey(); got != "cfg-openai" {
+			t.Fatalf("ResolvedAPIKey() with env = %q, want cfg-openai (config wins)", got)
+		}
+
+		// Empty config → env fallback
+		cfg.API.OpenAIAPIKey = ""
 		if got := cfg.ResolvedAPIKey(); got != "env-openai" {
-			t.Fatalf("ResolvedAPIKey() with env = %q, want env-openai", got)
+			t.Fatalf("ResolvedAPIKey() fallback = %q, want env-openai", got)
 		}
 	})
 }
@@ -200,9 +217,16 @@ func TestResolvedOpenAIBaseURL(t *testing.T) {
 		t.Fatalf("ResolvedOpenAIBaseURL() = %q", got)
 	}
 
+	// Config-wins-over-env: explicit config.yaml URL is authoritative.
 	t.Setenv("OPENAI_BASE_URL", "https://env.example/v1")
+	if got := cfg.ResolvedOpenAIBaseURL(); got != "https://example.test/openai" {
+		t.Fatalf("ResolvedOpenAIBaseURL() with env = %q, want config URL (config wins)", got)
+	}
+
+	// Empty config → env fallback
+	cfg.API.OpenAIBaseURL = ""
 	if got := cfg.ResolvedOpenAIBaseURL(); got != "https://env.example/v1" {
-		t.Fatalf("ResolvedOpenAIBaseURL() with env = %q", got)
+		t.Fatalf("ResolvedOpenAIBaseURL() fallback = %q, want env URL", got)
 	}
 }
 
