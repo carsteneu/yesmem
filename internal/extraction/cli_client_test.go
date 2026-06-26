@@ -1,6 +1,9 @@
 package extraction
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -346,4 +349,291 @@ func contains(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// writeOpencodeJSONForTest writes the given JSON content to
+// <home>/.config/opencode/opencode.json so buildOpencodeConfigOverride can
+// read it. Returns the home directory.
+func writeOpencodeJSONForTest(t *testing.T, content string) string {
+	t.Helper()
+	home := t.TempDir()
+	cfgDir := filepath.Join(home, ".config", "opencode")
+	if err := os.MkdirAll(cfgDir, 0755); err != nil {
+		t.Fatalf("mkdir %s: %v", cfgDir, err)
+	}
+	cfgPath := filepath.Join(cfgDir, "opencode.json")
+	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write %s: %v", cfgPath, err)
+	}
+	return home
+}
+
+// TestBuildOpencodeConfigOverride_FreeTierBigPickle verifies that a user with
+// only the opencode free-tier provider (big-pickle) gets an override whose
+// provider block carries the opencode provider with the proxy baseURL and the
+// x-yesmem-allow-mcp header. This is the regression case from the scratchpad:
+// previously the hardcoded DeepSeek override broke free-tier users.
+func TestBuildOpencodeConfigOverride_FreeTierBigPickle(t *testing.T) {
+	cfg := `{
+  "provider": {
+    "opencode": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {"baseURL": "https://opencode.ai/zen/v1"},
+      "models": {
+        "big-pickle": {"name": "Big Pickle", "limit": {"context": 200000, "output": 8192}}
+      }
+    }
+  }
+}`
+	home := writeOpencodeJSONForTest(t, cfg)
+	got := buildOpencodeConfigOverride(home)
+
+	var parsed struct {
+		MCP      map[string]any `json:"mcp"`
+		Provider map[string]struct {
+			Options struct {
+				BaseURL string            `json:"baseURL"`
+				Headers map[string]string `json:"headers"`
+			} `json:"options"`
+			Models map[string]any `json:"models"`
+			Npm    string         `json:"npm"`
+		} `json:"provider"`
+	}
+	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Fatalf("override is not valid JSON: %v\nraw: %s", err, got)
+	}
+	if _, ok := parsed.Provider["opencode"]; !ok {
+		t.Errorf("override missing 'opencode' provider; got providers=%v\nraw: %s", keys(parsed.Provider), got)
+	}
+	entry := parsed.Provider["opencode"]
+	if entry.Options.BaseURL != yesmemProxyBaseURL {
+		t.Errorf("opencode.options.baseURL = %q, want %q", entry.Options.BaseURL, yesmemProxyBaseURL)
+	}
+	if got := entry.Options.Headers[yesmemAllowMCPHeader]; got != "1" {
+		t.Errorf("opencode.options.headers[%q] = %q, want \"1\"", yesmemAllowMCPHeader, got)
+	}
+	// Models block must be preserved so big-pickle is still callable.
+	if _, ok := entry.Models["big-pickle"]; !ok {
+		t.Errorf("models.big-pickle missing; got models=%v", keys(entry.Models))
+	}
+	// npm must be preserved.
+	if entry.Npm != "@ai-sdk/openai-compatible" {
+		t.Errorf("opencode.npm = %q, want @ai-sdk/openai-compatible (non-options fields must be preserved)", entry.Npm)
+	}
+	// Original baseURL (opencode.ai/zen) must NOT leak through.
+	if entry.Options.BaseURL == "https://opencode.ai/zen/v1" {
+		t.Errorf("opencode.options.baseURL still points at opencode.ai — proxy rewrite missing")
+	}
+}
+
+// TestBuildOpencodeConfigOverride_DeepSeek verifies the DeepSeek-only user
+// (the pre-fix primary case) still gets a valid override with the proxy
+// baseURL and the x-yesmem-allow-mcp header.
+func TestBuildOpencodeConfigOverride_DeepSeek(t *testing.T) {
+	cfg := `{
+  "provider": {
+    "deepseek": {
+      "options": {"baseURL": "https://api.deepseek.com/v1"},
+      "models": {
+        "deepseek-chat": {"name": "DeepSeek V4 Flash"}
+      }
+    }
+  }
+}`
+	home := writeOpencodeJSONForTest(t, cfg)
+	got := buildOpencodeConfigOverride(home)
+
+	var parsed struct {
+		Provider map[string]struct {
+			Options struct {
+				BaseURL string            `json:"baseURL"`
+				Headers map[string]string `json:"headers"`
+			} `json:"options"`
+			Models map[string]any `json:"models"`
+		} `json:"provider"`
+	}
+	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Fatalf("override is not valid JSON: %v\nraw: %s", err, got)
+	}
+	entry, ok := parsed.Provider["deepseek"]
+	if !ok {
+		t.Fatalf("override missing 'deepseek' provider; got=%v\nraw: %s", keys(parsed.Provider), got)
+	}
+	if entry.Options.BaseURL != yesmemProxyBaseURL {
+		t.Errorf("deepseek.options.baseURL = %q, want %q", entry.Options.BaseURL, yesmemProxyBaseURL)
+	}
+	if got := entry.Options.Headers[yesmemAllowMCPHeader]; got != "1" {
+		t.Errorf("deepseek.options.headers[%q] = %q, want \"1\"", yesmemAllowMCPHeader, got)
+	}
+	if _, ok := entry.Models["deepseek-chat"]; !ok {
+		t.Errorf("models.deepseek-chat missing; got models=%v", keys(entry.Models))
+	}
+}
+
+// TestBuildOpencodeConfigOverride_Mixed verifies that a user with multiple
+// providers (the realistic case) gets an override where EVERY provider is
+// rewritten to the proxy baseURL. This is the robustness guarantee from the
+// scratchpad: no per-provider if/else, no provider left unrewritten.
+func TestBuildOpencodeConfigOverride_Mixed(t *testing.T) {
+	cfg := `{
+  "provider": {
+    "anthropic": {"options": {"baseURL": "https://api.anthropic.com"}},
+    "deepseek": {
+      "options": {"baseURL": "https://api.deepseek.com/v1"},
+      "models": {"deepseek-reasoner": {"name": "Pro"}}
+    },
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {"baseURL": "http://localhost:11434/v1"},
+      "models": {"qwen3.6:27b": {"name": "Qwen"}}
+    },
+    "opencode": {
+      "options": {"baseURL": "https://opencode.ai/zen/v1"},
+      "models": {"big-pickle": {"name": "Big Pickle"}}
+    }
+  }
+}`
+	home := writeOpencodeJSONForTest(t, cfg)
+	got := buildOpencodeConfigOverride(home)
+
+	var parsed struct {
+		Provider map[string]struct {
+			Options struct {
+				BaseURL string            `json:"baseURL"`
+				Headers map[string]string `json:"headers"`
+			} `json:"options"`
+		} `json:"provider"`
+	}
+	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Fatalf("override is not valid JSON: %v\nraw: %s", err, got)
+	}
+	wantProviders := []string{"anthropic", "deepseek", "ollama", "opencode"}
+	for _, p := range wantProviders {
+		entry, ok := parsed.Provider[p]
+		if !ok {
+			t.Errorf("override missing provider %q; got providers=%v", p, keys(parsed.Provider))
+			continue
+		}
+		if entry.Options.BaseURL != yesmemProxyBaseURL {
+			t.Errorf("provider %q: baseURL = %q, want %q", p, entry.Options.BaseURL, yesmemProxyBaseURL)
+		}
+		if got := entry.Options.Headers[yesmemAllowMCPHeader]; got != "1" {
+			t.Errorf("provider %q: headers[%q] = %q, want \"1\"", p, yesmemAllowMCPHeader, got)
+		}
+	}
+	// No extra providers should have been synthesized.
+	if got, want := len(parsed.Provider), len(wantProviders); got != want {
+		t.Errorf("override has %d providers, want %d (no synthesis); got=%v", got, want, keys(parsed.Provider))
+	}
+}
+
+// TestBuildOpencodeConfigOverride_Fallback verifies that when opencode.json
+// is unreadable (missing or corrupt) the helper returns the legacy DeepSeek-only
+// fallback string byte-for-byte. Preserving the exact bytes keeps DeepSeek-only
+// users on unchanged behavior when their config is absent.
+func TestBuildOpencodeConfigOverride_Fallback(t *testing.T) {
+	want := defaultOpencodeFallbackConfig
+
+	// Regression guard: hard-code the original pre-fix string (NOT the const)
+	// so accidental edits to defaultOpencodeFallbackConfig are caught. The
+	// original bytes were produced by the literal
+	//   `{` + mcpCfg + `,` + providerCfg + `}`
+	// where mcpCfg and providerCfg were the two hardcoded literals in the
+	// pre-dynamic recipe. This test fails if anyone silently changes the
+	// fallback's shape.
+	t.Run("fallback matches pre-fix literal byte-for-byte", func(t *testing.T) {
+		original := `{"mcp":{"yesmem":{"type":"local","command":["yesmem","mcp"],"enabled":true,"timeout":120000,"environment":{"YESMEM_SOURCE_AGENT":"opencode"}}},"provider":{"deepseek":{"options":{"baseURL":"http://localhost:9099/v1","headers":{"x-yesmem-allow-mcp":"1"}}}}}`
+		if defaultOpencodeFallbackConfig != original {
+			t.Errorf("defaultOpencodeFallbackConfig drifted from pre-fix bytes:\n got: %s\nwant: %s", defaultOpencodeFallbackConfig, original)
+		}
+		if len(original) != 255 {
+			t.Errorf("pre-fix literal length drifted: got %d, want 255 (sanity check)", len(original))
+		}
+	})
+
+	// Missing opencode.json (home dir contains nothing).
+	t.Run("missing file", func(t *testing.T) {
+		home := t.TempDir()
+		got := buildOpencodeConfigOverride(home)
+		if got != want {
+			t.Errorf("fallback mismatch:\n got: %s\nwant: %s", got, want)
+		}
+	})
+
+	// Missing .config/opencode/ directory entirely.
+	t.Run("missing dir", func(t *testing.T) {
+		home := t.TempDir()
+		got := buildOpencodeConfigOverride(filepath.Join(home, "nonexistent"))
+		if got != want {
+			t.Errorf("fallback mismatch:\n got: %s\nwant: %s", got, want)
+		}
+	})
+
+	// Corrupt JSON.
+	t.Run("corrupt json", func(t *testing.T) {
+		home := writeOpencodeJSONForTest(t, "{not valid json")
+		got := buildOpencodeConfigOverride(home)
+		if got != want {
+			t.Errorf("fallback mismatch:\n got: %s\nwant: %s", got, want)
+		}
+	})
+
+	// Empty provider block (valid JSON, zero providers).
+	t.Run("empty providers", func(t *testing.T) {
+		home := writeOpencodeJSONForTest(t, `{"provider":{}}`)
+		got := buildOpencodeConfigOverride(home)
+		if got != want {
+			t.Errorf("fallback mismatch:\n got: %s\nwant: %s", got, want)
+		}
+	})
+}
+
+// keys returns the map keys as a slice for test error formatting.
+func keys[K comparable, V any](m map[K]V) []K {
+	out := make([]K, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
+// TestBuildOpencodeConfigOverride_NoOptionsKey covers a provider entry that
+// has no options key at all — the rewriter must add one rather than crash.
+// (Reviewer-suggested edge case: every other test has an options block present.)
+func TestBuildOpencodeConfigOverride_NoOptionsKey(t *testing.T) {
+	cfg := `{
+  "provider": {
+    "bare": {
+      "models": {"bare-model": {"name": "Bare"}}
+    }
+  }
+}`
+	home := writeOpencodeJSONForTest(t, cfg)
+	got := buildOpencodeConfigOverride(home)
+
+	var parsed struct {
+		Provider map[string]struct {
+			Options struct {
+				BaseURL string            `json:"baseURL"`
+				Headers map[string]string `json:"headers"`
+			} `json:"options"`
+			Models map[string]any `json:"models"`
+		} `json:"provider"`
+	}
+	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Fatalf("override is not valid JSON: %v\nraw: %s", err, got)
+	}
+	entry, ok := parsed.Provider["bare"]
+	if !ok {
+		t.Fatalf("override missing 'bare' provider; got=%v\nraw: %s", keys(parsed.Provider), got)
+	}
+	if entry.Options.BaseURL != yesmemProxyBaseURL {
+		t.Errorf("bare.options.baseURL = %q, want %q (rewriter must add options block)", entry.Options.BaseURL, yesmemProxyBaseURL)
+	}
+	if got := entry.Options.Headers[yesmemAllowMCPHeader]; got != "1" {
+		t.Errorf("bare.options.headers[%q] = %q, want \"1\"", yesmemAllowMCPHeader, got)
+	}
+	if _, ok := entry.Models["bare-model"]; !ok {
+		t.Errorf("models.bare-model missing; the rewriter must preserve non-options fields; got models=%v", keys(entry.Models))
+	}
 }

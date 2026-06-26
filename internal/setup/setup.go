@@ -679,14 +679,33 @@ func executeSetup(home, dataDir, binaryPath, model, apiKey, provider, terminal s
 		return "up to date", nil
 	})
 
-	// 7d. Install opencode plugin (only if opencode is installed)
+	// 7d. Install opencode plugin (only if opencode is installed).
+	// Threads primaryModel/smallModel through so the user's wizard choice is
+	// written atomically — prevents the hardcoded deepseek defaults from
+	// winning over the user's selection (step 7d2 alone cannot overwrite
+	// because deepMergeJSON preserves existing scalars).
 	if detectOpencodeBinary() != "" {
+		// 7d-pre. Migrate any legacy opencode.json (yesmem-managed) to
+		// opencode.jsonc so opencode actually reads what we write. opencode's
+		// globalConfigFile() prefers jsonc; without this step, a user upgrading
+		// from an older yesmem (which wrote opencode.json) would have their
+		// provider/MCP config silently ignored on next opencode start.
+		withSpinner("Migrating opencode config", func() (string, error) {
+			if err := migrateOpencodeJsonToJsonc(home); err != nil {
+				return "", err
+			}
+			return "ok", nil
+		})
+
 		withSpinner("Installing opencode plugin", func() (string, error) {
-			return "", installOpencodePlugin(home, binaryPath)
+			return "", installOpencodePlugin(home, binaryPath, primaryModel, smallModel)
 		})
 	}
 
-	// 7d2. Set model preference (from wizard or default)
+	// 7d2. Set model preference (from wizard or default).
+	// Redundant when 7d ran with non-empty primaryModel, but kept as a separate
+	// step for paths where opencode is not installed (no 7d call) or future
+	// callers that skip the plugin install.
 	if primaryModel != "" {
 		withSpinner("Setting model preference", func() (string, error) {
 			if err := mergeOpencodeSettingsWith(home, primaryModel, smallModel, binaryPath); err != nil {
@@ -1741,6 +1760,20 @@ func ensureProxyEnvVar(home string) error {
 	return nil
 }
 
+// resolveLLMModelIDForVerify resolves the model ID for the setup verify call.
+// The caller-supplied `model` is threaded through so provider-specific model
+// IDs (e.g. "big-pickle" for opencode free-tier) reach the CLI subprocess
+// instead of being silently replaced by the Anthropic haiku default.
+// Empty model falls back to the "haiku" tier shortname, preserving prior
+// behavior for callers that leave the model unset.
+func resolveLLMModelIDForVerify(provider, model string) string {
+	effective := strings.TrimSpace(model)
+	if effective == "" {
+		effective = "haiku"
+	}
+	return config.ResolveModelIDForProvider(provider, effective, "claude-haiku-4-5-20251001", "gpt-5-mini")
+}
+
 // discoverSkills is deprecated — skill discovery has been removed.
 // Skills are now activated via [skill-eval] injection in the proxy.
 func discoverSkills(dataDir, apiKey, model string) int {
@@ -1750,7 +1783,7 @@ func discoverSkills(dataDir, apiKey, model string) int {
 // verifyLLMConnection makes a single minimal LLM call to verify the API key and provider work.
 // Returns nil on success, error with diagnostic message on failure.
 func verifyLLMConnection(apiKey, model, provider string) error {
-	modelID := config.ResolveModelIDForProvider(provider, "haiku", "claude-haiku-4-5-20251001", "gpt-5-mini")
+	modelID := resolveLLMModelIDForVerify(provider, model)
 	client, err := extraction.NewLLMClient(provider, apiKey, modelID, "", "")
 	if err != nil {
 		return fmt.Errorf("could not create LLM client: %w", err)
@@ -2094,7 +2127,12 @@ func detectOpencodeConfigDir() string {
 // installOpencodePlugin symlinks the yesmem plugin into opencode's plugins directory
 // and registers it in opencode.json. Even if the plugin source files aren't available,
 // the provider/mcp/compaction settings are still merged.
-func installOpencodePlugin(home, binaryPath string) error {
+//
+// primaryModel/smallModel are threaded through to mergeOpencodeSettingsWith so the
+// user's wizard choice is written in the same pass. Without this, step 7d would
+// write hardcoded deepseek-reasoner defaults that step 7d2 cannot overwrite
+// (deepMergeJSON preserves existing scalars).
+func installOpencodePlugin(home, binaryPath, primaryModel, smallModel string) error {
 	if err := installOpencodePluginSource(home); err != nil {
 		return err
 	}
@@ -2112,7 +2150,7 @@ func installOpencodePlugin(home, binaryPath string) error {
 		}
 	}
 
-	return mergeOpencodeJSON(home, pluginSource)
+	return mergeOpencodeJSON(home, pluginSource, primaryModel, smallModel)
 }
 
 // installOpencodePluginSource copies the bundled opencode plugin source files
@@ -2178,12 +2216,16 @@ func resolvePluginSource(home, binaryPath string) string {
 
 // mergeOpencodeJSON adds both the plugin entry and the provider/MCP/compaction
 // settings to opencode.json. Preserves existing configuration. Idempotent.
-func mergeOpencodeJSON(home, pluginPath string) error {
-	if err := mergeOpencodeSettings(home); err != nil {
+// primaryModel/smallModel are forwarded to mergeOpencodeSettingsWith so the
+// user's wizard choice is applied atomically — without them, the hardcoded
+// deepseek defaults from defaultOpencodeSettings() would win and step 7d2's
+// mergeOpencodeSettingsWith call could not overwrite them.
+func mergeOpencodeJSON(home, pluginPath, primaryModel, smallModel string) error {
+	if err := mergeOpencodeSettingsWith(home, primaryModel, smallModel, ""); err != nil {
 		return err
 	}
 
-	cfgPath := filepath.Join(detectOpencodeConfigDir(), "opencode.json")
+	cfgPath := opencodeConfigPath(home)
 	os.MkdirAll(filepath.Dir(cfgPath), 0755)
 
 	var cfg map[string]any

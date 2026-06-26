@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	opencodepkg "github.com/carsteneu/yesmem/internal/opencode"
 )
 
 func defaultOpencodeSettings() map[string]any {
@@ -46,6 +48,21 @@ func defaultOpencodeSettings() map[string]any {
 					"baseURL": "http://localhost:9099/v1",
 				},
 			},
+			"opencode": map[string]any{
+				"npm": "@ai-sdk/openai-compatible",
+				"options": map[string]any{
+					"baseURL": "http://localhost:9099/v1",
+					"headers": map[string]any{
+						"x-yesmem-allow-mcp": "1",
+					},
+				},
+				"models": map[string]any{
+					"big-pickle": map[string]any{
+						"name":  "Big Pickle",
+						"limit": map[string]any{"context": 200000, "output": 8192},
+					},
+				},
+			},
 		},
 		"mcp": map[string]any{
 			"yesmem": map[string]any{
@@ -65,8 +82,180 @@ func defaultOpencodeSettings() map[string]any {
 	}
 }
 
+// opencodeConfigPath returns the path to the opencode config file opencode
+// actually reads. Mirrors opencode's own globalConfigFile() priority
+// (opencode.jsonc > opencode.json > config.json); falls back to opencode.jsonc
+// when none exist.
+//
+// Delegates to the shared internal/opencode package so internal/proxy can
+// use the same resolution without importing internal/setup (which would
+// create a cycle via daemon/httpapi).
 func opencodeConfigPath(home string) string {
-	return filepath.Join(home, ".config", "opencode", "opencode.json")
+	return opencodepkg.ConfigPath(home)
+}
+
+// migrateOpencodeJsonToJsonc copies yesmem-managed content from an existing
+// opencode.json to opencode.jsonc when the jsonc file is empty or contains
+// only $schema. The user's manual jsonc edits are preserved via deepMergeJSON
+// (existing keys in jsonc win; only missing yesmem-managed keys are filled in
+// from opencode.json). Idempotent: no-op if jsonc already has yesmem provider
+// blocks or MCP config.
+//
+// Triggered once during yesmem setup when:
+//   - opencode.json exists with yesmem-managed providers (deepseek/openai/anthropic/opencode), and
+//   - opencode.jsonc is missing OR contains only $schema.
+//
+// After migration, opencode.json is left in place as a backup (not deleted).
+// yesmem writes future config updates to opencode.jsonc via opencodeConfigPath.
+func migrateOpencodeJsonToJsonc(home string) error {
+	dir := filepath.Join(home, ".config", "opencode")
+	jsonPath := filepath.Join(dir, "opencode.json")
+	jsoncPath := filepath.Join(dir, "opencode.jsonc")
+
+	jsonData, err := os.ReadFile(jsonPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read opencode.json: %w", err)
+	}
+	var jsonCfg map[string]any
+	if err := json.Unmarshal(jsonData, &jsonCfg); err != nil {
+		return nil
+	}
+	if !hasYesmemManagedContent(jsonCfg) {
+		return nil
+	}
+
+	jsoncData, err := os.ReadFile(jsoncPath)
+	if err != nil && !os.IsNotExist(err) {
+		return nil
+	}
+	var jsoncCfg map[string]any
+	if len(jsoncData) > 0 {
+		if uerr := json.Unmarshal(jsoncData, &jsoncCfg); uerr != nil {
+			return nil
+		}
+	}
+	if hasYesmemManagedContent(jsoncCfg) {
+		return nil
+	}
+	if hasUserContentBeyondSchema(jsoncCfg) {
+		return nil
+	}
+
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+
+	target := jsoncCfg
+	if target == nil {
+		target = map[string]any{}
+	}
+	if _, ok := target["$schema"]; !ok {
+		if schema, ok := jsonCfg["$schema"]; ok {
+			target["$schema"] = schema
+		} else {
+			target["$schema"] = "https://opencode.ai/config.json"
+		}
+	}
+
+	yesmemContent := extractYesmemManaged(jsonCfg)
+	deepMergeJSON(target, yesmemContent)
+
+	out, err := json.MarshalIndent(target, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(jsoncPath, append(out, '\n'), 0644)
+}
+
+// hasYesmemManagedContent returns true if cfg contains any provider, MCP, or
+// compaction block managed by yesmem (deepseek/openai/anthropic/opencode
+// providers, mcp.yesmem, or compaction.auto/prune).
+func hasYesmemManagedContent(cfg map[string]any) bool {
+	if cfg == nil {
+		return false
+	}
+	if prov, ok := cfg["provider"].(map[string]any); ok {
+		for _, name := range []string{"deepseek", "openai", "anthropic", "opencode"} {
+			if _, ok := prov[name]; ok {
+				return true
+			}
+		}
+	}
+	if mcp, ok := cfg["mcp"].(map[string]any); ok {
+		if _, ok := mcp["yesmem"]; ok {
+			return true
+		}
+	}
+	if cmp, ok := cfg["compaction"].(map[string]any); ok {
+		if _, ok := cmp["auto"]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// extractYesmemManaged returns a new map containing only the yesmem-managed
+// keys from src (provider subset, mcp.yesmem, compaction.auto/prune, model,
+// small_model, plugin). Used by migration to copy yesmem defaults into jsonc
+// without dragging along unrelated user content from opencode.json.
+func extractYesmemManaged(src map[string]any) map[string]any {
+	out := map[string]any{}
+	if v, ok := src["model"]; ok {
+		out["model"] = v
+	}
+	if v, ok := src["small_model"]; ok {
+		out["small_model"] = v
+	}
+	if prov, ok := src["provider"].(map[string]any); ok {
+		yesmemProv := map[string]any{}
+		for _, name := range []string{"deepseek", "openai", "anthropic", "opencode"} {
+			if v, ok := prov[name]; ok {
+				yesmemProv[name] = v
+			}
+		}
+		if len(yesmemProv) > 0 {
+			out["provider"] = yesmemProv
+		}
+	}
+	if mcp, ok := src["mcp"].(map[string]any); ok {
+		if ymcp, ok := mcp["yesmem"]; ok {
+			out["mcp"] = map[string]any{"yesmem": ymcp}
+		}
+	}
+	if cmp, ok := src["compaction"].(map[string]any); ok {
+		yesmemCmp := map[string]any{}
+		if v, ok := cmp["auto"]; ok {
+			yesmemCmp["auto"] = v
+		}
+		if v, ok := cmp["prune"]; ok {
+			yesmemCmp["prune"] = v
+		}
+		if len(yesmemCmp) > 0 {
+			out["compaction"] = yesmemCmp
+		}
+	}
+	if plugins, ok := src["plugin"].([]any); ok && len(plugins) > 0 {
+		out["plugin"] = plugins
+	}
+	return out
+}
+
+// hasUserContentBeyondSchema returns true if cfg has any key other than
+// $schema. Used to gate migration: if the user has manually edited jsonc
+// beyond the fresh-install $schema stub, we don't risk clobbering.
+func hasUserContentBeyondSchema(cfg map[string]any) bool {
+	if cfg == nil {
+		return false
+	}
+	for k := range cfg {
+		if k != "$schema" {
+			return true
+		}
+	}
+	return false
 }
 
 func mergeOpencodeSettings(home string) error {
@@ -177,6 +366,7 @@ func removeOpencodeProviders(cfg map[string]any) {
 	delete(provider, "deepseek")
 	delete(provider, "openai")
 	delete(provider, "anthropic")
+	delete(provider, "opencode")
 	if len(provider) == 0 {
 		delete(cfg, "provider")
 	}

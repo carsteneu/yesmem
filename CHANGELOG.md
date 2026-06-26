@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add security-review skill + yesloop Phase 5 integration
+- Respect opencode.jsonc priority over opencode.json
+- Add opencode provider to default settings
+- Sharpen merge policy — agents NEVER merge to main
+- Build opencode provider override dynamically
 - Add opencode.json helper section for agents
 - Install opencode /yesloop command during setup
 - Add done-verify state machine (Layer 3)
@@ -24,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Thread model param through verifyLLMConnection
+- Thread primaryModel/smallModel through installOpencodePlugin
 - Sync Decisions-resolved field to bundled-commands template
 - Add Decisions-resolved field to Phase 2 PLAN
 - Derive primary/smallModel from chosen provider, not hardcoded deepseek

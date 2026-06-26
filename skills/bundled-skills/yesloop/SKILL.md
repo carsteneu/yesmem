@@ -125,6 +125,7 @@ These patterns cause the guard to reject the DONE claim:
 | Status on same line as header | `### Phase N: → **Status:**` inline | Status must be on its own `**Status:**` line |
 | Missing Stage 2 header | No `**Stage 2: Cold Review` in Phase 5 | Stage 2 is mandatory per Learning #75412 |
 | Missing orchestrator notification | No `send_to orchestrator:` in Phase 6 | Orchestrator must be notified for DONE |
+| Missing **Security:** field in Phase 5 | No `**Security:**` line in Phase 5 block | Security review (item 6) is mandatory per security-review skill integration |
 | Partial fields in Phase 5 | No issue breakdown, no Subagent ID | Self-Review must be structured |
 | No deploy evidence in Phase 6 | No `Deploy executed:` or `Deploy required:` | Must document deployment outcome |
 | Missing status line | Phase block exists but no `**Status:**` | Every phase needs a status |
@@ -261,10 +262,14 @@ update_agent_status(phase="Phase 5/6 REVIEW")
 **Merged assessment:** Yes | With fixes | No — <reasoning>
 **Fix commits:** <hashes or "none needed">
 
+**Security:** <findings list with NEW/MODIFIED distinction per security-review skill, OR "none — diff reviewed, no findings", OR "skipped — diff is docs-only">
+
 **REVIEW→VERIFY cycles used:** N/3
 ```
 
-**Stage 1 — Self-Review** (catches mechanical issues): Get full delta `git diff origin/main` + `git log origin/main..HEAD --oneline`. Checklist: Plan alignment, Code quality, Architecture, Testing, Production readiness, Second-order effects ("if this ships, what happens next? trace 2+ levels"), Assumption surfacing ("what must be TRUE for this to work?").
+**Stage 1 — Self-Review** (catches mechanical issues): Get full delta `git diff origin/main` + `git log origin/main..HEAD --oneline`. Checklist: Plan alignment, Code quality, Architecture, Testing, Production readiness, **Security (item 6 — MANDATORY)**, Second-order effects ("if this ships, what happens next? trace 2+ levels"), Assumption surfacing ("what must be TRUE for this to work?").
+
+**Stage 1 Item 6 — Security (MANDATORY):** INVOKE the `security-review` skill via the Skill tool when the diff contains ANY executable code (`.go/.py/.js/.ts/.tsx/.jsx/.java/.rs/.php/.rb`). Apply the NEW/MODIFIED doctrine: for NEW code (diff-added), fix ALL findings HIGH/MEDIUM/LOW; for MODIFIED code (existing function touched), fix issues the diff introduces and document pre-existing issues as OUT OF SCOPE with a Learning reference. Skip ONLY if the diff is docs/config/comments-only — then record `skipped — diff is docs-only` in `**Security:**`. Every finding line carries either a fix-commit-hash, a "not exploitable because X" note, or an OUT-OF-SCOPE annotation.
 
 **Stage 2 — Cold Review via task()** (fresh eyes, catches architectural blind spots):
 - Dispatch focused task()-subagent with code-reviewer template (superpowers requesting-code-review)
@@ -291,16 +296,20 @@ update_agent_status(phase="Phase 6/6 FINISH")
 **Deploy required:** yes (binary/skill/cap/code change) | no (docs/config only)
 **Deploy executed:** yes — <evidence: make build output, md5sum diff>
   | no — <REASON. Default: BLOCKED, escalate to orchestrator>
-**PR created:** yes — <url> | no — <reason>
-**Worktree:** kept (pending merge confirmation) | deleted
+**Branch pushed:** yes — <git log origin/<branch> -1 output> | no — <reason>
+**PR created:** yes — <url> | no — left for orchestrator
+**Merged to main:** NO — agents do not merge (merge is orchestrator-only)
+**Worktree:** kept (pending merge confirmation)
 **send_to orchestrator:** yes — <timestamp>
 **set_plan complete:** yes
 ```
 
-- **Default: Create PR** from worktree branch to main
-- **`--merge` flag:** merge PR after all checks pass (only if user requested)
-- Without `--merge`: send_to caller_session: "DONE: <summary>. PR: <url>"
-- **Do NOT delete worktree** — keep until user confirms merge
+- **Merge policy: Agents NEVER merge to main themselves.**
+  - Default: push the worktree branch to origin, create a PR (or leave for the orchestrator to create one), then `send_to caller_session: "DONE: <summary>. Branch: <name>. Awaiting merge."`
+  - `--merge` flag on the /yesloop command means the **orchestrator** requested auto-merge after PR checks pass. Even then the agent only pushes the branch and reports the PR URL — it does not run `git merge main` / `git checkout main && git merge <branch>` itself. The orchestrator handles the merge.
+  - Running `git checkout main` + `git merge <branch>` inside the agent's Phase 6 is ALWAYS wrong, regardless of flag, confidence, or test results. The agent's git scope is its worktree branch. Main is the orchestrator's scope.
+  - Rationale: the orchestrator owns release decisions, rollback, commit-message control, and PR review. A self-merge bypasses all four.
+- **Do NOT delete worktree** — keep until the orchestrator confirms the merge is done.
 
 ## Mini Example (filled Phase 3, others stubbed)
 
@@ -361,6 +370,7 @@ update_agent_status(phase="Phase 6/6 FINISH")
   Findings: same 2 Important + 4 Minor
   Merged assessment: With fixes — fix both IMPORTANTs before merge
   Fix commits: cd2ba04 fix(config): proxy_state dual-write + type coercion
+  **Security:** none — diff reviewed, no HIGH/MEDIUM/LOW findings
 
 ### Phase 6: FINISH
 **Status:** COMPLETE

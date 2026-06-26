@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/carsteneu/yesmem/internal/opencode"
 )
 
 // modelsJSONEntry represents one provider entry in OpenCode's models.json cache.
@@ -84,7 +86,8 @@ func loadModelsJSON(path string) (map[string]modelsJSONEntry, error) {
 	return entries, nil
 }
 
-// loadOpenCodeConfig reads opencode.json and extracts provider configurations.
+// loadOpenCodeConfig reads opencode's config (opencode.jsonc/json/config.json —
+// resolved by opencode.ConfigPath) and extracts provider configurations.
 // Returns a map of providerID → provider block.
 func loadOpenCodeConfig(path string) (map[string]opencodeProviderBlock, error) {
 	if path == "" {
@@ -92,21 +95,21 @@ func loadOpenCodeConfig(path string) (map[string]opencodeProviderBlock, error) {
 		if err != nil {
 			return nil, err
 		}
-		path = filepath.Join(home, ".config", "opencode", "opencode.json")
+		path = opencode.ConfigPath(home)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil // No opencode config — skip silently
 		}
-		return nil, fmt.Errorf("read opencode.json: %w", err)
+		return nil, fmt.Errorf("read opencode config %s: %w", path, err)
 	}
-	// opencode.json has a top-level "provider" key
+	// opencode config has a top-level "provider" key
 	var cfg struct {
 		Provider map[string]opencodeProviderBlock `json:"provider"`
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parse opencode.json: %w", err)
+		return nil, fmt.Errorf("parse opencode config %s: %w", path, err)
 	}
 	return cfg.Provider, nil
 }
@@ -237,12 +240,12 @@ func maybePatchOpenCodeBaseURL(path string, active []autoDiscoveredProvider) (bo
 		if err != nil {
 			return false, err
 		}
-		path = filepath.Join(home, ".config", "opencode", "opencode.json")
+		path = opencode.ConfigPath(home)
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return false, fmt.Errorf("read opencode.json: %w", err)
+		return false, fmt.Errorf("read opencode config %s: %w", path, err)
 	}
 
 	// Deduplicate: one provider may have many models
@@ -258,7 +261,7 @@ func maybePatchOpenCodeBaseURL(path string, active []autoDiscoveredProvider) (bo
 
 	var cfg map[string]interface{}
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return false, fmt.Errorf("parse opencode.json: %w", err)
+		return false, fmt.Errorf("parse opencode config %s: %w", path, err)
 	}
 
 	providerSection, ok := cfg["provider"].(map[string]interface{})
@@ -292,11 +295,11 @@ func maybePatchOpenCodeBaseURL(path string, active []autoDiscoveredProvider) (bo
 	// Write back with indentation
 	out, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		return false, fmt.Errorf("marshal opencode.json: %w", err)
+		return false, fmt.Errorf("marshal opencode config: %w", err)
 	}
 	out = append(out, '\n')
 	if err := os.WriteFile(path, out, 0644); err != nil {
-		return false, fmt.Errorf("write opencode.json: %w", err)
+		return false, fmt.Errorf("write opencode config %s: %w", path, err)
 	}
 	return true, nil
 }

@@ -53,7 +53,7 @@ func TestDefaultOpencodeSettings_HasRequiredKeys(t *testing.T) {
 	if !ok || env["YESMEM_SOURCE_AGENT"] != "opencode" {
 		t.Errorf("mcp.yesmem.environment.YESMEM_SOURCE_AGENT should be opencode, got %v", yesmem["environment"])
 	}
-		if yesmem["timeout"] != 60000 {
+	if yesmem["timeout"] != 60000 {
 		t.Errorf("wrong mcp timeout: got %v, want 60000", yesmem["timeout"])
 	}
 
@@ -106,6 +106,83 @@ func TestRemoveOpencodeProviders_AllYesMem(t *testing.T) {
 
 	if cfg["provider"] != nil {
 		t.Error("provider key should be removed when empty")
+	}
+}
+
+func TestDefaultOpencodeSettings_IncludesOpencodeProvider(t *testing.T) {
+	s := defaultOpencodeSettings()
+	provider := s["provider"].(map[string]any)
+
+	opencode, ok := provider["opencode"].(map[string]any)
+	if !ok {
+		t.Fatal("missing provider.opencode")
+	}
+
+	if opencode["npm"] != "@ai-sdk/openai-compatible" {
+		t.Errorf("provider.opencode.npm should be @ai-sdk/openai-compatible, got %v", opencode["npm"])
+	}
+
+	opts, ok := opencode["options"].(map[string]any)
+	if !ok {
+		t.Fatal("missing provider.opencode.options")
+	}
+	if opts["baseURL"] != "http://localhost:9099/v1" {
+		t.Errorf("provider.opencode.options.baseURL should be http://localhost:9099/v1, got %v", opts["baseURL"])
+	}
+
+	models, ok := opencode["models"].(map[string]any)
+	if !ok {
+		t.Fatal("missing provider.opencode.models")
+	}
+	bigPickle, ok := models["big-pickle"].(map[string]any)
+	if !ok {
+		t.Fatal("missing provider.opencode.models.big-pickle")
+	}
+	if bigPickle["name"] != "Big Pickle" {
+		t.Errorf("big-pickle name should be 'Big Pickle', got %v", bigPickle["name"])
+	}
+}
+
+func TestDefaultOpencodeSettings_OpencodeProviderHasMCPAllowHeader(t *testing.T) {
+	s := defaultOpencodeSettings()
+	provider := s["provider"].(map[string]any)
+
+	opencode, ok := provider["opencode"].(map[string]any)
+	if !ok {
+		t.Fatal("missing provider.opencode")
+	}
+
+	opts, ok := opencode["options"].(map[string]any)
+	if !ok {
+		t.Fatal("missing provider.opencode.options")
+	}
+
+	headers, ok := opts["headers"].(map[string]any)
+	if !ok {
+		t.Fatal("missing provider.opencode.options.headers")
+	}
+
+	if headers["x-yesmem-allow-mcp"] != "1" {
+		t.Errorf("x-yesmem-allow-mcp header should be '1', got %v", headers["x-yesmem-allow-mcp"])
+	}
+}
+
+func TestRemoveOpencodeProviders_DeletesOpencode(t *testing.T) {
+	cfg := map[string]any{
+		"provider": map[string]any{
+			"opencode": map[string]any{"options": map[string]any{"baseURL": "x"}},
+			"custom":   map[string]any{"options": map[string]any{"baseURL": "y"}},
+		},
+	}
+
+	removeOpencodeProviders(cfg)
+
+	provider := cfg["provider"].(map[string]any)
+	if provider["opencode"] != nil {
+		t.Error("opencode provider not removed")
+	}
+	if provider["custom"] == nil {
+		t.Error("custom provider was incorrectly removed")
 	}
 }
 
@@ -564,5 +641,233 @@ func TestMergeOpencodeSettings_UpgradesOldTimeout(t *testing.T) {
 	yesmem := cfg["mcp"].(map[string]any)["yesmem"].(map[string]any)
 	if yesmem["timeout"] != float64(60000) {
 		t.Errorf("old timeout not upgraded in merge: got %v, want 60000", yesmem["timeout"])
+	}
+}
+
+// --- opencode.jsonc priority tests ---
+
+func TestOpencodeConfigPath_PrefersJsonc(t *testing.T) {
+	tmpDir := t.TempDir()
+	home := filepath.Join(tmpDir, "home")
+	dir := filepath.Join(home, ".config", "opencode")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	jsonc := filepath.Join(dir, "opencode.jsonc")
+	jsonF := filepath.Join(dir, "opencode.json")
+	if err := os.WriteFile(jsonc, []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(jsonF, []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	got := opencodeConfigPath(home)
+	if got != jsonc {
+		t.Errorf("expected %s, got %s", jsonc, got)
+	}
+}
+
+func TestOpencodeConfigPath_FallbackToJson(t *testing.T) {
+	tmpDir := t.TempDir()
+	home := filepath.Join(tmpDir, "home")
+	dir := filepath.Join(home, ".config", "opencode")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	jsonF := filepath.Join(dir, "opencode.json")
+	if err := os.WriteFile(jsonF, []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	got := opencodeConfigPath(home)
+	if got != jsonF {
+		t.Errorf("expected %s, got %s", jsonF, got)
+	}
+}
+
+func TestOpencodeConfigPath_FallbackToConfigJson(t *testing.T) {
+	tmpDir := t.TempDir()
+	home := filepath.Join(tmpDir, "home")
+	dir := filepath.Join(home, ".config", "opencode")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(cfg, []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	got := opencodeConfigPath(home)
+	if got != cfg {
+		t.Errorf("expected %s, got %s", cfg, got)
+	}
+}
+
+func TestOpencodeConfigPath_CreatesJsoncIfNoneExist(t *testing.T) {
+	tmpDir := t.TempDir()
+	home := filepath.Join(tmpDir, "home")
+	dir := filepath.Join(home, ".config", "opencode")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	expected := filepath.Join(dir, "opencode.jsonc")
+	got := opencodeConfigPath(home)
+	if got != expected {
+		t.Errorf("expected %s, got %s", expected, got)
+	}
+	// Must NOT create the file.
+	if _, err := os.Stat(expected); !os.IsNotExist(err) {
+		t.Errorf("opencodeConfigPath created the file (expected to defer creation): %v", err)
+	}
+}
+
+// --- migrateOpencodeJsonToJsonc tests ---
+
+func writeOpencodeJSON(t *testing.T, home, body string) {
+	t.Helper()
+	dir := filepath.Join(home, ".config", "opencode")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "opencode.json"), []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeOpencodeJSONC(t *testing.T, home, body string) {
+	t.Helper()
+	dir := filepath.Join(home, ".config", "opencode")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "opencode.jsonc"), []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMigrateOpencodeJsonToJsonc_MigratesYesmemContent(t *testing.T) {
+	tmpDir := t.TempDir()
+	home := filepath.Join(tmpDir, "home")
+	writeOpencodeJSON(t, home, `{
+	  "$schema": "https://opencode.ai/config.json",
+	  "provider": {
+	    "deepseek": {"options": {"baseURL": "http://localhost:9099/v1"}}
+	  },
+	  "mcp": {"yesmem": {"type": "local"}}
+	}`)
+
+	if err := migrateOpencodeJsonToJsonc(home); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	jsonc := filepath.Join(home, ".config", "opencode", "opencode.jsonc")
+	data, err := os.ReadFile(jsonc)
+	if err != nil {
+		t.Fatalf("jsonc not written: %v", err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	prov, ok := cfg["provider"].(map[string]any)
+	if !ok || prov["deepseek"] == nil {
+		t.Errorf("deepseek provider not migrated: %v", cfg["provider"])
+	}
+	mcp, ok := cfg["mcp"].(map[string]any)
+	if !ok || mcp["yesmem"] == nil {
+		t.Errorf("mcp.yesmem not migrated: %v", cfg["mcp"])
+	}
+	// $schema must be preserved at the top.
+	if cfg["$schema"] == nil {
+		t.Error("$schema missing from migrated jsonc")
+	}
+}
+
+func TestMigrateOpencodeJsonToJsonc_PreservesJsoncUserContent(t *testing.T) {
+	tmpDir := t.TempDir()
+	home := filepath.Join(tmpDir, "home")
+	writeOpencodeJSON(t, home, `{
+	  "provider": {
+	    "deepseek": {"options": {"baseURL": "http://localhost:9099/v1"}},
+	    "openai": {"options": {"baseURL": "http://localhost:9099/v1"}}
+	  },
+	  "mcp": {"yesmem": {"type": "local"}}
+	}`)
+	// User has manually edited jsonc with a non-yesmem provider — must not be clobbered.
+	writeOpencodeJSONC(t, home, `{
+	  "$schema": "https://opencode.ai/config.json",
+	  "provider": {
+	    "custom-vendor": {"options": {"baseURL": "https://example.com/v1"}}
+	  }
+	}`)
+
+	before, err := os.ReadFile(filepath.Join(home, ".config", "opencode", "opencode.jsonc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := migrateOpencodeJsonToJsonc(home); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	after, err := os.ReadFile(filepath.Join(home, ".config", "opencode", "opencode.jsonc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("jsonc was modified despite user content being present.\nbefore: %s\nafter:  %s", before, after)
+	}
+}
+
+func TestMigrateOpencodeJsonToJsonc_Idempotent(t *testing.T) {
+	tmpDir := t.TempDir()
+	home := filepath.Join(tmpDir, "home")
+	writeOpencodeJSON(t, home, `{"provider": {"deepseek": {"options": {"baseURL": "http://localhost:9099/v1"}}}}`)
+	writeOpencodeJSONC(t, home, `{
+	  "$schema": "https://opencode.ai/config.json",
+	  "provider": {
+	    "deepseek": {"options": {"baseURL": "http://localhost:9099/v1"}}
+	  }
+	}`)
+	before, err := os.ReadFile(filepath.Join(home, ".config", "opencode", "opencode.jsonc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateOpencodeJsonToJsonc(home); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	after, err := os.ReadFile(filepath.Join(home, ".config", "opencode", "opencode.jsonc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("jsonc modified despite already having yesmem content (not idempotent)")
+	}
+}
+
+func TestMigrateOpencodeJsonToJsonc_NoJsonPresent(t *testing.T) {
+	tmpDir := t.TempDir()
+	home := filepath.Join(tmpDir, "home")
+	dir := filepath.Join(home, ".config", "opencode")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Only jsonc exists — migration is a no-op.
+	writeOpencodeJSONC(t, home, `{"$schema": "https://opencode.ai/config.json"}`)
+	before, err := os.ReadFile(filepath.Join(dir, "opencode.jsonc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateOpencodeJsonToJsonc(home); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	after, err := os.ReadFile(filepath.Join(dir, "opencode.jsonc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("jsonc modified despite no opencode.json being present")
+	}
+	// opencode.json must not have been created.
+	if _, err := os.Stat(filepath.Join(dir, "opencode.json")); !os.IsNotExist(err) {
+		t.Errorf("opencode.json unexpectedly created by migration")
 	}
 }
