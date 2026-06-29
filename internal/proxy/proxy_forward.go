@@ -25,6 +25,10 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 
 	targetURL := s.resolveAnthropicTarget(extractModelFromBody(body)) + origReq.URL.RequestURI()
 
+	// Strip provider prefix before forwarding (opencode sends "providerID/modelID"
+	// but Anthropic API expects bare model names). No-op when body has no prefix.
+	body = stripProviderPrefixFromBody(body)
+
 	proxyReq, err := http.NewRequestWithContext(origReq.Context(), origReq.Method, targetURL, bytes.NewReader(body))
 	if err != nil {
 		s.logger.Printf("create request error: %v", err)
@@ -411,6 +415,10 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 // forwardRaw forwards a request to the upstream API without any annotation extraction.
 func (s *Server) forwardRaw(w http.ResponseWriter, origReq *http.Request, body []byte) {
 	targetURL := s.resolveAnthropicTarget(extractModelFromBody(body)) + origReq.URL.RequestURI()
+
+	// Strip provider prefix before forwarding (opencode sends "providerID/modelID"
+	// but Anthropic API expects bare model names). No-op when body has no prefix.
+	body = stripProviderPrefixFromBody(body)
 
 	proxyReq, err := http.NewRequestWithContext(origReq.Context(), origReq.Method, targetURL, bytes.NewReader(body))
 	if err != nil {

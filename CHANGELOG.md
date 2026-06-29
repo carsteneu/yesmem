@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Prefix bare model names with opencode/ for opencode CLI
+- Strip providerID/ prefix from model field before forwarding
+
+## [2.2.1] - 2026-06-29
+
 ### Added
 
 - Enable MCP tools in llm() subprocess (v189)
@@ -3054,7 +3061,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add comprehensive tests for generator and storage
 
 
-[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.2.1...HEAD
+[2.2.1]: https://github.com/carsteneu/yesmem/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/carsteneu/yesmem/compare/v2.1.21...v2.2.0
 [2.1.21]: https://github.com/carsteneu/yesmem/compare/v2.1.20...v2.1.21
 [2.1.20]: https://github.com/carsteneu/yesmem/compare/v2.1.19...v2.1.20
