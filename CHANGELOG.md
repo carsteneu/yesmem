@@ -9,12 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Enable MCP tools in llm() subprocess (v189)
 - Strict project resolution with hard-error on ambiguity + briefing DisplayName
 - Migration v0.65 backfills project_fullpath + ResolveProjectShortStrict
 - ProjectShortFromPath returns full abs path, ProjectMatches becomes equality
 
 ### Fixed
 
+- Jq array unwrap bug + defensive auto-create (v188)
 - Normalize project in UpsertSession/InsertLearningBatch + GetRecentNarratives canonical
 
 ### Testing

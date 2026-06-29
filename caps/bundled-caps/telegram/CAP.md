@@ -1,7 +1,7 @@
 ---
 name: telegram
 description: "Bidirectional Telegram messaging via Bot API — send messages, poll for updates, reply via headless agent."
-version: 187
+version: 189
 tags: [telegram, bot, messaging]
 scope: user
 auto_active: true
@@ -228,9 +228,12 @@ shopt -u nocasematch
 if [ -n "$NAME" ] && [ -n "$UPSERT_PAYLOAD" ]; then
   # Reorder: set new default FIRST, then reset others. Avoids window with no is_default=1 row.
   echo "$UPSERT_PAYLOAD" | while IFS= read -r p; do store "$p" > /dev/null; done
+  # Reset is_default on every OTHER row that currently has is_default=1.
+  # Bug fix: previous version wrapped in [] producing a single JSON array line;
+  # the `while read` loop processed only that one line, store failed silently,
+  # and stale is_default=1 rows survived. Now jq emits one object per line.
   OTHERS=$(store '{"capability":"telegram","action":"query","table":"sessions","where":"is_default=1","order":"id ASC"}')
-  OTHERS_TO_RESET=$(echo "$OTHERS" | yesmem json -r '[.rows[] | select(.name != $NAME) | {capability:"telegram",action:"upsert",table:"sessions",data:{name:.name,is_default:0}}]' --arg NAME "$NAME")
-  echo "$OTHERS_TO_RESET" | while IFS= read -r p; do store "$p" > /dev/null; done
+  echo "$OTHERS" | yesmem json -r --arg NAME "$NAME" '.rows[] | select(.name != $NAME) | {capability:"telegram",action:"upsert",table:"sessions",data:{name:.name,is_default:0}}' | while IFS= read -r p; do store "$p" > /dev/null; done
   MSG="Aktive Session: ${NAME}"
   if [ -n "$EXPLICIT_SESSION" ]; then MSG="${MSG}"$'\n'"Session: ${EXPLICIT_SESSION}"; fi
   curl -4 -s -m 10 "https://api.telegram.org/bot${TOKEN}/sendMessage" -d "chat_id=${CHAT_ID}" --data-urlencode "text=${MSG}" > /dev/null
@@ -241,11 +244,11 @@ fi
 # --- Normal reply path ---
 
 # Ensure sessions table exists (auto-create if missing — robustness against pre-setup installs).
-# cap_store create_table supports column-level constraints via {name, type, unique, not_null, primary_key}.
-# CapsUpsert auto-detects UNIQUE via PRAGMA index_list — works with column-level UNIQUE set here.
-TABLES=$(store '{"capability":"telegram","action":"list_tables"}')
-HAS_SESSIONS=$(echo "$TABLES" | yesmem json -r --arg t "sessions" '[.tables[].name] | index($t) != null' 2>/dev/null)
-if [ "$HAS_SESSIONS" != "true" ]; then
+# Probe via direct query instead of list_tables (which breaks if cap_store_meta has orphan rows
+# referencing dropped tables — see Learning #80227). Query returns a clean "does not exist" error
+# string when the table is missing, which we detect explicitly.
+SESS_PROBE=$(store '{"capability":"telegram","action":"query","table":"sessions","limit":1}' 2>&1)
+if echo "$SESS_PROBE" | grep -q "does not exist"; then
   store '{"capability":"telegram","action":"create_table","table":"sessions","columns":[{"name":"name","type":"TEXT","unique":true},{"name":"session_id","type":"TEXT"},{"name":"is_default","type":"INTEGER"},{"name":"model","type":"TEXT"},{"name":"last_used_at","type":"TEXT"}]}' > /dev/null 2>&1
   printf '[%s] reply: auto-created sessions table\n' "$(date -Is)" >> /tmp/treply.log
 fi
@@ -278,7 +281,7 @@ if [ -n "$SESSION_MODEL" ]; then
 fi
 SYSPROMPT=$(store '{"capability":"telegram","action":"query","table":"config","where":"key=?","args":["system_prompt"],"limit":1}' | yesmem json -r '.rows[0].value // "Du bist ein hilfreicher Assistent."')
 
-RESULT=$(llm "$MODEL" "$SYSPROMPT" "Nachricht von $SENDER: $TEXT" "$SESSION_ID")
+RESULT=$(llm "$MODEL" "$SYSPROMPT" "Nachricht von $SENDER: $TEXT" "$SESSION_ID" "tools")
 LLM_EXIT=$?
 if [ "$LLM_EXIT" -ne 0 ]; then
   printf '[%s] reply: llm failed exit=%s\n' "$(date -Is)" "$LLM_EXIT" >> /tmp/treply.log
