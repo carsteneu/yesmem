@@ -254,6 +254,29 @@ func TestDoneVerify_State1_to_State2_NeedsBeweisenAndSendTo(t *testing.T) {
 
 // --- Helpers ---
 
+// TestDoneVerify_RelayMessage_MentionsSecurityReview: the verify relay message
+// must instruct the agent to run security-review and include the **Security:**
+// field. Guards against regression when the message is edited.
+func TestDoneVerify_RelayMessage_MentionsSecurityReview(t *testing.T) {
+	for _, needle := range []string{
+		"security-review",
+		"Phase 5",
+		"Security",
+		"BEWEISEN",
+		"send_to",
+	} {
+		if !strings.Contains(doneVerifyRelayMessage, needle) {
+			t.Errorf("doneVerifyRelayMessage missing %q\nfull message: %s", needle, doneVerifyRelayMessage)
+		}
+	}
+	// Must be metachar-free — no markdown, no backticks, no parens, no brackets.
+	for _, bad := range []string{"`", "(", ")", "[", "]", "{", "}"} {
+		if strings.Contains(doneVerifyRelayMessage, bad) {
+			t.Errorf("doneVerifyRelayMessage must be metachar-free but contains %q\nfull message: %s", bad, doneVerifyRelayMessage)
+		}
+	}
+}
+
 // forceRefireReady backdates lastRelayAt so the next check triggers a re-fire.
 func forceRefireReady(agentID string) {
 	yesloopDoneVerifyAgentsMu.Lock()
@@ -289,6 +312,7 @@ func buildDoneVerifyCompleteContent() string {
 **Status:** COMPLETE
 **Stage 2: Cold Review
 task() dispatched: yes
+**Security:** none
 
 ### Phase 6: FINISH
 **Status:** COMPLETE

@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -132,7 +133,7 @@ func TestMergeOpencodeJSON_AddsPlugin(t *testing.T) {
 	os.Setenv("HOME", dir)
 	defer os.Setenv("HOME", origHome)
 
-	err := mergeOpencodeJSON(dir, "/test/plugin/index.ts")
+	err := mergeOpencodeJSON(dir, "/test/plugin/index.ts", "", "")
 	if err != nil {
 		t.Fatalf("merge: %v", err)
 	}
@@ -154,7 +155,7 @@ func TestMergeOpencodeJSON_Idempotent(t *testing.T) {
 	os.Setenv("HOME", dir)
 	defer os.Setenv("HOME", origHome)
 
-	err := mergeOpencodeJSON(dir, "/test/plugin/index.ts")
+	err := mergeOpencodeJSON(dir, "/test/plugin/index.ts", "", "")
 	if err != nil {
 		t.Fatalf("merge: %v", err)
 	}
@@ -163,5 +164,85 @@ func TestMergeOpencodeJSON_Idempotent(t *testing.T) {
 	count := strings.Count(string(data), "/test/plugin/index.ts")
 	if count != 1 {
 		t.Errorf("expected 1 plugin entry, got %d: %s", count, string(data))
+	}
+}
+
+// Regression: step 7d (installOpencodePlugin) used to call mergeOpencodeSettings
+// WITHOUT the user-chosen model, which wrote the hardcoded deepseek-reasoner
+// default. Step 7d2 (mergeOpencodeSettingsWith) was then unable to overwrite it
+// because deepMergeJSON preserves existing scalars. Result: users who chose
+// big-pickle (or any non-DeepSeek model) at install time still ended up with
+// deepseek/deepseek-reasoner in opencode.json.
+//
+// Fix: thread primaryModel/smallModel through installOpencodePlugin and
+// mergeOpencodeJSON so the user's choice is written in a single pass.
+func TestInstallOpencodePlugin_PreservesChosenModel(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, ".config", "opencode")
+	os.MkdirAll(cfgDir, 0755)
+	// Fresh opencode install: no opencode.json present, so opencodeConfigPath
+	// resolves to opencode.jsonc (opencode's preferred format). Writes must
+	// land there, not in the legacy opencode.json.
+	cfgPath := filepath.Join(cfgDir, "opencode.jsonc")
+
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", dir)
+	defer os.Setenv("HOME", origHome)
+
+	// Simulate step 7d with the user-chosen model threaded through.
+	if err := installOpencodePlugin(dir, "/test/yesmem", "opencode/big-pickle", "opencode/big-pickle"); err != nil {
+		t.Fatalf("installOpencodePlugin: %v", err)
+	}
+
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read opencode.jsonc: %v", err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if m := cfg["model"]; m != "opencode/big-pickle" {
+		t.Errorf("model = %v, want opencode/big-pickle (user-chosen model must win over hardcoded deepseek default)", m)
+	}
+	if m := cfg["small_model"]; m != "opencode/big-pickle" {
+		t.Errorf("small_model = %v, want opencode/big-pickle", m)
+	}
+}
+
+// TestVerifyLLMConnection_UsesActualModel verifies the model parameter threads
+// through to the resolver instead of being silently replaced by the hardcoded
+// "haiku" tier shortname. For arbitrary model IDs (e.g. opencode free-tier
+// "big-pickle") the value must pass through unchanged so the opencode CLI
+// subprocess receives a model that actually exists in the user's config.
+func TestVerifyLLMConnection_UsesActualModel(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider string
+		model    string
+		want     string
+	}{
+		// Arbitrary model IDs must pass through unchanged for every provider.
+		{"opencode big-pickle", "opencode", "big-pickle", "big-pickle"},
+		{"api custom model", "api", "claude-custom-test", "claude-custom-test"},
+		{"openai_compatible custom", "openai_compatible", "deepseek-v4-pro", "deepseek-v4-pro"},
+		// Tier shortnames still resolve to provider-specific IDs.
+		{"api haiku tier", "api", "haiku", "claude-haiku-4-5-20251001"},
+		{"openai haiku tier", "openai", "haiku", "gpt-5-mini"},
+		{"api sonnet tier", "api", "sonnet", "claude-sonnet-4-6"},
+		// Empty model falls back to haiku tier semantics.
+		{"empty model api", "api", "", "claude-haiku-4-5-20251001"},
+		{"empty model openai", "openai", "", "gpt-5-mini"},
+		{"whitespace model api", "api", "   ", "claude-haiku-4-5-20251001"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveLLMModelIDForVerify(tt.provider, tt.model)
+			if got != tt.want {
+				t.Errorf("resolveLLMModelIDForVerify(%q, %q) = %q, want %q",
+					tt.provider, tt.model, got, tt.want)
+			}
+		})
 	}
 }

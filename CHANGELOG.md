@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Mandate whoami() with session-id retry at Phase 1
+- /models lists configured providers from opencode.json (v184)
+- Per-session model override via /model command (v182)
+- Multi-session switching for telegram_reply cap
+- Add security-review skill + yesloop Phase 5 integration
+- Respect opencode.jsonc priority over opencode.json
+- Add opencode provider to default settings
+- Sharpen merge policy — agents NEVER merge to main
+- Build opencode provider override dynamically
 - Add opencode.json helper section for agents
 - Install opencode /yesloop command during setup
 - Add done-verify state machine (Layer 3)
@@ -22,8 +31,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Staged skill suggestion on user messages
 - Config.yaml read-write for set_config/get_config + CLI
 
+### Changed
+
+- Remove legacy internal/daemon/caps/telegram/CAP.md (v1, not embedded)
+- Use cap_store unique:true instead of sqlite3 CLI, yesmem json instead of python3 (v186)
+
 ### Fixed
 
+- Pass --model to opencode subprocess in stdinArgs
+- /models jq pipeline without -R -s (slurp broke object input)
+- Auto-create UNIQUE INDEX on sessions.name (v183)
+- Merge v180 conversations table into v169 sessions logic (v181)
+- Respect provider_targets in buildAutoProviderTargets
+- Thread openaiBaseURL through verifyLLMConnection
+- Route opencode free-tier models without credentials
+- Thread model param through verifyLLMConnection
+- Thread primaryModel/smallModel through installOpencodePlugin
 - Sync Decisions-resolved field to bundled-commands template
 - Add Decisions-resolved field to Phase 2 PLAN
 - Derive primary/smallModel from chosen provider, not hardcoded deepseek
@@ -58,6 +81,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Full slash-command reference table in Purpose (v185)
 - Promote cross-backend USP + re-evaluate yesloopultra
 - Add YesLoop vs Claude Code /loop and /goal comparison
 - Rename tagline 'for Claude Code' → 'for coding agents'

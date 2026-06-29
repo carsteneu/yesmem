@@ -1,7 +1,7 @@
 ---
 name: telegram
 description: "Bidirectional Telegram messaging via Bot API — send messages, poll for updates, reply via headless agent."
-version: 168
+version: 187
 tags: [telegram, bot, messaging]
 scope: user
 auto_active: true
@@ -10,6 +10,25 @@ auto_active: true
 ## Purpose
 
 Bidirectional Telegram messaging via Bot API — send messages, poll for updates, reply via headless agent.
+
+In-band slash commands (case-insensitive, processed before LLM invocation):
+
+| Command | Effect |
+|---|---|
+| `/sessions` | List all registered sessions, active marked with `(*)` |
+| `/use <name>` | Switch to session `<name>` (creates it with empty session_id if new) |
+| `/use <name> <session_id>` | Switch and explicitly set a session_id (resume existing opencode session) |
+| `/status` | Show active session's name, session_id, last_used_at |
+| `/model` | Show active model (session-specific or global default) |
+| `/model <provider/model>` | Set model for active session (e.g. `deepseek/deepseek-v4-pro`) |
+| `/model default` | Clear session-specific model (alias: `clear`, `reset`) → falls back to global |
+| `/models` | List configured `provider/model` entries from `~/.config/opencode/opencode.json` |
+
+**Active session** is tracked in `cap_telegram__sessions` (column `is_default=1`). Falls back to legacy `reply_session` config key when the sessions table is empty (backwards compatibility).
+
+**Model resolution** per reply: active session's `model` column → global `reply_model` config → Bash default `claude-sonnet-4-6`.
+
+Note: the `cap_telegram__sessions` table is created by `yesmem setup` or a one-shot `cap_store {action:"create_table", capability:"telegram", table:"sessions", columns:[...]}` call — the `## Database` SQL block below is NOT executed automatically by the CapsDirWatcher sync (Learning #55757).
 
 ## Scripts
 
@@ -85,11 +104,180 @@ SENDER=$(echo "$CLAIM" | yesmem json -r '.row.sender')
 printf '[%s] reply: replying row=%s sender=%s text=%s\n' "$(date -Is)" "$ROW_ID" "$SENDER" "${TEXT:0:80}" >> /tmp/treply.log
 
 CHAT_ID=$(store '{"capability":"telegram","action":"query","table":"config","where":"key=?","args":["chat_id"],"limit":1}' | yesmem json -r '.rows[0].value')
-MODEL=$(store '{"capability":"telegram","action":"query","table":"config","where":"key=?","args":["reply_model"],"limit":1}' | yesmem json -r '.rows[0].value // "claude-sonnet-4-6"')
-SYSPROMPT=$(store '{"capability":"telegram","action":"query","table":"config","where":"key=?","args":["system_prompt"],"limit":1}' | yesmem json -r '.rows[0].value // "Du bist ein hilfreicher Assistent."')
-SESSION_ID=$(store '{"capability":"telegram","action":"query","table":"config","where":"key=?","args":["reply_session"],"limit":1}' | yesmem json -r '.rows[0].value // empty')
-
 TOKEN=$(store '{"capability":"telegram","action":"query","table":"config","where":"key=?","args":["bot_token"],"limit":1}' | yesmem json -r '.rows[0].value')
+
+# --- Command detection (case-insensitive) ---
+NAME=""
+UPSERT_PAYLOAD=""
+EXPLICIT_SESSION=""
+shopt -s nocasematch
+if [[ "$TEXT" =~ ^/use[[:space:]]+([A-Za-z0-9_-]{1,32})[[:space:]]+([A-Za-z0-9_-]{1,64})$ ]]; then
+  NAME="${BASH_REMATCH[1]}"
+  EXPLICIT_SESSION="${BASH_REMATCH[2]}"
+  UPSERT_PAYLOAD=$(yesmem json -n --arg name "$NAME" --arg sid "$EXPLICIT_SESSION" '{capability:"telegram","action":"upsert","table":"sessions","data":{name:$name,session_id:$sid,is_default:1}}')
+elif [[ "$TEXT" =~ ^/use[[:space:]]+([A-Za-z0-9_-]{1,32})$ ]]; then
+  NAME="${BASH_REMATCH[1]}"
+  EXISTS_PAYLOAD=$(yesmem json -n --arg name "$NAME" '{capability:"telegram","action":"query","table":"sessions","where":"name=?","args":[$name],"limit":1}')
+  EXISTS_COUNT=$(store "$EXISTS_PAYLOAD" | yesmem json '.rows | length')
+  # Partial-merge upsert: for existing rows, supply only {name, is_default} — session_id and last_used_at are preserved (cap_store upsert only updates fields in data dict).
+  if [ "$EXISTS_COUNT" = "1" ]; then
+    UPSERT_PAYLOAD=$(yesmem json -n --arg name "$NAME" '{capability:"telegram","action":"upsert","table":"sessions","data":{name:$name,is_default:1}}')
+  else
+    UPSERT_PAYLOAD=$(yesmem json -n --arg name "$NAME" '{capability:"telegram","action":"upsert","table":"sessions","data":{name:$name,session_id:"",is_default:1}}')
+  fi
+elif [[ "$TEXT" =~ ^/sessions?$ ]]; then
+  ROWS=$(store '{"capability":"telegram","action":"query","table":"sessions","order":"is_default DESC, name ASC"}')
+  COUNT=$(echo "$ROWS" | yesmem json '.rows | length')
+  if [ -z "$COUNT" ] || [ "$COUNT" = "0" ] || [ "$COUNT" = "null" ]; then
+    MSG="Keine Sessions registriert. /use <name> legt eine an."
+  else
+    MSG=$(echo "$ROWS" | yesmem json -r '"Sessions (\(.rows | length)):\n" + ([.rows[] | "  \(.name)\(if .is_default == 1 then " (*)" else "") [\(.session_id // "fresh")]"] | join("\n"))')
+  fi
+  curl -4 -s -m 10 "https://api.telegram.org/bot${TOKEN}/sendMessage" -d "chat_id=${CHAT_ID}" --data-urlencode "text=${MSG}" > /dev/null
+  printf '[%s] reply: /sessions -> %s\n' "$(date -Is)" "${COUNT:-0}" >> /tmp/treply.log
+  exit 0
+elif [[ "$TEXT" =~ ^/status$ ]]; then
+  STATUS_ROW=$(store '{"capability":"telegram","action":"query","table":"sessions","where":"is_default=1","limit":1}')
+  STATUS_NAME=$(echo "$STATUS_ROW" | yesmem json -r '.rows[0].name // empty')
+  STATUS_SID=$(echo "$STATUS_ROW" | yesmem json -r '.rows[0].session_id // empty')
+  STATUS_USED=$(echo "$STATUS_ROW" | yesmem json -r '.rows[0].last_used_at // empty')
+  if [ -z "$STATUS_NAME" ]; then
+    MSG="Keine aktive Session. /use <name> schaltet oder legt an."
+  else
+    MSG="Aktive Session: ${STATUS_NAME}"
+    if [ -n "$STATUS_SID" ]; then
+      MSG="${MSG} (session: ${STATUS_SID})"
+    else
+      MSG="${MSG} (neu, startet beim naechsten Reply)"
+    fi
+    if [ -n "$STATUS_USED" ]; then
+      MSG="${MSG}"$'\n'"Zuletzt genutzt: ${STATUS_USED}"
+    fi
+  fi
+  curl -4 -s -m 10 "https://api.telegram.org/bot${TOKEN}/sendMessage" -d "chat_id=${CHAT_ID}" --data-urlencode "text=${MSG}" > /dev/null
+  printf '[%s] reply: /status -> %s\n' "$(date -Is)" "${STATUS_NAME:-none}" >> /tmp/treply.log
+  exit 0
+elif [[ "$TEXT" =~ ^/use([[:space:]]|$) ]]; then
+  MSG=$'Usage: /use <name> | /use <name> <session_id>\nName: A-Z a-z 0-9 _ - (max 32).'
+  curl -4 -s -m 10 "https://api.telegram.org/bot${TOKEN}/sendMessage" -d "chat_id=${CHAT_ID}" --data-urlencode "text=${MSG}" > /dev/null
+  printf '[%s] reply: /use invalid syntax\n' "$(date -Is)" >> /tmp/treply.log
+  exit 0
+elif [[ "$TEXT" =~ ^/model$ ]]; then
+  ACTIVE_ROW=$(store '{"capability":"telegram","action":"query","table":"sessions","where":"is_default=1","limit":1}')
+  ACTIVE_NAME=$(echo "$ACTIVE_ROW" | yesmem json -r '.rows[0].name // empty')
+  ACTIVE_MODEL=$(echo "$ACTIVE_ROW" | yesmem json -r '.rows[0].model // empty')
+  GLOBAL_MODEL=$(store '{"capability":"telegram","action":"query","table":"config","where":"key=?","args":["reply_model"],"limit":1}' | yesmem json -r '.rows[0].value // "claude-sonnet-4-6"')
+  if [ -z "$ACTIVE_NAME" ]; then
+    MSG="Keine aktive Session. /use <name> zuerst, dann /model."
+  elif [ -n "$ACTIVE_MODEL" ]; then
+    MSG="Aktive Session: ${ACTIVE_NAME}\nModel: ${ACTIVE_MODEL} (session-spezifisch)\nGlobaler Default: ${GLOBAL_MODEL}"
+  else
+    MSG="Aktive Session: ${ACTIVE_NAME}\nModel: ${GLOBAL_MODEL} (globaler Default)\n/session-spezifisch setzen via: /model <name>"
+  fi
+  curl -4 -s -m 10 "https://api.telegram.org/bot${TOKEN}/sendMessage" -d "chat_id=${CHAT_ID}" --data-urlencode "text=${MSG}" > /dev/null
+  printf '[%s] reply: /status model -> %s\n' "$(date -Is)" "${ACTIVE_NAME:-none}" >> /tmp/treply.log
+  exit 0
+elif [[ "$TEXT" =~ ^/model[[:space:]]+([A-Za-z0-9_./-]{1,64})$ ]]; then
+  MODEL_ARG="${BASH_REMATCH[1]}"
+  ACTIVE_ROW=$(store '{"capability":"telegram","action":"query","table":"sessions","where":"is_default=1","limit":1}')
+  ACTIVE_NAME=$(echo "$ACTIVE_ROW" | yesmem json -r '.rows[0].name // empty')
+  if [ -z "$ACTIVE_NAME" ]; then
+    MSG="Keine aktive Session. /use <name> zuerst."
+    curl -4 -s -m 10 "https://api.telegram.org/bot${TOKEN}/sendMessage" -d "chat_id=${CHAT_ID}" --data-urlencode "text=${MSG}" > /dev/null
+    printf '[%s] reply: /model failed: no active session\n' "$(date -Is)" >> /tmp/treply.log
+    exit 0
+  fi
+  if [[ "$MODEL_ARG" =~ ^(default|clear|reset)$ ]]; then
+    CLEAR_PAYLOAD=$(yesmem json -n --arg name "$ACTIVE_NAME" '{capability:"telegram","action":"upsert","table":"sessions","data":{name:$name,model:null}}')
+    echo "$CLEAR_PAYLOAD" | while IFS= read -r p; do store "$p" > /dev/null; done
+    GLOBAL_MODEL=$(store '{"capability":"telegram","action":"query","table":"config","where":"key=?","args":["reply_model"],"limit":1}' | yesmem json -r '.rows[0].value // "claude-sonnet-4-6"')
+    MSG="Session ${ACTIVE_NAME}: model cleared → global default (${GLOBAL_MODEL})"
+  else
+    SET_PAYLOAD=$(yesmem json -n --arg name "$ACTIVE_NAME" --arg model "$MODEL_ARG" '{capability:"telegram","action":"upsert","table":"sessions","data":{name:$name,model:$model}}')
+    echo "$SET_PAYLOAD" | while IFS= read -r p; do store "$p" > /dev/null; done
+    MSG="Session ${ACTIVE_NAME}: model gesetzt auf ${MODEL_ARG}"
+  fi
+  curl -4 -s -m 10 "https://api.telegram.org/bot${TOKEN}/sendMessage" -d "chat_id=${CHAT_ID}" --data-urlencode "text=${MSG}" > /dev/null
+  printf '[%s] reply: /model -> %s=%s\n' "$(date -Is)" "$ACTIVE_NAME" "$MODEL_ARG" >> /tmp/treply.log
+  exit 0
+elif [[ "$TEXT" =~ ^/model([[:space:]]|$) ]]; then
+  MSG=$'Usage: /model | /model <name> | /model default\nName: A-Z a-z 0-9 _ . / - (max 64).'
+  curl -4 -s -m 10 "https://api.telegram.org/bot${TOKEN}/sendMessage" -d "chat_id=${CHAT_ID}" --data-urlencode "text=${MSG}" > /dev/null
+  printf '[%s] reply: /model invalid syntax\n' "$(date -Is)" >> /tmp/treply.log
+  exit 0
+elif [[ "$TEXT" =~ ^/models$ ]]; then
+  OC_CONFIG="${HOME}/.config/opencode/opencode.json"
+  if [ ! -f "$OC_CONFIG" ]; then
+    MSG="opencode.json nicht gefunden: $OC_CONFIG"
+  else
+    MSG=$(yesmem json -r < "$OC_CONFIG" '
+      [.provider // {} | to_entries[] | .key as $p |
+        (.value.models // {}) | keys[]? | "\($p)/\(.)"
+      ] as $explicit |
+      [.provider // {} | to_entries[] | select((.value.models // {}) == {}) | "\(.key)/* (default)"] as $default
+      | ($explicit + $default) | sort | unique | .[]
+    ' 2>&1)
+  fi
+  curl -4 -s -m 10 "https://api.telegram.org/bot${TOKEN}/sendMessage" -d "chat_id=${CHAT_ID}" --data-urlencode "text=${MSG}" > /dev/null
+  printf '[%s] reply: /models\n' "$(date -Is)" >> /tmp/treply.log
+  exit 0
+fi
+shopt -u nocasematch
+
+# --- /use switch execution (shared by both /use branches) ---
+if [ -n "$NAME" ] && [ -n "$UPSERT_PAYLOAD" ]; then
+  # Reorder: set new default FIRST, then reset others. Avoids window with no is_default=1 row.
+  echo "$UPSERT_PAYLOAD" | while IFS= read -r p; do store "$p" > /dev/null; done
+  OTHERS=$(store '{"capability":"telegram","action":"query","table":"sessions","where":"is_default=1","order":"id ASC"}')
+  OTHERS_TO_RESET=$(echo "$OTHERS" | yesmem json -r '[.rows[] | select(.name != $NAME) | {capability:"telegram",action:"upsert",table:"sessions",data:{name:.name,is_default:0}}]' --arg NAME "$NAME")
+  echo "$OTHERS_TO_RESET" | while IFS= read -r p; do store "$p" > /dev/null; done
+  MSG="Aktive Session: ${NAME}"
+  if [ -n "$EXPLICIT_SESSION" ]; then MSG="${MSG}"$'\n'"Session: ${EXPLICIT_SESSION}"; fi
+  curl -4 -s -m 10 "https://api.telegram.org/bot${TOKEN}/sendMessage" -d "chat_id=${CHAT_ID}" --data-urlencode "text=${MSG}" > /dev/null
+  printf '[%s] reply: /use -> %s\n' "$(date -Is)" "$NAME" >> /tmp/treply.log
+  exit 0
+fi
+
+# --- Normal reply path ---
+
+# Ensure sessions table exists (auto-create if missing — robustness against pre-setup installs).
+# cap_store create_table supports column-level constraints via {name, type, unique, not_null, primary_key}.
+# CapsUpsert auto-detects UNIQUE via PRAGMA index_list — works with column-level UNIQUE set here.
+TABLES=$(store '{"capability":"telegram","action":"list_tables"}')
+HAS_SESSIONS=$(echo "$TABLES" | yesmem json -r --arg t "sessions" '[.tables[].name] | index($t) != null' 2>/dev/null)
+if [ "$HAS_SESSIONS" != "true" ]; then
+  store '{"capability":"telegram","action":"create_table","table":"sessions","columns":[{"name":"name","type":"TEXT","unique":true},{"name":"session_id","type":"TEXT"},{"name":"is_default","type":"INTEGER"},{"name":"model","type":"TEXT"},{"name":"last_used_at","type":"TEXT"}]}' > /dev/null 2>&1
+  printf '[%s] reply: auto-created sessions table\n' "$(date -Is)" >> /tmp/treply.log
+fi
+
+# Lazy migration: seed sessions table from legacy reply_session config if empty (one-shot)
+SESS_COUNT=$(store '{"capability":"telegram","action":"query","table":"sessions","limit":1}' | yesmem json '.rows | length')
+if [ -z "$SESS_COUNT" ] || [ "$SESS_COUNT" = "0" ] || [ "$SESS_COUNT" = "null" ]; then
+  LEGACY_SESSION=$(store '{"capability":"telegram","action":"query","table":"config","where":"key=?","args":["reply_session"],"limit":1}' | yesmem json -r '.rows[0].value // empty')
+  if [ -n "$LEGACY_SESSION" ]; then
+    SEED=$(yesmem json -n --arg name "default" --arg sid "$LEGACY_SESSION" '{capability:"telegram","action":"upsert","table":"sessions","data":{name:$name,session_id:$sid,is_default:1}}')
+    echo "$SEED" | while IFS= read -r p; do store "$p" > /dev/null; done
+    # Clear legacy reply_session so re-seed cannot fire after manual row deletion
+    CLEAR=$(yesmem json -n '{capability:"telegram","action":"upsert","table":"config","data":{key:"reply_session",value:""}}')
+    echo "$CLEAR" | while IFS= read -r p; do store "$p" > /dev/null; done
+    printf '[%s] reply: seeded default session from reply_session config (legacy cleared)\n' "$(date -Is)" >> /tmp/treply.log
+  fi
+fi
+
+# Read active session_id (sessions table preferred, fallback to reply_session config)
+SESSION_ID=$(store '{"capability":"telegram","action":"query","table":"sessions","where":"is_default=1","limit":1}' | yesmem json -r '.rows[0].session_id // empty')
+if [ -z "$SESSION_ID" ]; then
+  SESSION_ID=$(store '{"capability":"telegram","action":"query","table":"config","where":"key=?","args":["reply_session"],"limit":1}' | yesmem json -r '.rows[0].value // empty')
+fi
+
+MODEL=$(store '{"capability":"telegram","action":"query","table":"config","where":"key=?","args":["reply_model"],"limit":1}' | yesmem json -r '.rows[0].value // "claude-sonnet-4-6"')
+# Per-session model overrides global reply_model when set
+SESSION_MODEL=$(store '{"capability":"telegram","action":"query","table":"sessions","where":"is_default=1","limit":1}' | yesmem json -r '.rows[0].model // empty')
+if [ -n "$SESSION_MODEL" ]; then
+  MODEL="$SESSION_MODEL"
+fi
+SYSPROMPT=$(store '{"capability":"telegram","action":"query","table":"config","where":"key=?","args":["system_prompt"],"limit":1}' | yesmem json -r '.rows[0].value // "Du bist ein hilfreicher Assistent."')
+
 RESULT=$(llm "$MODEL" "$SYSPROMPT" "Nachricht von $SENDER: $TEXT" "$SESSION_ID")
 LLM_EXIT=$?
 if [ "$LLM_EXIT" -ne 0 ]; then
@@ -111,8 +299,15 @@ fi
 
 NEW_SESSION=$(echo "$RESULT" | yesmem json -r '.session_id // empty')
 if [ -n "$NEW_SESSION" ]; then
-  SP=$(yesmem json -n --arg key "reply_session" --arg value "$NEW_SESSION" '{capability:"telegram",action:"upsert",table:"config",data:{key:$key,value:$value}}')
-  echo "$SP" | while IFS= read -r p; do store "$p" > /dev/null; done
+  ACTIVE_NAME=$(store '{"capability":"telegram","action":"query","table":"sessions","where":"is_default=1","limit":1}' | yesmem json -r '.rows[0].name // empty')
+  if [ -n "$ACTIVE_NAME" ]; then
+    NOW=$(date -Is)
+    WB=$(yesmem json -n --arg name "$ACTIVE_NAME" --arg sid "$NEW_SESSION" --arg ts "$NOW" '{capability:"telegram","action":"upsert","table":"sessions","data":{name:$name,session_id:$sid,is_default:1,last_used_at:$ts}}')
+    echo "$WB" | while IFS= read -r p; do store "$p" > /dev/null; done
+  else
+    SP=$(yesmem json -n --arg key "reply_session" --arg value "$NEW_SESSION" '{capability:"telegram","action":"upsert","table":"config","data":{key:$key,value:$value}}')
+    echo "$SP" | while IFS= read -r p; do store "$p" > /dev/null; done
+  fi
 fi
 
 SEND=$(curl -4 -s -m 10 "https://api.telegram.org/bot${TOKEN}/sendMessage" -d "chat_id=${CHAT_ID}" --data-urlencode "text=${REPLY}")
@@ -130,7 +325,18 @@ printf '[%s] reply: sent row=%s > %s\n' "$(date -Is)" "$ROW_ID" "${REPLY:0:60}" 
 CREATE TABLE IF NOT EXISTS cap_telegram__config (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     key TEXT NOT NULL UNIQUE,
-    value TEXT NOT NULL
+    value TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS cap_telegram__conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sender TEXT NOT NULL,
+    role TEXT NOT NULL,
+    text TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS cap_telegram__updates (
@@ -157,5 +363,16 @@ CREATE TABLE IF NOT EXISTS cap_telegram__reply_errors (
     stdout TEXT,
     model TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS cap_telegram__sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    session_id TEXT,
+    is_default INTEGER NOT NULL DEFAULT 0,
+    model TEXT,
+    last_used_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 ```
