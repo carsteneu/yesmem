@@ -308,8 +308,14 @@ func (c *CLIClient) stdinArgs(sessionID string) []string {
 		// Pass --model so opencode honors the requested model on both fresh
 		// sessions and resumes. Without this, opencode falls back to its
 		// opencode.json default and ignores the model field from llm().
+		// opencode's --model flag expects "providerID/modelID" format;
+		// a bare name like "big-pickle" produces "Unexpected server error".
 		if c.model != "" {
-			args = append(args, "--model", c.model)
+			m := c.model
+			if !strings.Contains(m, "/") {
+				m = "opencode/" + m
+			}
+			args = append(args, "--model", m)
 		}
 		if sessionID != "" {
 			args = append(args, "--session", sessionID)

@@ -647,6 +647,52 @@ func extractModelFromBody(body []byte) string {
 	return req.Model
 }
 
+// stripProviderPrefix returns the model name with any "providerID/" prefix
+// removed. opencode uses "providerID/modelID" internally but upstream APIs
+// (DeepSeek, OpenAI, Anthropic, opencode.ai/zen, etc.) expect bare model
+// names without the prefix. The heuristic is: any "/" in the model string is
+// treated as the opencode prefix separator (last "/" wins). Real upstream
+// model IDs do not contain "/", so this is safe for current providers; if a
+// future provider uses paths in model IDs, gate stripping behind an allowlist.
+func stripProviderPrefix(model string) string {
+	if idx := strings.LastIndex(model, "/"); idx >= 0 {
+		return model[idx+1:]
+	}
+	return model
+}
+
+// rewriteModelInBody returns a copy of body with the "model" field replaced.
+// Uses json.Decoder.UseNumber to preserve integer precision for non-model
+// fields (e.g. seed values > 2^53). Falls back to returning body unchanged
+// on any parse error — we never corrupt the request just because we couldn't
+// rewrite it.
+func rewriteModelInBody(body []byte, newModel string) []byte {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	var req map[string]any
+	if err := dec.Decode(&req); err != nil {
+		return body
+	}
+	req["model"] = newModel
+	out, err := json.Marshal(req)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
+// stripProviderPrefixFromBody returns body with the model's provider prefix
+// removed. If the body has no model field or the model has no "/", the
+// original body is returned unchanged.
+func stripProviderPrefixFromBody(body []byte) []byte {
+	model := extractModelFromBody(body)
+	stripped := stripProviderPrefix(model)
+	if stripped == model {
+		return body
+	}
+	return rewriteModelInBody(body, stripped)
+}
+
 func (s *Server) forwardOpenAIWithTracking(w http.ResponseWriter, origReq *http.Request, body []byte, reqIdx int, toolUseIDs []string, project string, threadID string, estimatedTokens, msgCount int, parser openAIUsageParser) {
 	model := extractModelFromBody(body)
 	targetURL := s.resolveOpenAITarget(model)
@@ -654,6 +700,14 @@ func (s *Server) forwardOpenAIWithTracking(w http.ResponseWriter, origReq *http.
 		targetURL = "https://api.openai.com"
 	}
 
+	// Strip provider prefix from model name. opencode sends "providerID/modelID"
+	// but upstream APIs expect bare model names. resolveOpenAITarget above keeps
+	// the prefixed name for routing; the rewrite below only affects the forwarded
+	// JSON body. Also update model so tracking reflects what the upstream sees.
+	if stripped := stripProviderPrefix(model); stripped != model {
+		body = rewriteModelInBody(body, stripped)
+		model = stripped
+	}
 	// When the upstream target has its own path component (e.g. https://api.z.ai/api/paas/v4),
 	// strip /v1 from the request URI to avoid double path segments (v4/v1/chat/completions).
 	// For plain host targets (e.g. https://api.deepseek.com), /v1 is correct.
