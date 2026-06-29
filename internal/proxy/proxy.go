@@ -524,7 +524,7 @@ func Run(cfg Config) error {
 
 	// Auto-discover provider targets from opencode config
 	if cfg.AutoConfigureProviders {
-		s.autoProviderTargets = runAutoDiscovery(s.logger)
+		s.autoProviderTargets = runAutoDiscovery(s.logger, cfg.ProviderTargets)
 	} else {
 		s.logger.Printf("[proxy] auto_configure_providers is disabled — skipping auto-discovery")
 	}

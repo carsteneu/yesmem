@@ -30,6 +30,7 @@ func compileValidations() []PhaseValidation {
 				regexp.MustCompile(`(?m)^\*\*Status:\*\*\s+(COMPLETE|BLOCKED|IN PROGRESS)`),
 				regexp.MustCompile(`(?m)^\*\*Goal understood:\*\*`),
 				regexp.MustCompile(`(?m)^\*\*Codebase explored:\*\*`),
+				regexp.MustCompile(`(?m)^\*\*Session id:\*\*\s+\S`),
 			},
 		},
 		{
@@ -62,6 +63,7 @@ func compileValidations() []PhaseValidation {
 				regexp.MustCompile(`(?m)^\*\*Status:\*\*\s+(COMPLETE|BLOCKED|IN PROGRESS)`),
 				regexp.MustCompile(`\*\*Stage 2: Cold Review`),
 				regexp.MustCompile(`task\(\) dispatched:\*{0,2}\s+(yes|blocked)`),
+				regexp.MustCompile(`(?m)^\*\*Security:\*\*[ \t]+\S`),
 			},
 		},
 		{

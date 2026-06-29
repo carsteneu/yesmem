@@ -124,12 +124,123 @@ func TestBuildAutoProviderTargets(t *testing.T) {
 		{ModelID: "deepseek-chat", UpstreamURL: "https://api.deepseek.com"},
 		{ModelID: "big-pickle", UpstreamURL: "https://opencode.ai/zen"},
 	}
-	m := buildAutoProviderTargets(providers)
+	m := buildAutoProviderTargets(providers, nil)
 	if m["deepseek-chat"] != "https://api.deepseek.com" {
 		t.Fatal("deepseek-chat mapping wrong")
 	}
 	if m["big-pickle"] != "https://opencode.ai/zen" {
 		t.Fatal("big-pickle mapping wrong")
+	}
+}
+
+func TestBuildAutoProviderTargetsRespectsProviderTargetsExact(t *testing.T) {
+	providers := []autoDiscoveredProvider{
+		{ModelID: "glm-5.2", ProviderID: "zai-coding-plan", UpstreamURL: "https://api.z.ai/api/coding/paas/v4"},
+		{ModelID: "glm-5.2", ProviderID: "opencode", UpstreamURL: "https://opencode.ai/zen/v1"},
+	}
+	providerTargets := map[string]string{
+		"glm-5.2": "https://api.z.ai/api/coding/paas/v4",
+	}
+	m := buildAutoProviderTargets(providers, providerTargets)
+	if _, present := m["glm-5.2"]; present {
+		t.Fatal("bare glm-5.2 should be skipped — covered by provider_targets (exact match)")
+	}
+	if m["zai-coding-plan/glm-5.2"] != "https://api.z.ai/api/coding/paas/v4" {
+		t.Fatalf("zai-coding-plan/glm-5.2 qualified key wrong: %s", m["zai-coding-plan/glm-5.2"])
+	}
+	if m["opencode/glm-5.2"] != "https://opencode.ai/zen/v1" {
+		t.Fatalf("opencode/glm-5.2 qualified key wrong: %s", m["opencode/glm-5.2"])
+	}
+}
+
+func TestBuildAutoProviderTargetsRespectsProviderTargetsPrefix(t *testing.T) {
+	providers := []autoDiscoveredProvider{
+		{ModelID: "glm-5.2", ProviderID: "opencode", UpstreamURL: "https://opencode.ai/zen/v1"},
+	}
+	providerTargets := map[string]string{
+		"glm": "https://api.z.ai/api/coding/paas/v4",
+	}
+	m := buildAutoProviderTargets(providers, providerTargets)
+	if _, present := m["glm-5.2"]; present {
+		t.Fatal("bare glm-5.2 should be skipped — covered by provider_targets prefix 'glm'")
+	}
+	if m["opencode/glm-5.2"] != "https://opencode.ai/zen/v1" {
+		t.Fatalf("opencode/glm-5.2 qualified key wrong: %s", m["opencode/glm-5.2"])
+	}
+}
+
+func TestBuildAutoProviderTargetsFirstWinsDeterministic(t *testing.T) {
+	providers := []autoDiscoveredProvider{
+		{ModelID: "glm-5.2", ProviderID: "opencode", UpstreamURL: "https://opencode.ai/zen/v1"},
+		{ModelID: "glm-5.2", ProviderID: "zai-coding-plan", UpstreamURL: "https://api.z.ai/api/coding/paas/v4"},
+	}
+	m := buildAutoProviderTargets(providers, nil)
+	if m["glm-5.2"] != "https://opencode.ai/zen/v1" {
+		t.Fatalf("bare glm-5.2 should resolve to alphabetically-first provider (opencode), got %s", m["glm-5.2"])
+	}
+	if m["opencode/glm-5.2"] != "https://opencode.ai/zen/v1" {
+		t.Fatalf("opencode/glm-5.2 wrong: %s", m["opencode/glm-5.2"])
+	}
+	if m["zai-coding-plan/glm-5.2"] != "https://api.z.ai/api/coding/paas/v4" {
+		t.Fatalf("zai-coding-plan/glm-5.2 wrong: %s", m["zai-coding-plan/glm-5.2"])
+	}
+}
+
+func TestBuildAutoProviderTargetsNotInProviderTargetsAdded(t *testing.T) {
+	providers := []autoDiscoveredProvider{
+		{ModelID: "deepseek-chat", ProviderID: "deepseek", UpstreamURL: "https://api.deepseek.com"},
+	}
+	providerTargets := map[string]string{
+		"glm-5.2": "https://api.z.ai/api/coding/paas/v4",
+	}
+	m := buildAutoProviderTargets(providers, providerTargets)
+	if m["deepseek-chat"] != "https://api.deepseek.com" {
+		t.Fatalf("deepseek-chat should be added normally: %s", m["deepseek-chat"])
+	}
+	if m["deepseek/deepseek-chat"] != "https://api.deepseek.com" {
+		t.Fatalf("deepseek/deepseek-chat qualified key wrong: %s", m["deepseek/deepseek-chat"])
+	}
+}
+
+func TestBuildAutoProviderTargetsEmptyURLProviderTargetsIgnored(t *testing.T) {
+	providers := []autoDiscoveredProvider{
+		{ModelID: "glm-5.2", ProviderID: "opencode", UpstreamURL: "https://opencode.ai/zen/v1"},
+	}
+	providerTargets := map[string]string{
+		"glm-5.2": "",
+	}
+	m := buildAutoProviderTargets(providers, providerTargets)
+	if m["glm-5.2"] != "https://opencode.ai/zen/v1" {
+		t.Fatalf("empty-URL provider_targets entry should be ignored, bare glm-5.2 added: %s", m["glm-5.2"])
+	}
+}
+
+func TestBuildAutoProviderTargetsCaseInsensitive(t *testing.T) {
+	providers := []autoDiscoveredProvider{
+		{ModelID: "GLM-5.2", ProviderID: "opencode", UpstreamURL: "https://opencode.ai/zen/v1"},
+	}
+	providerTargets := map[string]string{
+		"glm-5.2": "https://api.z.ai/api/coding/paas/v4",
+	}
+	m := buildAutoProviderTargets(providers, providerTargets)
+	if _, present := m["glm-5.2"]; present {
+		t.Fatal("GLM-5.2 should be skipped — case-insensitive match against provider_targets 'glm-5.2'")
+	}
+	if m["opencode/glm-5.2"] != "https://opencode.ai/zen/v1" {
+		t.Fatalf("opencode/glm-5.2 qualified key wrong: %s", m["opencode/glm-5.2"])
+	}
+}
+
+func TestBuildAutoProviderTargetsPrefixWithoutDash(t *testing.T) {
+	providers := []autoDiscoveredProvider{
+		{ModelID: "glmrock", ProviderID: "opencode", UpstreamURL: "https://opencode.ai/zen/v1"},
+	}
+	providerTargets := map[string]string{
+		"glm": "https://api.z.ai/api/coding/paas/v4",
+	}
+	m := buildAutoProviderTargets(providers, providerTargets)
+	if _, present := m["glmrock"]; present {
+		t.Fatal("glmrock should be skipped — prefix match 'glm' covers it (no dash required)")
 	}
 }
 
@@ -440,5 +551,84 @@ func TestDiscoverWithAuthJSON(t *testing.T) {
 	}
 	if active[0].ModelID != "deepseek-chat" {
 		t.Fatalf("expected deepseek-chat, got %s", active[0].ModelID)
+	}
+}
+
+func TestDiscoverOpenAICompatibleProviders_OpencodeFreeTierIncluded(t *testing.T) {
+	models := map[string]modelsJSONEntry{
+		"opencode": {
+			ID: "opencode", NPM: openaiCompatibleNPM, API: "https://opencode.ai/zen/v1",
+			Models: map[string]modelsJSONModel{
+				"big-pickle":        {ID: "big-pickle"},
+				"qwen3.6-plus-free": {ID: "qwen3.6-plus-free"},
+			},
+		},
+	}
+	opencode := map[string]opencodeProviderBlock{
+		"opencode": {Options: opencodeProviderOptions{BaseURL: "http://localhost:9099/v1"}},
+	}
+
+	active, inactive := discoverOpenAICompatibleProviders(models, opencode, nil)
+	if len(active) != 2 {
+		t.Fatalf("expected 2 active free-tier opencode models (big-pickle + qwen3.6-plus-free), got %d: %v", len(active), active)
+	}
+	if len(inactive) != 0 {
+		t.Fatalf("expected 0 inactive, got %d", len(inactive))
+	}
+	for _, p := range active {
+		if p.ProviderID != "opencode" {
+			t.Fatalf("expected opencode provider, got %s", p.ProviderID)
+		}
+		if p.UpstreamURL != "https://opencode.ai/zen/v1" {
+			t.Fatalf("opencode upstream URL mismatch, got %s", p.UpstreamURL)
+		}
+	}
+}
+
+func TestDiscoverOpenAICompatibleProviders_OpencodeAbsentNotIncluded(t *testing.T) {
+	models := map[string]modelsJSONEntry{
+		"opencode": {
+			ID: "opencode", NPM: openaiCompatibleNPM, API: "https://opencode.ai/zen/v1",
+			Models: map[string]modelsJSONModel{"big-pickle": {ID: "big-pickle"}},
+		},
+	}
+	opencode := map[string]opencodeProviderBlock{
+		"deepseek": {APIKey: "sk-deepseek-key"},
+	}
+
+	active, inactive := discoverOpenAICompatibleProviders(models, opencode, nil)
+	if len(active) != 0 {
+		t.Fatalf("expected 0 active (opencode not in user config), got %d: %v", len(active), active)
+	}
+	if len(inactive) != 0 {
+		t.Fatalf("expected 0 inactive (opencode not in user config), got %d", len(inactive))
+	}
+}
+
+func TestDiscoverOpenAICompatibleProviders_NonOpencodeStillRequiresCredentials(t *testing.T) {
+	models := map[string]modelsJSONEntry{
+		"deepseek": {
+			ID: "deepseek", NPM: openaiCompatibleNPM, API: "https://api.deepseek.com",
+			Models: map[string]modelsJSONModel{"deepseek-chat": {ID: "deepseek-chat"}},
+		},
+		"openai": {
+			ID: "openai", NPM: "@ai-sdk/openai",
+			Models: map[string]modelsJSONModel{"gpt-5.5": {ID: "gpt-5.5"}},
+		},
+	}
+	opencode := map[string]opencodeProviderBlock{
+		"deepseek": {Options: opencodeProviderOptions{BaseURL: "http://localhost:9099/v1"}},
+		"openai":   {Options: opencodeProviderOptions{BaseURL: "http://localhost:9099/v1"}},
+	}
+
+	t.Setenv("DEEPSEEK_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+
+	active, inactive := discoverOpenAICompatibleProviders(models, opencode, nil)
+	if len(active) != 0 {
+		t.Fatalf("expected 0 active (non-opencode providers need credentials), got %d: %v", len(active), active)
+	}
+	if len(inactive) != 0 {
+		t.Fatalf("expected 0 inactive, got %d", len(inactive))
 	}
 }

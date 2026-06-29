@@ -43,6 +43,12 @@ const (
 	yesloopDoneVerifyRefireInterval = 5 * time.Minute
 )
 
+// doneVerifyRelayMessage is the single source of truth for the verify relay.
+// Metachar-free (no markdown, no backticks, no parens) because it is written
+// as a single line to the agent's PTY inject socket. Package-level so tests
+// can assert on the content without capturing the socket write.
+const doneVerifyRelayMessage = "Hast du wirklich alle Phasen abgehakt. Vor allem Phase 5 Code Review inklusive Security Review via security-review Skill. Im Phase 5 Block muss zusaetzlich zu Stage 2 Cold Review ein Security field stehen mit Findings oder skip-reason. Falls nicht bitte durchfuehren und BEWEISEN dass alle Phasen durch sind und DANN Phase 6 Finish durchfuehren mit commit und send_to. KEIN auto-deploy."
+
 // yesloopDoneVerifyState tracks the verify state machine for a single agent.
 type yesloopDoneVerifyState struct {
 	state          int
@@ -201,15 +207,13 @@ func (h *Handler) maybeDoneVerifyRefire(agent storage.Agent, state *yesloopDoneV
 // sendDoneVerifyRelay sends the verify relay to a yesloop agent via the inject
 // socket. Single metachar-free write (no markdown, no backticks, no parens).
 func (h *Handler) sendDoneVerifyRelay(agent storage.Agent, state *yesloopDoneVerifyState) {
-	const msg = "Hast du wirklich alle Phasen abgehakt. Vor allem Phase 5 Code Review. Falls nicht bitte durchfuehren und BEWEISEN dass alle 5 Phasen durch sind und DANN Phase 6 Finish durchfuehren mit commit und send_to. KEIN auto-deploy."
-
 	if agent.SockPath == "" {
 		log.Printf("[yesloop-done-verify] relay to agent %s skipped: no sock_path", agent.ID)
 		return
 	}
 
 	injectPath := agent.SockPath + ".inject"
-	wrapped := fmt.Sprintf("[RELAY from=yesloop-done-verify] %s", msg)
+	wrapped := fmt.Sprintf("[RELAY from=yesloop-done-verify] %s", doneVerifyRelayMessage)
 
 	// Record the attempt before dialing — a failed dial still counts as a
 	// relay attempt for refire-gating purposes, preventing rapid escalation.

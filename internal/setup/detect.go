@@ -35,10 +35,12 @@ func detectAgents(home string) []string {
 }
 
 // hasOpenCodeConfig returns true if OpenCode is installed.
-// opencode.json is the required marker; auth.json and models.json are optional
-// (auth.json only exists for paid providers, models.json is auto-downloaded on first run).
+// opencode.jsonc is the modern marker (opencode's preferred format); we also
+// accept the legacy opencode.json and config.json. auth.json and models.json
+// are optional (auth.json only exists for paid providers, models.json is
+// auto-downloaded on first run).
 func hasOpenCodeConfig(home string) bool {
-	ocPath := filepath.Join(home, ".config", "opencode", "opencode.json")
+	ocPath := opencodeConfigPath(home)
 	if _, err := os.Stat(ocPath); err != nil {
 		return false
 	}

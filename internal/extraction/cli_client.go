@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/carsteneu/yesmem/internal/models"
+	"github.com/carsteneu/yesmem/internal/opencode"
 )
 
 // CLIClient calls a CLI binary for LLM completions via stdin.
@@ -185,11 +186,9 @@ func (c *CLIClient) runStdin(ctx context.Context, system, userMsg string, schema
 		baseEnv = append(baseEnv, "YESMEM_ALLOW_CHILD_MCP=1")
 	}
 	if c.sourceAgent == models.SourceAgentOpencode {
-		mcpCfg := `"mcp":{"yesmem":{"type":"local","command":["yesmem","mcp"],"enabled":true,"timeout":120000,"environment":{"YESMEM_SOURCE_AGENT":"opencode"}}}`
-		providerCfg := `"provider":{"deepseek":{"options":{"baseURL":"http://localhost:9099/v1","headers":{"x-yesmem-allow-mcp":"1"}}}}`
 		baseEnv = append(baseEnv,
 			"OPENCODE_DISABLE_DEFAULT_PLUGINS=true",
-			`OPENCODE_CONFIG_CONTENT={`+mcpCfg+`,`+providerCfg+`}`,
+			"OPENCODE_CONFIG_CONTENT="+buildOpencodeConfigOverride(homeDir()),
 		)
 	}
 
@@ -306,6 +305,12 @@ func (c *CLIClient) stdinArgs(sessionID string) []string {
 		return []string{"exec"}
 	case models.SourceAgentOpencode:
 		args := []string{"run", "--format", "json"}
+		// Pass --model so opencode honors the requested model on both fresh
+		// sessions and resumes. Without this, opencode falls back to its
+		// opencode.json default and ignores the model field from llm().
+		if c.model != "" {
+			args = append(args, "--model", c.model)
+		}
 		if sessionID != "" {
 			args = append(args, "--session", sessionID)
 		}
@@ -401,4 +406,139 @@ func filterEnv(env []string, exclude ...string) []string {
 		}
 	}
 	return result
+}
+
+// opencodeProviderOptions is the subset of a provider's options block that we
+// rewrite when routing the opencode CLI subprocess through the yesmem proxy.
+// Field declaration order determines JSON key order — baseURL before headers
+// keeps the output stable and human-readable.
+type opencodeProviderOptions struct {
+	BaseURL string            `json:"baseURL"`
+	Headers map[string]string `json:"headers,omitempty"`
+}
+
+// opencodeProviderEntry is one provider entry inside the override. Models and
+// other provider-specific fields are preserved as-is so the opencode CLI still
+// sees the user's model definitions.
+type opencodeProviderEntry map[string]any
+
+// opencodeConfigOverride is the full OPENCODE_CONFIG_CONTENT value. The mcp
+// block disables recursion (child yesmem mcp → daemon socket), the provider
+// block routes every provider through the yesmem proxy.
+type opencodeConfigOverride struct {
+	MCP      opencodeMCPConfig                `json:"mcp"`
+	Provider map[string]opencodeProviderEntry `json:"provider"`
+}
+
+// opencodeMCPConfig mirrors the hardcoded mcp block from the pre-dynamic recipe
+// (Learning #73012). Disabling default plugins + defining our own MCP keeps
+// the subprocess from recursing into the daemon socket.
+type opencodeMCPConfig struct {
+	Yesmem struct {
+		Type        string            `json:"type"`
+		Command     []string          `json:"command"`
+		Enabled     bool              `json:"enabled"`
+		Timeout     int               `json:"timeout"`
+		Environment map[string]string `json:"environment"`
+	} `json:"yesmem"`
+}
+
+// defaultOpencodeMCPBlock is the mcp subtree byte-identical to the pre-dynamic
+// recipe. Used in defaultOpencodeFallbackConfig below; the assembled override
+// path goes through opencodeMCPBlockValue() (typed struct) instead.
+const defaultOpencodeMCPBlock = `"mcp":{"yesmem":{"type":"local","command":["yesmem","mcp"],"enabled":true,"timeout":120000,"environment":{"YESMEM_SOURCE_AGENT":"opencode"}}}`
+
+// defaultOpencodeFallbackConfig is the byte-identical pre-dynamic fallback,
+// used when the user's opencode.json cannot be read. Preserves the DeepSeek-only
+// behavior so legacy users see no change when their config is missing.
+const defaultOpencodeFallbackConfig = `{` + defaultOpencodeMCPBlock + `,"provider":{"deepseek":{"options":{"baseURL":"http://localhost:9099/v1","headers":{"x-yesmem-allow-mcp":"1"}}}}}`
+
+// yesmemProxyBaseURL is the proxy endpoint the opencode CLI subprocess must
+// route through to benefit from SYSTEM.md injection (Learning #73598).
+const yesmemProxyBaseURL = "http://localhost:9099/v1"
+
+// yesmemAllowMCPHeader activates SYSTEM.md injection in the proxy openai_handler
+// when set on the outgoing request (Learning #73598).
+const yesmemAllowMCPHeader = "x-yesmem-allow-mcp"
+
+// buildOpencodeConfigOverride builds the OPENCODE_CONFIG_CONTENT JSON value by
+// reading the user's opencode config (opencode.jsonc/json/config.json —
+// resolved by opencode.ConfigPath) and rewriting every provider's baseURL to
+// the yesmem proxy. Falls back to defaultOpencodeFallbackConfig when the
+// user's opencode config is missing or unreadable, preserving the legacy
+// DeepSeek-only behavior byte-for-byte.
+//
+// The override replaces the entire mcp and provider subtrees (Learning #71837):
+// the mcp block disables MCP recursion, the provider block routes every
+// provider through the proxy so any provider the user has configured
+// (deepseek, opencode free-tier, zai-coding-plan, ollama, mistral, …) works
+// without per-provider if/else.
+func buildOpencodeConfigOverride(home string) string {
+	path := opencode.ConfigPath(home)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return defaultOpencodeFallbackConfig
+	}
+
+	var raw struct {
+		Provider map[string]map[string]any `json:"provider"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return defaultOpencodeFallbackConfig
+	}
+	if len(raw.Provider) == 0 {
+		return defaultOpencodeFallbackConfig
+	}
+
+	override := opencodeConfigOverride{
+		MCP:      opencodeMCPBlockValue(),
+		Provider: make(map[string]opencodeProviderEntry, len(raw.Provider)),
+	}
+	for providerID, entry := range raw.Provider {
+		rewritten := make(opencodeProviderEntry, len(entry))
+		for k, v := range entry {
+			rewritten[k] = v
+		}
+		// Replace the options block wholesale. We discard any user-set nested
+		// options fields (headers, timeout, apiKey, errorRetry, …) because the
+		// proxy must win on baseURL and the x-yesmem-allow-mcp header is our
+		// own signal. The proxy re-injects provider auth from daemon storage,
+		// so dropping user headers is intentional, not a bug. Top-level fields
+		// (npm, models, name, limit, interleaved, …) are preserved.
+		opts := opencodeProviderOptions{
+			BaseURL: yesmemProxyBaseURL,
+			Headers: map[string]string{yesmemAllowMCPHeader: "1"},
+		}
+		rewritten["options"] = opts
+		override.Provider[providerID] = rewritten
+	}
+
+	out, err := json.Marshal(override)
+	if err != nil {
+		return defaultOpencodeFallbackConfig
+	}
+	return string(out)
+}
+
+// opencodeMCPBlockValue returns the mcp subtree as a typed struct so the
+// assembled override serializes byte-identical to defaultOpencodeMCPBlock.
+func opencodeMCPBlockValue() opencodeMCPConfig {
+	var m opencodeMCPConfig
+	m.Yesmem.Type = "local"
+	m.Yesmem.Command = []string{"yesmem", "mcp"}
+	m.Yesmem.Enabled = true
+	m.Yesmem.Timeout = 120000
+	m.Yesmem.Environment = map[string]string{"YESMEM_SOURCE_AGENT": "opencode"}
+	return m
+}
+
+// homeDir returns the current user's home directory. Falls back to "" on error
+// (callers pass the empty string to buildOpencodeConfigOverride, which then
+// can't read opencode.json and returns the fallback).
+func homeDir() string {
+	h, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return h
 }
