@@ -77,7 +77,7 @@ const tmplKnowledge = `{{if .D.Decisions}}
 {{end}}`
 
 const tmplProject = `{{if or .D.Profile .D.Sessions}}
-## {{.D.Name}}
+## {{.D.DisplayName}}
 {{end}}{{if .D.Profile}}{{.D.Profile}}
 ({{.S.LabelMoreVia}} get_project_profile("{{.D.Name}}"))
 
@@ -187,7 +187,8 @@ type CapsData struct {
 
 // ProjectData holds current project info and recent sessions.
 type ProjectData struct {
-	Name          string
+	Name          string // full project path, used for MCP tool calls in the template
+	DisplayName   string // short human-readable label (last 2 segments) for the section header
 	Profile       string
 	Sessions      []SessionSummary
 	TotalSessions int

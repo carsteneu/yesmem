@@ -82,8 +82,8 @@ func TestSessionCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.ProjectShort != "test" {
-		t.Errorf("project_short: got %q, want %q", got.ProjectShort, "test")
+	if got.ProjectShort != "/var/www/test" {
+		t.Errorf("project_short: got %q, want %q", got.ProjectShort, "/var/www/test")
 	}
 	if got.FirstMessage != "Fix the bug" {
 		t.Errorf("first_message: got %q, want %q", got.FirstMessage, "Fix the bug")
@@ -102,7 +102,7 @@ func TestSessionList(t *testing.T) {
 		})
 	}
 
-	list, err := s.ListSessions("test", 2)
+	list, err := s.ListSessions("/test", 2)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -574,12 +574,12 @@ func TestListProjects(t *testing.T) {
 
 	found := false
 	for _, p := range projects {
-		if p.ProjectShort == "myproject" && p.SessionCount == 2 {
+		if p.ProjectShort == "/var/www/myproject" && p.SessionCount == 2 {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("expected myproject with 2 sessions")
+		t.Error("expected /var/www/myproject with 2 sessions")
 	}
 }
 
@@ -979,7 +979,7 @@ func TestSubagentUpsertAndFilter(t *testing.T) {
 	}
 
 	// ListSessions should exclude subagents
-	list, err := s.ListSessions("test", 0)
+	list, err := s.ListSessions("/test", 0)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}

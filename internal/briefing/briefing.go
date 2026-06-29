@@ -559,6 +559,7 @@ func (g *Generator) renderProject(s Strings, projectShort, profile string, sessi
 
 	return renderTemplate("project", tmplProject, s, ProjectData{
 		Name:          projectShort,
+		DisplayName:   models.DisplayNameOfShort(projectShort),
 		Profile:       profile,
 		Sessions:      summaries,
 		TotalSessions: len(sessions),

@@ -323,12 +323,20 @@ type IndexState struct {
 	IndexedAt time.Time `json:"indexed_at"`
 }
 
-// ProjectShortFromPath extracts the last path segment as a short project name.
+// ProjectShortFromPath returns the canonical absolute path for a project directory.
+// Full paths are inherently unique, eliminating collisions between same-named folders
+// at different locations (e.g. two "cookie-consent-management" repos under different parents).
+// The name is kept for backward compatibility; callers should treat the result as a unique
+// project identifier rather than a human-friendly short label.
 func ProjectShortFromPath(path string) string {
 	if path == "" || path == "/" {
 		return ""
 	}
-	return filepath.Base(path)
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	return filepath.Clean(abs)
 }
 
 // NormalizeSourceAgent canonicalizes session/message provenance labels.

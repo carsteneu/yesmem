@@ -91,6 +91,21 @@ func (s *Store) InsertLearningBatch(learnings []*models.Learning) ([]int64, erro
 		return nil, nil
 	}
 
+	// Normalize learnings whose Project is still a legacy short name: resolve
+	// to the session's full project path so post-migration queries match.
+	sessionProjectCache := make(map[string]string)
+	for _, l := range learnings {
+		if l.Project != "" && l.Project[0] != '/' && l.SessionID != "" {
+			if full, ok := sessionProjectCache[l.SessionID]; ok {
+				l.Project = full
+			} else if sess, err := s.GetSession(l.SessionID); err == nil && sess != nil && sess.Project != "" {
+				full := models.ProjectShortFromPath(sess.Project)
+				sessionProjectCache[l.SessionID] = full
+				l.Project = full
+			}
+		}
+	}
+
 	// Bulk-fetch current turn counts BEFORE opening transaction (avoids deadlock with MaxOpenConns=1)
 	projects := make(map[string]bool)
 	hasGlobal := false
@@ -1073,6 +1088,7 @@ func (s *Store) GetRecentNarratives(project string, limit int) ([]models.Learnin
 	if limit <= 0 {
 		limit = 3
 	}
+	canonical := s.resolveCanonicalProject(project)
 	rows, err := s.readerDB().Query(`SELECT l.id, l.session_id, l.category, l.content, l.project, l.confidence,
 		l.superseded_by, l.supersede_reason, l.created_at, l.expires_at, l.model_used, l.source,
 		COALESCE(l.hit_count, 0), COALESCE(l.emotional_intensity, 0.0), l.last_hit_at, COALESCE(l.session_flavor, ''), l.valid_until, l.supersedes, COALESCE(l.importance, 3), l.supersede_status, COALESCE(l.noise_count, 0), COALESCE(l.fail_count, 0),
@@ -1087,7 +1103,7 @@ func (s *Store) GetRecentNarratives(project string, limit int) ([]models.Learnin
 		WHERE l.category = 'narrative' AND l.canonical_project = ? AND l.superseded_by IS NULL
 		AND (s.message_count IS NULL OR s.message_count = 0 OR s.message_count >= 10)
 		AND (s.flavor_learnings_count != 0 OR s.flavor_learnings_count IS NULL) /* -1=unknown, >0=grounded, NULL=no session */
-		ORDER BY l.created_at DESC LIMIT ?`, project, limit)
+		ORDER BY l.created_at DESC LIMIT ?`, canonical, limit)
 	if err != nil {
 		return nil, fmt.Errorf("get recent narratives: %w", err)
 	}

@@ -49,8 +49,8 @@ func TestIndexSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get session: %v", err)
 	}
-	if sess.ProjectShort != "test-project" {
-		t.Errorf("project_short: got %q, want %q", sess.ProjectShort, "test-project")
+	if sess.ProjectShort != "/var/www/html/test-project" {
+		t.Errorf("project_short: got %q, want %q", sess.ProjectShort, "/var/www/html/test-project")
 	}
 	if sess.FirstMessage != "Fix the nginx config for port 8080" {
 		t.Errorf("first_message: got %q", sess.FirstMessage)
@@ -300,8 +300,8 @@ func TestIndexSession_ExcludeProjectByShortName(t *testing.T) {
 	bloomMgr := bloom.New()
 	arch := archive.New(t.TempDir())
 
-	// "test-project" is the short name from sample-session.jsonl
-	idx := New(store, bloomMgr, arch, []string{"test-project"})
+	// "/var/www/html/test-project" is the full CWD from sample-session.jsonl
+	idx := New(store, bloomMgr, arch, []string{"/var/www/html/test-project"})
 
 	fixture := filepath.Join("..", "parser", "testdata", "sample-session.jsonl")
 	if _, err := os.Stat(fixture); err != nil {

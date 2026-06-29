@@ -1,6 +1,8 @@
 package models
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -27,21 +29,33 @@ func TestSessionFields(t *testing.T) {
 }
 
 func TestProjectShortFromPath(t *testing.T) {
+	cwd, _ := os.Getwd()
 	tests := []struct {
 		path     string
 		expected string
 	}{
-		{"/var/www/html/webapp/cookie-consent-management", "cookie-consent-management"},
-		{"/home/user/memory", "memory"},
-		{"/var/www/html/projects/webapp/cookie-consent-management", "cookie-consent-management"},
+		{"/var/www/html/webapp/cookie-consent-management", "/var/www/html/webapp/cookie-consent-management"},
+		{"/home/user/memory", "/home/user/memory"},
+		{"/var/www/html/projects/webapp/cookie-consent-management", "/var/www/html/projects/webapp/cookie-consent-management"},
 		{"/", ""},
 		{"", ""},
+		{"relative/path", filepath.Clean(filepath.Join(cwd, "relative/path"))},
 	}
 	for _, tt := range tests {
 		got := ProjectShortFromPath(tt.path)
 		if got != tt.expected {
 			t.Errorf("ProjectShortFromPath(%q) = %q, want %q", tt.path, got, tt.expected)
 		}
+	}
+}
+
+// TestProjectShortFromPath_NoCollision verifies that two paths sharing the same
+// basename produce distinct project identifiers (the core fix for path collisions).
+func TestProjectShortFromPath_NoCollision(t *testing.T) {
+	a := ProjectShortFromPath("/var/www/html/ccm19/cookie-consent-management")
+	b := ProjectShortFromPath("/var/www/html/ccm19/main/cookie-consent-management")
+	if a == b {
+		t.Errorf("collision: both paths mapped to %q", a)
 	}
 }
 

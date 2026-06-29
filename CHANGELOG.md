@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Strict project resolution with hard-error on ambiguity + briefing DisplayName
+- Migration v0.65 backfills project_fullpath + ResolveProjectShortStrict
+- ProjectShortFromPath returns full abs path, ProjectMatches becomes equality
+
+### Fixed
+
+- Normalize project in UpsertSession/InsertLearningBatch + GetRecentNarratives canonical
+
+### Testing
+
+- Align TrackSessionEnd pins with full-path project identifier
+- Update expectations to full abs paths after ProjectShortFromPath change
+
+## [2.2.0] - 2026-06-29
+
+### Added
+
 - Mandate whoami() with session-id retry at Phase 1
 - /models lists configured providers from opencode.json (v184)
 - Per-session model override via /model command (v182)
@@ -45,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Respect provider_targets in buildAutoProviderTargets
 - Thread openaiBaseURL through verifyLLMConnection
 - Route opencode free-tier models without credentials
+- Exclude .git as file AND dir to prevent target repo corruption
 - Thread model param through verifyLLMConnection
 - Thread primaryModel/smallModel through installOpencodePlugin
 - Sync Decisions-resolved field to bundled-commands template
@@ -81,6 +99,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Yesloop launch briefing + reddit post draft (2026-06-27)
 - Full slash-command reference table in Purpose (v185)
 - Promote cross-backend USP + re-evaluate yesloopultra
 - Add YesLoop vs Claude Code /loop and /goal comparison
@@ -3033,7 +3052,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add comprehensive tests for generator and storage
 
 
-[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.1.21...HEAD
+[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/carsteneu/yesmem/compare/v2.1.21...v2.2.0
 [2.1.21]: https://github.com/carsteneu/yesmem/compare/v2.1.20...v2.1.21
 [2.1.20]: https://github.com/carsteneu/yesmem/compare/v2.1.19...v2.1.20
 [2.1.19]: https://github.com/carsteneu/yesmem/compare/v2.1.18...v2.1.19

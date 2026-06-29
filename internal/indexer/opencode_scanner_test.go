@@ -153,8 +153,8 @@ func TestOpencodeScanner_Basic(t *testing.T) {
 	if sess.MessageCount != 2 {
 		t.Fatalf("expected 2 messages, got %d", sess.MessageCount)
 	}
-	if sess.ProjectShort != "opencode-proxy" {
-		t.Fatalf("expected project 'opencode-proxy', got %s", sess.ProjectShort)
+	if sess.ProjectShort != "/home/test/opencode-proxy" {
+		t.Fatalf("expected project '/home/test/opencode-proxy', got %s", sess.ProjectShort)
 	}
 	if sess.SourceAgent != "opencode" {
 		t.Fatalf("expected source_agent 'opencode', got %s", sess.SourceAgent)

@@ -364,7 +364,7 @@ func TestHandleProjectSummary_ReturnsSessions(t *testing.T) {
 	seedSession(t, s, "ps-2", "myproject", 5)
 	seedSession(t, s, "ps-3", "other", 3)
 
-	resp := h.handleProjectSummary(map[string]any{"project": "myproject"})
+	resp := h.handleProjectSummary(map[string]any{"project": "/home/test/myproject"})
 	if resp.Error != "" {
 		t.Fatalf("unexpected error: %s", resp.Error)
 	}
@@ -381,7 +381,7 @@ func TestHandleProjectSummary_RespectsLimit(t *testing.T) {
 	}
 
 	resp := h.handleProjectSummary(map[string]any{
-		"project": "limited",
+		"project": "/home/test/limited",
 		"limit":   float64(2),
 	})
 	if resp.Error != "" {
@@ -398,7 +398,7 @@ func TestHandleProjectSummary_DefaultLimit(t *testing.T) {
 	seedSession(t, s, "psd-1", "defproj", 3)
 
 	// No limit param — defaults to 20
-	resp := h.handleProjectSummary(map[string]any{"project": "defproj"})
+	resp := h.handleProjectSummary(map[string]any{"project": "/home/test/defproj"})
 	if resp.Error != "" {
 		t.Fatalf("unexpected error: %s", resp.Error)
 	}

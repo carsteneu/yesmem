@@ -7,13 +7,11 @@ func TestProjectMatches(t *testing.T) {
 		a, b string
 		want bool
 	}{
-		{"/home/user/myproject", "/home/user/myproject", true},
-		{"myproject", "/home/user/myproject", true},
-		{"/home/user/myproject", "myproject", true},
-		{"/home/alice/myproject", "/home/bob/myproject", true},
-		{"/home/user/foo", "/home/user/bar", false},
-		{"project", "/home/user/myproject", false},
 		{"", "", true},
+		{"/home/user/myproject", "/home/user/myproject", true},
+		{"/home/alice/myproject", "/home/bob/myproject", false},
+		{"/home/user/foo", "/home/user/bar", false},
+		{"myproject", "/home/user/myproject", false},
 		{"", "/home/user/project", false},
 	}
 	for _, tt := range tests {

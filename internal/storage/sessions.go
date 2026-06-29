@@ -14,6 +14,11 @@ import (
 // extracted_at is reset so the extraction pipeline re-processes it.
 func (s *Store) UpsertSession(sess *models.Session) error {
 	sourceAgent := models.NormalizeSourceAgent(sess.SourceAgent)
+	// Normalize project_short from the full project path so storage always
+	// carries the canonical absolute identifier, regardless of caller.
+	if sess.Project != "" {
+		sess.ProjectShort = models.ProjectShortFromPath(sess.Project)
+	}
 
 	_, err := s.db.Exec(`
 		INSERT INTO sessions (id, project, project_short, git_branch, first_message,
@@ -83,21 +88,24 @@ func (s *Store) ResolveProjectPath(projectShort string) string {
 	return path
 }
 
-// ResolveProjectShort finds the best matching project_short for a directory path.
-// Checks filepath.Base and subdirectories, returns the one with the most recent session.
+// ResolveProjectShort finds the project identifier for a directory path.
+// Full absolute paths (starting with '/') are returned cleaned — they are already
+// unique since ProjectShortFromPath moved to abs-path semantics. Legacy short-name
+// inputs fall back to DB-best-effort matching for backward compatibility with tests
+// and any callers that have not migrated to full paths yet.
 func (s *Store) ResolveProjectShort(projectDir string) string {
 	if projectDir == "" {
 		return ""
 	}
+	if projectDir[0] == '/' {
+		return filepath.Clean(projectDir)
+	}
 
-	// Fast path: if input is already a known project_short, return it directly.
-	// This prevents LIKE '%name%' from matching worktree paths that contain the name.
-	if len(projectDir) < 60 && projectDir[0] != '/' {
-		var count int
-		err := s.readerDB().QueryRow("SELECT COUNT(*) FROM sessions WHERE project_short = ?", projectDir).Scan(&count)
-		if err == nil && count > 0 {
-			return projectDir
-		}
+	// Legacy fallback: short name input — best-effort DB match.
+	var count int
+	err := s.readerDB().QueryRow("SELECT COUNT(*) FROM sessions WHERE project_short = ?", projectDir).Scan(&count)
+	if err == nil && count > 0 {
+		return projectDir
 	}
 
 	type candidate struct {
@@ -114,16 +122,9 @@ func (s *Store) ResolveProjectShort(projectDir string) string {
 		}
 	}
 
-	// Check base name
 	check(filepath.Base(projectDir))
 
-	// Check subdirectory names (covers renamed projects like memory/ containing yesmem/)
-	// Use %name% for short names without slashes, prefix match for full paths
-	likePattern := projectDir + "%"
-	if projectDir[0] != '/' {
-		likePattern = "%" + projectDir + "%"
-	}
-	rows, err := s.readerDB().Query("SELECT DISTINCT project_short FROM sessions WHERE project LIKE ?", likePattern)
+	rows, err := s.readerDB().Query("SELECT DISTINCT project_short FROM sessions WHERE project LIKE ?", "%"+projectDir+"%")
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -138,6 +139,62 @@ func (s *Store) ResolveProjectShort(projectDir string) string {
 		return best.name
 	}
 	return filepath.Base(projectDir)
+}
+
+// ResolveProjectStrict resolves a project identifier with hard-error semantics on
+// ambiguity. Absolute paths are returned cleaned. Legacy short names are matched
+// against the sessions table: a unique hit returns the full path, more than one
+// distinct full path returns an error listing the candidates so the caller can
+// disambiguate. Callers should surface the error verbatim to the user.
+func (s *Store) ResolveProjectShortStrict(name string) (string, error) {
+	if name == "" {
+		return "", nil
+	}
+	if name[0] == '/' {
+		return filepath.Clean(name), nil
+	}
+
+	rows, err := s.readerDB().Query(
+		`SELECT DISTINCT project FROM sessions WHERE project_short = ? AND project LIKE '/%' ORDER BY project`,
+		name,
+	)
+	if err != nil {
+		return "", fmt.Errorf("resolve project %q: %w", name, err)
+	}
+	defer rows.Close()
+
+	var candidates []string
+	for rows.Next() {
+		var p string
+		if rows.Scan(&p) == nil {
+			candidates = append(candidates, p)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("resolve project %q: %w", name, err)
+	}
+
+	switch len(candidates) {
+	case 0:
+		return name, nil
+	case 1:
+		return candidates[0], nil
+	default:
+		return "", &AmbiguousProjectError{Short: name, Candidates: candidates}
+	}
+}
+
+// AmbiguousProjectError is returned by ResolveProjectShortStrict when a short name
+// maps to more than one distinct full project path. The error message lists the
+// candidates so callers can disambiguate by passing the full path.
+type AmbiguousProjectError struct {
+	Short      string
+	Candidates []string
+}
+
+func (e *AmbiguousProjectError) Error() string {
+	return fmt.Sprintf("project %q is ambiguous; %d distinct paths match. Specify one of: %s",
+		e.Short, len(e.Candidates), strings.Join(e.Candidates, ", "))
 }
 
 // ListAllSessions returns all sessions including subagent sessions.

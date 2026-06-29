@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -151,7 +152,10 @@ func injectExcludeSession(params map[string]any) {
 }
 
 // resolveProjectParam resolves the "project" field in params from a directory path
-// to the correct project_short via DB lookup. Results are cached per session.
+// to the canonical full project path via strict DB lookup. Results are cached per
+// session. On ambiguity (short name matching multiple distinct project paths) the
+// error message is stored under the "_project_error" key for the dispatcher to
+// surface as an error response before the handler runs.
 func (h *Handler) resolveProjectParam(params map[string]any) map[string]any {
 	project, ok := params["project"].(string)
 	if !ok || project == "" {
@@ -165,7 +169,11 @@ func (h *Handler) resolveProjectParam(params map[string]any) map[string]any {
 		h.projectCacheMu.RLock()
 		if resolved, found := h.projectCache[project]; found {
 			h.projectCacheMu.RUnlock()
-			params["project"] = resolved
+			if isAmbiguousMarker(resolved) {
+				params["_project_error"] = stripMarker(resolved)
+			} else {
+				params["project"] = resolved
+			}
 			return params
 		}
 		h.projectCacheMu.RUnlock()
@@ -175,25 +183,43 @@ func (h *Handler) resolveProjectParam(params map[string]any) map[string]any {
 	h.projectCacheMu.RLock()
 	if resolved, found := h.projectCache[project]; found {
 		h.projectCacheMu.RUnlock()
-		params["project"] = resolved
+		if isAmbiguousMarker(resolved) {
+			params["_project_error"] = stripMarker(resolved)
+		} else {
+			params["project"] = resolved
+		}
 		return params
 	}
 	h.projectCacheMu.RUnlock()
 
-	// DB lookup
-	resolved := h.store.ResolveProjectShort(project)
+	// Strict DB lookup — hard-errors on ambiguous short names
+	resolved, err := h.store.ResolveProjectShortStrict(project)
+	cacheVal := resolved
+	if err != nil {
+		cacheVal = ambiguousMarker(err.Error())
+	}
 
-	// Cache result
+	// Cache result (including errors, to avoid repeated DB lookups)
 	h.projectCacheMu.Lock()
 	if h.projectCache == nil {
 		h.projectCache = make(map[string]string)
 	}
-	h.projectCache[project] = resolved
+	h.projectCache[project] = cacheVal
 	h.projectCacheMu.Unlock()
 
-	params["project"] = resolved
+	if err != nil {
+		params["_project_error"] = err.Error()
+	} else {
+		params["project"] = resolved
+	}
 	return params
 }
+
+const ambiguousPrefix = "__ambiguous__:"
+
+func ambiguousMarker(msg string) string  { return ambiguousPrefix + msg }
+func isAmbiguousMarker(s string) bool     { return strings.HasPrefix(s, ambiguousPrefix) }
+func stripMarker(s string) string         { return strings.TrimPrefix(s, ambiguousPrefix) }
 
 type idleState struct {
 	count    int
@@ -289,33 +315,40 @@ func (h *Handler) Handle(req Request) Response {
 		}
 	}
 
+	// Resolve project parameter once for all methods. Ambiguous short names
+	// produce a hard error surfaced before dispatch.
+	req.Params = h.resolveProjectParam(req.Params)
+	if errStr, ok := req.Params["_project_error"].(string); ok {
+		return errorResponse(errStr)
+	}
+
 	switch req.Method {
 	case "search":
-		params := h.resolveProjectParam(req.Params)
+		params := req.Params
 		injectExcludeSession(params)
 		return h.handleSearch(params)
 	case "deep_search":
-		params := h.resolveProjectParam(req.Params)
+		params := req.Params
 		injectExcludeSession(params)
 		return h.handleDeepSearch(params)
 	case "remember":
-		return h.handleRemember(h.resolveProjectParam(req.Params))
+		return h.handleRemember(req.Params)
 	case "get_session":
 		return h.handleGetSession(req.Params)
 	case "list_projects":
 		return h.handleListProjects()
 	case "project_summary":
-		return h.handleProjectSummary(h.resolveProjectParam(req.Params))
+		return h.handleProjectSummary(req.Params)
 	case "get_learnings":
-		return h.handleGetLearnings(h.resolveProjectParam(req.Params))
+		return h.handleGetLearnings(req.Params)
 	case "get_caps":
-		return h.handleGetCaps(h.resolveProjectParam(req.Params))
+		return h.handleGetCaps(req.Params)
 	case "save_cap":
-		return h.handleSaveCap(h.resolveProjectParam(req.Params))
+		return h.handleSaveCap(req.Params)
 	case "register_caps":
-		return h.handleRegisterCaps(h.resolveProjectParam(req.Params))
+		return h.handleRegisterCaps(req.Params)
 	case "activate_cap":
-		return h.handleActivateCap(h.resolveProjectParam(req.Params))
+		return h.handleActivateCap(req.Params)
 	case "deactivate_cap":
 		// No project scope: activations are keyed on (thread_id, name).
 		return h.handleDeactivateCap(req.Params)
@@ -331,13 +364,13 @@ func (h *Handler) Handle(req Request) Response {
 	case "list_cap_proposals":
 		return h.handleListCapProposals(req)
 	case "query_facts":
-		return h.handleQueryFacts(h.resolveProjectParam(req.Params))
+		return h.handleQueryFacts(req.Params)
 	case "related_to_file":
 		return h.handleRelatedToFile(req.Params)
 	case "get_coverage":
-		return h.handleGetCoverage(h.resolveProjectParam(req.Params))
+		return h.handleGetCoverage(req.Params)
 	case "get_project_profile":
-		return h.handleGetProjectProfile(h.resolveProjectParam(req.Params))
+		return h.handleGetProjectProfile(req.Params)
 	case "get_self_feedback":
 		return h.handleGetSelfFeedback(req.Params)
 	case "set_persona":
@@ -347,7 +380,7 @@ func (h *Handler) Handle(req Request) Response {
 	case "resolve":
 		return h.handleResolve(req.Params)
 	case "resolve_by_text":
-		return h.handleResolveByText(h.resolveProjectParam(req.Params))
+		return h.handleResolveByText(req.Params)
 	case "quarantine_session":
 		return h.handleQuarantineSession(req.Params)
 	case "skip_indexing":

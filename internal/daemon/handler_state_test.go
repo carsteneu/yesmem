@@ -628,8 +628,10 @@ func TestHandleTrackSessionEnd_Success(t *testing.T) {
 func TestHandleTrackSessionEnd_ClearsPinsOnClear(t *testing.T) {
 	h, s := mustHandler(t)
 
-	// Create a session-scoped pin
-	s.PinLearning("session", "myapp", "test pin", "test")
+	// Create a session-scoped pin. Project identifier must match the full path
+	// passed to handleTrackSessionEnd, since ResolveProjectShort returns the
+	// cleaned absolute path verbatim under the full-path-as-identifier convention.
+	s.PinLearning("session", "/home/testuser/projects/myapp", "test pin", "test")
 
 	resp := h.handleTrackSessionEnd(map[string]any{
 		"project":    "/home/testuser/projects/myapp",
@@ -641,7 +643,7 @@ func TestHandleTrackSessionEnd_ClearsPinsOnClear(t *testing.T) {
 	}
 
 	// Session pins should be cleared
-	pins, _ := s.GetPinnedLearnings("session", "myapp")
+	pins, _ := s.GetPinnedLearnings("session", "/home/testuser/projects/myapp")
 	if len(pins) != 0 {
 		t.Errorf("expected 0 session pins after clear, got %d", len(pins))
 	}
@@ -650,7 +652,7 @@ func TestHandleTrackSessionEnd_ClearsPinsOnClear(t *testing.T) {
 func TestHandleTrackSessionEnd_CompactKeepsPins(t *testing.T) {
 	h, s := mustHandler(t)
 
-	s.PinLearning("session", "myapp", "test pin", "test")
+	s.PinLearning("session", "/home/testuser/projects/myapp", "test pin", "test")
 
 	resp := h.handleTrackSessionEnd(map[string]any{
 		"project":    "/home/testuser/projects/myapp",
@@ -662,7 +664,7 @@ func TestHandleTrackSessionEnd_CompactKeepsPins(t *testing.T) {
 	}
 
 	// Session pins should survive compact
-	pins, _ := s.GetPinnedLearnings("session", "myapp")
+	pins, _ := s.GetPinnedLearnings("session", "/home/testuser/projects/myapp")
 	if len(pins) != 1 {
 		t.Errorf("expected 1 session pin after compact, got %d", len(pins))
 	}

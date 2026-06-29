@@ -195,8 +195,8 @@ func TestBuildSession_Opencode(t *testing.T) {
 	if !strings.HasPrefix(sess.ID, models.SourceAgentOpencode+":") {
 		t.Fatalf("expected ID prefix 'opencode:', got %s", sess.ID)
 	}
-	if sess.ProjectShort != "opencode-proxy" {
-		t.Fatalf("expected project 'opencode-proxy', got %s", sess.ProjectShort)
+	if sess.ProjectShort != "/home/user/projects/yesmem/.worktrees/opencode-proxy" {
+		t.Fatalf("expected project '/home/user/projects/yesmem/.worktrees/opencode-proxy', got %s", sess.ProjectShort)
 	}
 	if sess.MessageCount != 2 {
 		t.Fatalf("expected 2 messages, got %d", sess.MessageCount)

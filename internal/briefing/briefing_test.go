@@ -217,7 +217,7 @@ func TestGenerateWithNarratives(t *testing.T) {
 
 	// Add narrative learnings
 	store.InsertLearning(&models.Learning{
-		Category: "narrative", Project: "myproject", SessionID: "s1",
+		Category: "narrative", Project: "/var/www/myproject", SessionID: "s1",
 		Content:   "Hey, du bist ich von vorhin. Wir haben den Cookie-Scanner gefixt.",
 		CreatedAt: time.Now().Add(-1 * time.Hour), ModelUsed: "haiku",
 	})
@@ -250,14 +250,14 @@ func TestNarrativeShowsFlavor(t *testing.T) {
 	})
 
 	store.InsertLearning(&models.Learning{
-		Category: "narrative", Project: "proj", SessionID: "s1",
+		Category: "narrative", Project: "/home/user/proj", SessionID: "s1",
 		Content:       "Wir haben den Cookie-Scanner gefixt.",
 		SessionFlavor: "Intensiver Debug-Marathon, am Ende läuft alles",
 		CreatedAt:     time.Now().Add(-1 * time.Hour), ModelUsed: "haiku",
 	})
 
 	gen := New(store, 3)
-	text := gen.Generate("/var/www/proj")
+	text := gen.Generate("/home/user/proj")
 
 	if !strings.Contains(text, "Debug-Marathon") {
 		t.Error("briefing should contain session flavor from narrative")
@@ -277,15 +277,15 @@ func TestNarrativeNoConsolidation(t *testing.T) {
 	// 3 narratives — each shown individually, max 3
 	now := time.Now()
 	store.InsertLearning(&models.Learning{
-		Category: "narrative", Project: "proj", SessionID: "s1",
+		Category: "narrative", Project: "/home/user/proj", SessionID: "s1",
 		Content: "First.", CreatedAt: now.Add(-10 * time.Minute), ModelUsed: "haiku",
 	})
 	store.InsertLearning(&models.Learning{
-		Category: "narrative", Project: "proj", SessionID: "s1",
+		Category: "narrative", Project: "/home/user/proj", SessionID: "s1",
 		Content: "Second.", CreatedAt: now.Add(-20 * time.Minute), ModelUsed: "haiku",
 	})
 	store.InsertLearning(&models.Learning{
-		Category: "narrative", Project: "proj", SessionID: "s1",
+		Category: "narrative", Project: "/home/user/proj", SessionID: "s1",
 		Content: "Third.", CreatedAt: now.Add(-30 * time.Minute), ModelUsed: "haiku",
 	})
 
@@ -310,7 +310,7 @@ func TestNarrativeLimit(t *testing.T) {
 	now := time.Now()
 	for i := 0; i < 5; i++ {
 		store.InsertLearning(&models.Learning{
-			Category: "narrative", Project: "proj", SessionID: "s1",
+			Category: "narrative", Project: "/home/user/proj", SessionID: "s1",
 			Content: fmt.Sprintf("Narrative %d.", i), CreatedAt: now.Add(-time.Duration(i) * time.Hour), ModelUsed: "haiku",
 		})
 	}
@@ -344,11 +344,11 @@ func TestKnowledgePrioritization(t *testing.T) {
 	}
 	for i := 0; i < 10; i++ {
 		store.InsertLearning(&models.Learning{
-			Category: "gotcha", Content: gotchaTopics[i], Project: "proj",
+			Category: "gotcha", Content: gotchaTopics[i], Project: "/home/user/proj",
 			CreatedAt: time.Now().Add(-time.Duration(i) * time.Hour), ModelUsed: "self",
 		})
 		store.InsertLearning(&models.Learning{
-			Category: "pattern", Content: patternTopics[i], Project: "proj",
+			Category: "pattern", Content: patternTopics[i], Project: "/home/user/proj",
 			CreatedAt: time.Now().Add(-time.Duration(i) * time.Hour), ModelUsed: "self",
 		})
 	}
@@ -391,20 +391,20 @@ func TestSetSkipUnfinished_SuppressesUnfinishedSection(t *testing.T) {
 	})
 	store.InsertLearning(&models.Learning{
 		Category: "unfinished", Content: "TODO: refactor auth module",
-		Project: "proj", Confidence: 1.0,
+		Project: "/home/user/proj", Confidence: 1.0,
 		CreatedAt: time.Now(), ModelUsed: "haiku",
 	})
 
 	// Baseline: without skip, item must appear
 	genNormal := New(store, 3)
-	if !strings.Contains(genNormal.Generate("/var/www/proj"), "refactor auth module") {
+	if !strings.Contains(genNormal.Generate("/home/user/proj"), "refactor auth module") {
 		t.Fatal("baseline: unfinished item should appear without SetSkipUnfinished")
 	}
 
 	// With skip: item must NOT appear
 	genSkip := New(store, 3)
 	genSkip.SetSkipUnfinished(true)
-	if strings.Contains(genSkip.Generate("/var/www/proj"), "refactor auth module") {
+	if strings.Contains(genSkip.Generate("/home/user/proj"), "refactor auth module") {
 		t.Error("SetSkipUnfinished(true): unfinished item must not appear in briefing")
 	}
 }
@@ -421,7 +421,7 @@ func TestBriefingShowsCapIdeasAboveThreshold(t *testing.T) {
 	aboveID, err := store.InsertLearning(&models.Learning{
 		Category: "unfinished", TaskType: "cap_idea",
 		Content: "Cap: Telegram polling; yesmem telegram poll",
-		Project: "p", Confidence: 1.0,
+		Project: "/var/www/p", Confidence: 1.0,
 		CreatedAt: time.Now(), ModelUsed: "test",
 	})
 	if err != nil {
@@ -434,7 +434,7 @@ func TestBriefingShowsCapIdeasAboveThreshold(t *testing.T) {
 	belowID, err := store.InsertLearning(&models.Learning{
 		Category: "unfinished", TaskType: "cap_idea",
 		Content: "Cap: One-off; yesmem one",
-		Project: "p", Confidence: 1.0,
+		Project: "/var/www/p", Confidence: 1.0,
 		CreatedAt: time.Now(), ModelUsed: "test",
 	})
 	if err != nil {
@@ -469,19 +469,19 @@ func TestUnfinishedTTLFiltersOldItems(t *testing.T) {
 	// Recent unfinished (5 days old)
 	store.InsertLearning(&models.Learning{
 		Category: "unfinished", Content: "Recent task: fix tests",
-		Project: "proj", Confidence: 1.0,
+		Project: "/home/user/proj", Confidence: 1.0,
 		CreatedAt: time.Now().Add(-5 * 24 * time.Hour), ModelUsed: "haiku",
 	})
 	// Old unfinished (60 days old)
 	store.InsertLearning(&models.Learning{
 		Category: "unfinished", Content: "Old task: refactor everything",
-		Project: "proj", Confidence: 1.0,
+		Project: "/home/user/proj", Confidence: 1.0,
 		CreatedAt: time.Now().Add(-60 * 24 * time.Hour), ModelUsed: "haiku",
 	})
 
 	gen := New(store, 3)
 	gen.SetUnfinishedTTL(30) // 30 day TTL
-	text := gen.Generate("/var/www/proj")
+	text := gen.Generate("/home/user/proj")
 
 	if !strings.Contains(text, "fix tests") {
 		t.Error("recent unfinished item should appear in briefing")
@@ -502,13 +502,13 @@ func TestUnfinishedTTLZeroShowsAll(t *testing.T) {
 
 	store.InsertLearning(&models.Learning{
 		Category: "unfinished", Content: "Ancient task from long ago",
-		Project: "proj", Confidence: 1.0,
+		Project: "/home/user/proj", Confidence: 1.0,
 		CreatedAt: time.Now().Add(-120 * 24 * time.Hour), ModelUsed: "haiku",
 	})
 
 	gen := New(store, 3)
 	// TTL=0 (default) = no filter
-	text := gen.Generate("/var/www/proj")
+	text := gen.Generate("/home/user/proj")
 
 	if !strings.Contains(text, "Ancient task") {
 		t.Error("with TTL=0, all unfinished items should appear")
@@ -528,7 +528,7 @@ func TestGapAwarenessShowsOverflow(t *testing.T) {
 	for i := 0; i < 8; i++ {
 		store.InsertLearning(&models.Learning{
 			Category: "gotcha", Content: fmt.Sprintf("gotcha number %d for proj", i),
-			Project: "proj", Confidence: 1.0, CreatedAt: now.Add(-time.Duration(i) * time.Hour),
+			Project: "/home/user/proj", Confidence: 1.0, CreatedAt: now.Add(-time.Duration(i) * time.Hour),
 			ModelUsed: "self",
 		})
 	}
@@ -543,7 +543,7 @@ func TestGapAwarenessShowsOverflow(t *testing.T) {
 	}
 
 	gen := New(store, 3)
-	text := gen.Generate("/var/www/proj")
+	text := gen.Generate("/home/user/proj")
 
 	if !strings.Contains(text, "get_learnings") {
 		t.Error("should show learning overflow with tool hint")
@@ -565,11 +565,11 @@ func TestGapAwarenessHiddenWhenNoOverflow(t *testing.T) {
 	})
 	store.InsertLearning(&models.Learning{
 		Category: "gotcha", Content: "single gotcha",
-		Project: "proj", Confidence: 1.0, CreatedAt: now, ModelUsed: "self",
+		Project: "/home/user/proj", Confidence: 1.0, CreatedAt: now, ModelUsed: "self",
 	})
 
 	gen := New(store, 3)
-	text := gen.Generate("/var/www/proj")
+	text := gen.Generate("/home/user/proj")
 
 	if strings.Contains(text, "There was more") {
 		t.Error("should NOT show gap awareness when no overflow and no other projects")
@@ -595,7 +595,7 @@ func TestGapAwarenessMinSessionThreshold(t *testing.T) {
 	}
 
 	gen := New(store, 3)
-	text := gen.Generate("/var/www/proj")
+	text := gen.Generate("/home/user/proj")
 
 	if strings.Contains(text, "tiny") {
 		t.Error("should NOT show projects with fewer than 5 sessions")
@@ -615,7 +615,7 @@ func TestGenerateNarrativesBeforePersona(t *testing.T) {
 
 	// Add a narrative learning with flavor for awakening template
 	store.InsertLearning(&models.Learning{
-		Category: "narrative", Project: "proj", SessionID: "s1",
+		Category: "narrative", Project: "/home/user/proj", SessionID: "s1",
 		Content:   "Hey, wir haben gestern den Scanner gefixt.",
 		CreatedAt: time.Now().Add(-1 * time.Hour), ModelUsed: "haiku",
 		SessionFlavor: "Scanner gefixt und Deploy vorbereitet",
@@ -631,7 +631,7 @@ func TestGenerateNarrativesBeforePersona(t *testing.T) {
 	})
 
 	gen := New(store, 3)
-	text := gen.Generate("/var/www/proj")
+	text := gen.Generate("/home/user/proj")
 
 	// Both must be present
 	narrativeIdx := strings.Index(text, "Scanner gefixt")
@@ -725,7 +725,7 @@ func TestSetSkipUnfinished_SuppressesDeadlineTriggers(t *testing.T) {
 	tomorrow := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
 	store.InsertLearning(&models.Learning{
 		Category: "unfinished", Content: "Release cutoff task",
-		Project: "proj", Confidence: 1.0,
+		Project: "/home/user/proj", Confidence: 1.0,
 		TriggerRule: "deadline:" + tomorrow,
 		CreatedAt: time.Now(), ModelUsed: "haiku",
 	})
@@ -733,7 +733,7 @@ func TestSetSkipUnfinished_SuppressesDeadlineTriggers(t *testing.T) {
 	// skip=true: deadline-triggered item must NOT appear (no baseline call to avoid cooldown side-effect)
 	gen := New(store, 3)
 	gen.SetSkipUnfinished(true)
-	if strings.Contains(gen.Generate("/var/www/proj"), "Release cutoff task") {
+	if strings.Contains(gen.Generate("/home/user/proj"), "Release cutoff task") {
 		t.Error("SetSkipUnfinished(true): deadline-triggered item must not appear in briefing")
 	}
 }

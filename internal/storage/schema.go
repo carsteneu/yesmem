@@ -467,6 +467,11 @@ var migrations = []string{
 		`ALTER TABLE learnings ADD COLUMN staleness_checked_at TEXT DEFAULT ''`,
 		`ALTER TABLE learnings ADD COLUMN staleness_type TEXT DEFAULT ''`,
 		`ALTER TABLE learnings ADD COLUMN code_fingerprint TEXT DEFAULT ''`,
+		// v0.65: project-fullpath migration — store/query full absolute paths instead of basenames.
+		// Backfill sessions.project_short and learnings.project from the authoritative full path
+		// in sessions.project. Idempotent: rows already using a full path are left unchanged.
+		`UPDATE sessions SET project_short = project WHERE project LIKE '/%' AND project_short != project`,
+		`UPDATE learnings SET project = (SELECT s.project FROM sessions s WHERE s.id = learnings.session_id) WHERE learnings.session_id IS NOT NULL AND learnings.session_id != '' AND learnings.project NOT LIKE '/%'`,
 	}
 
 // messagesMigrations runs against messages.db (separate from yesmem.db migrations).
