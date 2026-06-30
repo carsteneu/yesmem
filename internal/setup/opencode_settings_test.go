@@ -497,7 +497,7 @@ func TestOpencodeSettingsRemoveEndToEnd(t *testing.T) {
 	}
 }
 
-func TestOpencodeSettingsRemove_EmptyConfigDeleted(t *testing.T) {
+func TestOpencodeSettingsRemove_EmptyConfigPreserved(t *testing.T) {
 	tmpDir := t.TempDir()
 	home := filepath.Join(tmpDir, "home")
 	configDir := filepath.Join(home, ".config", "opencode")
@@ -526,8 +526,19 @@ func TestOpencodeSettingsRemove_EmptyConfigDeleted(t *testing.T) {
 		t.Fatalf("removeOpencodeSettings: %v", err)
 	}
 
-	if _, err := os.Stat(cfgPath); !os.IsNotExist(err) {
-		t.Error("config file should be deleted when only yesmem entries + schema remain")
+	// File MUST remain (opencode needs the file present; deleting it would
+	// break opencode for users who set it up manually for non-yesmem reasons).
+	// yesmem entries are removed, $schema stays.
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("opencode.json must still exist after yesmem uninstall: %v", err)
+	}
+	body := string(data)
+	if strings.Contains(body, "yesmem") {
+		t.Errorf("yesmem entries should be removed but found 'yesmem' in: %s", body)
+	}
+	if !strings.Contains(body, "$schema") {
+		t.Errorf("$schema should be preserved, got: %s", body)
 	}
 }
 
