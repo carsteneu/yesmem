@@ -344,13 +344,11 @@ func removeOpencodeSettings(home string) error {
 	removeOpencodeCompaction(cfg)
 	removeOpencodePluginEntry(cfg)
 
-	if len(cfg) == 0 || (len(cfg) == 1 && cfg["$schema"] != nil) {
-		if err := os.Remove(cfgPath); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return nil
-	}
-
+	// Always write the cleaned file back. Never delete opencode.json/jsonc even
+	// if only $schema remains — opencode needs the file present (it falls back
+	// to built-in defaults without one, but users who set up the file manually
+	// for their own reasons would lose that work). An empty shell with $schema
+	// is harmless and matches what opencode itself creates on fresh install.
 	out, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
