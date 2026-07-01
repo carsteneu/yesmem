@@ -46,6 +46,59 @@ func (h *Handler) handleScratchpadWrite(params map[string]any) Response {
 	})
 }
 
+// handleScratchpadAppend appends content to an existing scratchpad section.
+// Unlike scratchpad_write (which replaces), this reads the current content,
+// appends the new content with a divider, and writes back. If the section
+// doesn't exist yet, it behaves like scratchpad_write (creates it).
+func (h *Handler) handleScratchpadAppend(params map[string]any) Response {
+	project, _ := params["project"].(string)
+	section, _ := params["section"].(string)
+	content, _ := params["content"].(string)
+
+	if project == "" {
+		return errorResponse("project required")
+	}
+	if section == "" {
+		return errorResponse("section required")
+	}
+	if content == "" {
+		return errorResponse("content required")
+	}
+
+	owner := h.resolveSessionID(params, "owner")
+
+	// Read existing content
+	existing, err := h.store.ScratchpadRead(project, section)
+	if err != nil {
+		return errorResponse(err.Error())
+	}
+
+	var combined string
+	if len(existing) > 0 && existing[0].Content != "" {
+		combined = existing[0].Content + "\n\n---\n\n" + content
+	} else {
+		combined = content
+	}
+
+	if err := h.store.ScratchpadWrite(project, section, combined, owner); err != nil {
+		return errorResponse(err.Error())
+	}
+
+	// Update heartbeat for running agents that write to scratchpad
+	if owner != "" {
+		h.store.AgentUpdateBySessionID(owner, map[string]any{
+			"heartbeat_at": time.Now().Format(time.RFC3339),
+		})
+	}
+
+	return jsonResponse(map[string]any{
+		"status":     "ok",
+		"project":    project,
+		"section":    section,
+		"appended":   true,
+	})
+}
+
 // handleScratchpadRead returns scratchpad sections for a project.
 // If section param is provided, only that section is returned.
 func (h *Handler) handleScratchpadRead(params map[string]any) Response {

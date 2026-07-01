@@ -119,7 +119,7 @@ func (h *Handler) handleSpawnAgent(params map[string]any) Response {
 		prompt = fmt.Sprintf(
 			"You are working on project '%s', section '%s'. "+
 				"FIRST ACTION: Call whoami(). If opencode_session_id is empty, retry 3 times with 5s sleep; if still empty note 'session id missing' in scratchpad and proceed. "+
-				"Then scratchpad_write(project=\"%s\", section=\"%s\", content=\"Status: started\") so the orchestrator sees you are working. "+
+				"Then scratchpad_append(project=\"%s\", section=\"%s\", content=\"Status: started\") so the orchestrator sees you are working. "+
 				"Read scratchpad_read(project=\"%s\", section=\"%s\") for context and work through the task. "+
 				"Write your results with scratchpad_write(project=\"%s\", section=\"%s\", content=...).",
 			project, section, project, section, project, section, project, section,

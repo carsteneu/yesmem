@@ -46,20 +46,33 @@ When invoked from an interactive session, the user's session only does setup —
 Setup steps (user's interactive session):
 1. **Create worktree:** `git worktree add -b yesresearch/<topic-slug> <repo>/.worktrees/yesresearch-<topic-slug>` (fresh-create) OR `git worktree add -b yesresearch/<topic-slug>-update-N <repo>/.worktrees/yesresearch-<topic-slug>-update-N` (update mode, branching from previous wiki commit)
 2. Write master plan to `<worktree>/yesdocs/<topic>/PLAN.md` (or pass existing path)
-3. Write Orchestrator briefing to scratchpad section `yesresearch-<topic-slug>-orchestrator`: worktree path, master plan path, output target, hard constraints, model rule, **mode (fresh-create or update)**
-4. Spawn Orchestrator: `yesmem_spawn_agent(project="<project>", section="yesresearch-<topic-slug>-orchestrator", backend="opencode", work_dir="<worktree-path>", model="<resolved-model>")` — model resolution see "Model Configuration" below
-5. Wait 15s, then relay kick: `yesmem_relay_agent(to="<orchestrator-id>", content="Read scratchpad section yesresearch-<topic-slug>-orchestrator. Begin Orchestrator Phase 1 READ.")`
-6. User's session polls `list_agents` + `scratchpad_read` until Orchestrator reports DONE.
+3. **Detect model & backend:** Read `~/.config/opencode/opencode.json` → extract `model` key (e.g. `deepseek/deepseek-reasoner`). If absent, detect from opencode's default (first entry in models.json). Backend defaults to `"opencode"` — override via scratchpad briefing `backend: claude|codex|opencode` or master plan frontmatter. Both model and backend are passed to ALL spawns (Orchestrator + Bereichs-Agents).
+4. Write Orchestrator briefing to scratchpad section `yesresearch-<topic-slug>-orchestrator`: worktree path, master plan path, output target, hard constraints, **resolved model**, **mode (fresh-create or update)**
+5. Spawn Orchestrator: `yesmem_spawn_agent(project="<project>", section="yesresearch-<topic-slug>-orchestrator", backend="<resolved-backend>", work_dir="<worktree-path>", model="<resolved-model>")`
+6. Wait 15s, then relay kick: `yesmem_relay_agent(to="<orchestrator-id>", content="Read scratchpad section yesresearch-<topic-slug>-orchestrator. Begin Orchestrator Phase 1 READ.")`
+7. User's session polls `list_agents` + `scratchpad_read` until Orchestrator reports DONE.
 
 **Only run inline if:** user explicitly says `--inline` or task is < 5 min trivial (single-file research, no cluster decomposition needed).
 
-## Model Configuration
+## Model & Backend Configuration
 
-Model is **configurable, not hardcoded**. Resolution order (first match wins):
+**Nothing is hardcoded.** Both model and backend are configurable via scratchpad briefing, master plan frontmatter, or auto-detected from the environment. Resolution order (first match wins):
 
-1. **Scratchpad briefing** `model:` field (highest priority — orchestrator-time override)
-2. **Master plan frontmatter** `default_model:` (per-topic default)
-3. **Daemon default** — leave model empty, `resolveSpawnModel` picks the backend default (`zai/deepseek-v4-pro` for opencode, per `spawn_model.go:13`)
+1. **Scratchpad briefing** `model:` / `backend:` fields (highest priority — per-run override)
+2. **Master plan frontmatter** `default_model:` / `default_backend:` (per-topic default)
+3. **Auto-detection** — model: read from `~/.config/opencode/opencode.json → model` key; backend: defaults to `"opencode"`
+
+**How to detect (user's session, step 3 of setup):**
+```bash
+# Extract the default model from opencode's config
+MODEL=$(python3 -c "import json; print(json.load(open('$HOME/.config/opencode/opencode.json')).get('model',''))")
+# If empty, opencode uses models.json first-entry
+if [ -z "$MODEL" ]; then
+  MODEL=$(python3 -c "import json; d=json.load(open('$HOME/.cache/opencode/models.json')); print(list(d.keys())[0] + '/' + list(d[list(d.keys())[0]]['models'].keys())[0])")
+fi
+```
+
+**Why no daemon default:** The daemon returns `""` when model is empty — same as all other backends. Opencode picks from its own config. The skill bridges this by detecting and passing the model explicitly.
 
 Example master plan frontmatter (override):
 ```yaml
@@ -250,6 +263,28 @@ update_agent_status(phase="Phase N/6 NAME (file M/K)")
 update_agent_status(phase="Phase N/6 NAME (blocked: <why>)")
 ```
 
+**SCRATCHPAD DISCIPLINE (MANDATORY — prevents briefing clobber):**
+
+`scratchpad_write` is an UPSERT — it REPLACES the entire section. Use the RIGHT tool:
+
+| Tool | When to use | Who calls it |
+|---|---|---|
+| `scratchpad_write` | Write/replace FULL section content (briefing, DONE report) | Orchestrator only (setup), Bereichs-Agent Phase 5+6 DONE report |
+| `scratchpad_append` | Append progress update, phase result, partial status | **Bereichs-Agent, ALL phases** (EXCEPT when writing full Phase blocks) |
+| `scratchpad_read` | Read current section content | Any time |
+
+**MANDATORY rule:** The FIRST tool call after spawn MUST be `scratchpad_read`. Never call `scratchpad_write` before `scratchpad_read` — it will overwrite the orchestrator's briefing with your status text (#80063).
+
+**For Bereichs-Agents reporting phase progress:**
+- Use `scratchpad_append` for intermediate status updates ("Phase 1 done, starting Phase 2")
+- Use `scratchpad_write` ONLY for the final DONE report (all 6 Phase blocks at once)
+- Phase blocks are written to `scratchpad` via `scratchpad_write` when ALL phases are complete
+
+**For Orchestrator:**
+- `scratchpad_write` for initial briefing + final DONE summary
+- `scratchpad_read` for monitoring Bereichs-Agent progress
+- Never `scratchpad_append` — you own the section, just write it once
+
 **Orchestrator validates DONE:**
 - `list_agents` → check status, turns, activity
 - `scratchpad_read(project, section)` → check phase blocks
@@ -433,7 +468,7 @@ update_agent_status(phase="Phase 3/6 DISPATCH")
   - Batch 2: clusters cap+1..2*cap → spawn after Batch 1 complete
   - Continue until all clusters processed
   - Rationale: avoid >cap concurrent agents, but allow large topic decompositions
-- Per batch: `yesmem_spawn_agent` × N. Backend: `opencode`. work_dir: shared worktree.
+- Per batch: `yesmem_spawn_agent` × N. Backend: `<resolved-backend>` (from scratchpad briefing). work_dir: shared worktree.
 - **Model:** use resolved model from Phase 2 (scratchpad briefing carries it).
 - Wait 15s after each spawn for TUI load.
 - **Relay kick** within 30s: `yesmem_relay_agent(to="<agent-id>", content="Read scratchpad section <section>. Mode: FRESH|UPDATE. Begin Phase 1 CONTEXT.")`
