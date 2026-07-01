@@ -32,7 +32,7 @@ When invoked from an interactive session, **do NOT execute the pipeline yourself
 
 `yesmem_spawn_agent(model=...)` accepts three forms, resolved by `resolveSpawnModel` in `internal/daemon/spawn_model.go`:
 
-- **Empty** → falls back to `zai/deepseek-v4-pro` (the yesloop default, per learning #76240).
+- **Empty** → returns "" — lets the opencode CLI pick its default from its own configuration. No model is hardcoded in the daemon.
 - **Slash-qualified** (e.g. `zai/glm-5.2`, `zai-coding-plan/glm-5.2`) → passed through verbatim.
 - **Bare model name** (e.g. `glm-5.2`, `deepseek-v4-pro`) → resolved against the auto-discovered provider map (built from `~/.cache/opencode/models.json` + `~/.config/opencode/opencode.json`). The daemon prepends the matching providerID, e.g. `glm-5.2` becomes `zai/glm-5.2`.
 

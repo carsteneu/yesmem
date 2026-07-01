@@ -765,7 +765,7 @@ func (h *Handler) handleResumeAgent(params map[string]any) Response {
 		return errorResponse(err.Error())
 	}
 
-	if agent.Status != "stopped" && agent.Status != "frozen" {
+	if agent.Status != "stopped" && agent.Status != "frozen" && agent.Status != "finished" {
 		return errorResponse(fmt.Sprintf("agent %s is %s, not resumable", agent.ID, agent.Status))
 	}
 	if agent.Backend == "" {

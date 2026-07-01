@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- DONE-Gate Hardening + MANDATORY sharpening
+- 12 review-fixes (locking, union, fallback, crash-recovery)
+- Update mode + flexible model config
+- Visual assets + Mermaid + persona review + extended frontmatter
+- New skill + resume_agent finished-status fix
+
+### Fixed
+
+- Remove hardcoded model default + strip Learning IDs from public docs
+- Correct default spawn model to deepseek/deepseek-v4-pro
+- Remove static model default — daemon resolves dynamically
+- Switch default model to deepseek-v4-pro
+
+### Documentation
+
+- Regenerate INDEX.md (v1.1) and update BIBLIOGRAPHY.md
+- Exploration cluster update — MnM date fix, A2A, EU AI Act, SSRN
+- Delta-update use-cases, benchmarks, vision-roadmap
+- Teilnehmer cluster update — Cognee, Zep CE deprecation, Pinecone Nexus, Weaviate Engram, Q2 2026 funding gap, MCP implications
+- Refresh versions and expand content (UPDATE mode)
+- Yesresearch DONE-Gate implementation plan
+- Add yesresearch feature doc + CHANGELOG entry
+- Complete wiki 16 files + INDEX + BIBLIOGRAPHY
+- Teilnehmer/key-player.md
+- Teilnehmer/geschaeftsmodelle.md
+- Teilnehmer/financing-rounds.md
+- Teilnehmer/open-source-vs-saas.md
+
+## [2.2.3] - 2026-06-30
+
 ### Fixed
 
 - Preserve opencode.json/jsonc during yesmem uninstall
@@ -3067,7 +3099,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add comprehensive tests for generator and storage
 
 
-[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.2.2...HEAD
+[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.2.3...HEAD
+[2.2.3]: https://github.com/carsteneu/yesmem/compare/v2.2.2...v2.2.3
 [2.2.2]: https://github.com/carsteneu/yesmem/compare/v2.2.1...v2.2.2
 [2.2.1]: https://github.com/carsteneu/yesmem/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/carsteneu/yesmem/compare/v2.1.21...v2.2.0

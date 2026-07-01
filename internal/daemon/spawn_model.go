@@ -7,15 +7,22 @@ import (
 	"github.com/carsteneu/yesmem/internal/proxy"
 )
 
-// defaultOpencodeSpawnModel is the model used when a spawn request omits the
-// model argument for the opencode backend. Per learning #76240 this is the
-// yesloop default. Other backends keep their CLI default (no --model flag).
-const defaultOpencodeSpawnModel = "zai/deepseek-v4-pro"
+// defaultOpencodeSpawnModel was removed — opencode now behaves like all other
+// backends: when model is empty, the daemon omits the --model flag entirely,
+// letting opencode pick its default from its own configuration (opencode.json
+// model key, auto-discovered models.json, or built-in first-entry default).
+//
+// Previously this was "zai/deepseek-v4-pro" (learning #76240, corrected to
+// deepseek/deepseek-v4-pro in #80677). Removed because the daemon has no
+// business hardcoding model strings — that's opencode's config responsibility.
+//
+// See Learning #80677 for the full history of model-string corrections.
 
 // resolveSpawnModel resolves a user-supplied model argument for agent spawn.
 //
-//   - Empty model returns the backend default: defaultOpencodeSpawnModel for
-//     "opencode", empty string for all other backends (lets the CLI pick).
+//   - Empty model returns "" for ALL backends (lets the CLI/backend pick its
+//     own default from its configuration — opencode.json model key, models.json
+//     first-entry, or built-in defaults).
 //   - Models containing "/" are returned verbatim (already provider-qualified).
 //   - Bare model names are looked up in providerMap (lowercased). On hit,
 //     "providerID/modelID" is returned. Coding variants are excluded from
@@ -27,9 +34,6 @@ const defaultOpencodeSpawnModel = "zai/deepseek-v4-pro"
 // and fall through to the passthrough-with-warning path.
 func resolveSpawnModel(model, backend string, providerMap map[string]string) string {
 	if model == "" {
-		if backend == "opencode" {
-			return defaultOpencodeSpawnModel
-		}
 		return ""
 	}
 	if strings.Contains(model, "/") {

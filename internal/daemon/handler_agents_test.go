@@ -743,6 +743,21 @@ func TestHandleResumeAgent_FrozenIsResumable(t *testing.T) {
 	}
 }
 
+func TestHandleResumeAgent_FinishedIsResumable(t *testing.T) {
+	h, s := mustHandler(t)
+	h.dataDir = t.TempDir()
+
+	s.AgentCreate(storage.Agent{
+		ID: "agent-1", Project: "proj", Section: "task",
+		SessionID: "sess-1", Status: "finished", Backend: "claude",
+	})
+
+	resp := h.handleResumeAgent(map[string]any{"to": "agent-1"})
+	if resp.Error != "" {
+		t.Fatalf("finished agents should be resumable (PID gone but session_id intact), got error: %s", resp.Error)
+	}
+}
+
 func TestHandleResumeAgentRejectsActiveSuccessor(t *testing.T) {
 	h, s := mustHandler(t)
 

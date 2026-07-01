@@ -6,8 +6,8 @@ import (
 
 func TestResolveSpawnModelEmptyDefault(t *testing.T) {
 	got := resolveSpawnModel("", "opencode", nil)
-	if got != "zai/deepseek-v4-pro" {
-		t.Fatalf("empty + opencode = %q, want zai/deepseek-v4-pro", got)
+	if got != "" {
+		t.Fatalf("empty + opencode = %q, want empty (let opencode CLI pick default)", got)
 	}
 }
 
