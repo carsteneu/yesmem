@@ -154,3 +154,88 @@ func TestHandleScratchpadDelete_RequiresProject(t *testing.T) {
 		t.Fatal("expected error for missing project")
 	}
 }
+
+func TestHandleScratchpadAppend(t *testing.T) {
+	h, _ := mustHandler(t)
+
+	// Write initial content (like an orchestrator briefing)
+	h.handleScratchpadWrite(map[string]any{
+		"project": "proj-append", "section": "task",
+		"content": "BRIEFING: do the thing\nConstraints: must be fast",
+	})
+
+	// Append status update (like an agent reporting progress)
+	resp := h.handleScratchpadAppend(map[string]any{
+		"project": "proj-append", "section": "task",
+		"content": "Phase 1: ANALYZE complete",
+	})
+	if resp.Error != "" {
+		t.Fatalf("append error: %s", resp.Error)
+	}
+
+	// Read back — must contain BOTH the briefing and the appended status
+	rresp := h.handleScratchpadRead(map[string]any{"project": "proj-append"})
+	sections := resultMap(t, rresp)["sections"].([]any)
+	if len(sections) != 1 {
+		t.Fatalf("expected 1 section, got %d", len(sections))
+	}
+	content := sections[0].(map[string]any)["content"].(string)
+	if !contains(content, "BRIEFING: do the thing") {
+		t.Errorf("briefing preserved after append, got: %s", content)
+	}
+	if !contains(content, "Phase 1: ANALYZE complete") {
+		t.Errorf("appended content not found, got: %s", content)
+	}
+
+	// Append a second time
+	h.handleScratchpadAppend(map[string]any{
+		"project": "proj-append", "section": "task",
+		"content": "Phase 2: PLAN complete",
+	})
+	rresp2 := h.handleScratchpadRead(map[string]any{"project": "proj-append"})
+	sections2 := resultMap(t, rresp2)["sections"].([]any)
+	content2 := sections2[0].(map[string]any)["content"].(string)
+	if !contains(content2, "Phase 2: PLAN complete") {
+		t.Errorf("second append not found, got: %s", content2)
+	}
+	if !contains(content2, "Phase 1: ANALYZE complete") {
+		t.Errorf("first append lost after second, got: %s", content2)
+	}
+}
+
+func TestHandleScratchpadAppend_EmptyCreates(t *testing.T) {
+	h, _ := mustHandler(t)
+
+	// Append to non-existent section — should create it (like write)
+	resp := h.handleScratchpadAppend(map[string]any{
+		"project": "proj-append-new", "section": "new-section",
+		"content": "first entry",
+	})
+	if resp.Error != "" {
+		t.Fatalf("append to new section error: %s", resp.Error)
+	}
+
+	rresp := h.handleScratchpadRead(map[string]any{"project": "proj-append-new"})
+	sections := resultMap(t, rresp)["sections"].([]any)
+	content := sections[0].(map[string]any)["content"].(string)
+	if content != "first entry" {
+		t.Errorf("expected 'first entry', got %q", content)
+	}
+}
+
+func TestHandleScratchpadAppend_RequiresContent(t *testing.T) {
+	h, _ := mustHandler(t)
+	resp := h.handleScratchpadAppend(map[string]any{"project": "p", "section": "s"})
+	if resp.Error == "" {
+		t.Fatal("expected error for missing content")
+	}
+}
+
+func contains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

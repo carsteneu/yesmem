@@ -120,7 +120,7 @@ func (h *Handler) handleSendTo(params map[string]any) Response {
 		h.store.MarkChannelMessagesRead(sender)
 	}
 
-	msgID, err := h.store.SendChannelMessage(target, sender, content, msgType)
+	msgID, err := h.store.SendChannelMessage(target, sender, content+"\n", msgType)
 	if err != nil {
 		return errorResponse(err.Error())
 	}

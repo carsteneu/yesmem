@@ -563,6 +563,8 @@ func (h *Handler) Handle(req Request) Response {
 		return h.handleCheckBroadcasts(req.Params)
 	case "scratchpad_write":
 		return h.handleScratchpadWrite(req.Params)
+	case "scratchpad_append":
+		return h.handleScratchpadAppend(req.Params)
 	case "scratchpad_read":
 		return h.handleScratchpadRead(req.Params)
 	case "scratchpad_list":

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Scratchpad_append MCP tool + skill discipline rules
 - DONE-Gate Hardening + MANDATORY sharpening
 - 12 review-fixes (locking, union, fallback, crash-recovery)
 - Update mode + flexible model config
@@ -17,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Append \n to send_to messages for relay trigger
+- Agent briefing injection uses scratchpad_append not scratchpad_write
+- Remove hardcoded backend — configurable like model
+- Detect model from opencode.json in setup, not daemon
 - Remove hardcoded model default + strip Learning IDs from public docs
 - Correct default spawn model to deepseek/deepseek-v4-pro
 - Remove static model default — daemon resolves dynamically

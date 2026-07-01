@@ -152,6 +152,19 @@ All `scratchpad_write` and `scratchpad_read` calls MUST use the `project` value 
 
 `whoami()` also returns the backend session id (`opencode_session_id` for opencode, `codex_session_id` for codex). This id is required for `resume_agent` after crashes. The daemon polls it asynchronously after spawn, so the first `whoami()` call may return it empty. Retry up to 3 times with 5 seconds sleep between calls. If still empty after 3 retries, note "session id missing — resume may fail" in Phase 1 scratchpad and proceed. Do not block beyond 15 seconds.
 
+**SCRATCHPAD DISCIPLINE (MANDATORY — prevents briefing clobber):**
+
+`scratchpad_write` is an UPSERT — it REPLACES the entire section. **The FIRST action after spawn MUST be `scratchpad_read`.** Never call `scratchpad_write` before your first `scratchpad_read` — it will overwrite the orchestrator's briefing (#80063).
+
+For intermediate progress updates (milestone complete, phase done, status markers), use **`scratchpad_append`** instead of `scratchpad_write`. `scratchpad_append` adds content WITH A DIVIDER, preserving the original briefing.
+
+|| Action | Tool |
+|---|---|---|
+|| First thing after spawn | `scratchpad_read` |
+|| Progress update (milestone/phase done) | `scratchpad_append` |
+|| Full DONE report (all 6 phases) | `scratchpad_write` |
+|| DRIFT alert / STUCK notice | `scratchpad_append` (preserves briefing) |
+
 ### Phase 1: ANALYZE
 ```
 update_agent_status(phase="Phase 1/6 ANALYZE")
