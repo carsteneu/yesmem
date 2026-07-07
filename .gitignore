@@ -17,6 +17,7 @@ yesmem_dev
 .claude/plans/
 .claude/worktrees/
 .claude/*.lock
+.claude/hook-events.jsonl
 .worktrees/
 .yesmem/
 .cache/

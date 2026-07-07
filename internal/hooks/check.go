@@ -70,12 +70,8 @@ type matchedGotcha struct {
 	effScore float64
 }
 
-// blockThreshold is the hit_count at which a gotcha escalates from warn to hard block.
-const blockThreshold = 5
-
-// RunCheck reads PreToolUse JSON from stdin, queries gotchas, outputs warning.
-// Supports Bash, Edit, and Write tool calls.
-// Gotchas with hit_count >= blockThreshold are hard-blocked (exit 2).
+// RunCheck reads PreToolUse JSON from stdin, queries gotchas, outputs warnings.
+// Supports Bash, Edit, and Write tool calls. Warn-only — never hard-blocks.
 func RunCheck(dataDir string) {
 	input, err := io.ReadAll(os.Stdin)
 	if err != nil {
@@ -273,7 +269,11 @@ func RunCheck(dataDir string) {
 		if effScore < 2.0 {
 			effScore = 2.0
 		}
-		mg := matchedGotcha{learning: g, score: score, effScore: effScore}
+		mg := matchedGotcha{
+			learning: g,
+			score:    score,
+			effScore: effScore,
+		}
 		if project != "" && models.ProjectMatches(g.Project, project) {
 			projectMatches = append(projectMatches, mg)
 		} else {
@@ -330,13 +330,6 @@ func RunCheck(dataDir string) {
 			capped = append(capped, mg)
 		}
 		allMatches = capped
-	}
-
-	if bg := findBlockableGotcha(allMatches); bg != nil {
-		store.IncrementMatchCounts([]int64{bg.learning.ID})
-		store.IncrementInjectCounts([]int64{bg.learning.ID})
-		blockGotchaCall(bg.learning)
-		return
 	}
 
 	// Build tiered output: top-1 full text, rest as summary
@@ -453,11 +446,6 @@ func isProtectedFile(filePath string) bool {
 	return false
 }
 
-// blockMinScore is the minimum match score for a gotcha to escalate to a hard block.
-// Warning threshold is score >= 2; blocking requires stronger evidence to avoid
-// cross-matching unrelated commands that share generic keywords.
-const blockMinScore = 4
-
 // isRelevantForTool checks whether a gotcha's actions make it relevant for the current tool.
 // Gotchas with destructive/bash-only actions (rm, mv, git push, make, deploy) only fire on Bash/Write/Edit.
 // Gotchas with no actions are always relevant (backward compatible).
@@ -483,36 +471,6 @@ func isRelevantForTool(g *models.Learning, toolName string) bool {
 		}
 	}
 	return true
-}
-
-// findBlockableGotcha returns the first match whose fail_count >= blockThreshold,
-// match score >= blockMinScore, AND was auto-learned from an actual failure, or nil.
-// Uses fail_count (real failures) not hit_count (view count from warnings).
-func findBlockableGotcha(matches []matchedGotcha) *matchedGotcha {
-	for i := range matches {
-		if matches[i].score >= blockMinScore && matches[i].learning.FailCount >= blockThreshold && matches[i].learning.Source == "hook_auto_learned" {
-			return &matches[i]
-		}
-	}
-	return nil
-}
-
-// blockGotchaCall outputs a block response for a gotcha that exceeded the fail threshold.
-func blockGotchaCall(g models.Learning) {
-	reason := fmt.Sprintf(
-		"BLOCKED: This error occurred %dx — automatic block.\n"+
-			"Gotcha: %s\n"+
-			"Use hybrid_search() to find alternatives, "+
-			"or resolve_by_text() if the issue is resolved.",
-		g.FailCount, g.Content,
-	)
-	out := map[string]any{
-		"decision": "block",
-		"reason":   reason,
-	}
-	jsonOut, _ := json.Marshal(out)
-	fmt.Print(string(jsonOut))
-	os.Exit(2)
 }
 
 // blockEdit outputs a JSON response that blocks the tool call (exit 2).

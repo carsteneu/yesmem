@@ -26,11 +26,11 @@ func newTestStore(t *testing.T) *storage.Store {
 // insertTestLearning inserts a gotcha learning and returns its ID.
 func insertTestLearning(store *storage.Store, content, category string) int64 {
 	id, err := store.InsertLearning(&models.Learning{
-		Category:  category,
-		Content:   content,
+		Category:   category,
+		Content:    content,
 		Confidence: 1.0,
-		CreatedAt: time.Now(),
-		ModelUsed: "test",
+		CreatedAt:  time.Now(),
+		ModelUsed:  "test",
 	})
 	if err != nil {
 		panic("insertTestLearning: " + err.Error())
@@ -72,82 +72,6 @@ func TestEmitReminderOutputsWhenGotchaFound(t *testing.T) {
 	}
 }
 
-func TestBlockThreshold(t *testing.T) {
-	if blockThreshold < 1 {
-		t.Fatalf("blockThreshold must be >= 1, got %d", blockThreshold)
-	}
-}
-
-func TestFindBlockableGotcha(t *testing.T) {
-	tests := []struct {
-		name      string
-		matches   []matchedGotcha
-		wantBlock bool
-	}{
-		{
-			name:      "no matches",
-			matches:   nil,
-			wantBlock: false,
-		},
-		{
-			name: "hook_auto_learned with fail_count at threshold and high score blocks",
-			matches: []matchedGotcha{
-				{learning: models.Learning{ID: 1, FailCount: 2, Source: "hook_auto_learned"}, score: 3},
-				{learning: models.Learning{ID: 2, FailCount: 5, Source: "hook_auto_learned"}, score: 5},
-			},
-			wantBlock: true,
-		},
-		{
-			name: "hook_auto_learned with fail_count below threshold does not block",
-			matches: []matchedGotcha{
-				{learning: models.Learning{ID: 1, FailCount: blockThreshold - 1, Source: "hook_auto_learned"}, score: 3},
-			},
-			wantBlock: false,
-		},
-		{
-			name: "llm_extracted with high fail_count does NOT block",
-			matches: []matchedGotcha{
-				{learning: models.Learning{ID: 1, FailCount: 100, Source: "llm_extracted"}, score: 3},
-			},
-			wantBlock: false,
-		},
-		{
-			name: "user_stated with high fail_count does NOT block",
-			matches: []matchedGotcha{
-				{learning: models.Learning{ID: 1, FailCount: 50, Source: "user_stated"}, score: 3},
-			},
-			wantBlock: false,
-		},
-		{
-			name: "high hit_count but zero fail_count does NOT block",
-			matches: []matchedGotcha{
-				{learning: models.Learning{ID: 1, HitCount: 1000, FailCount: 0, Source: "hook_auto_learned"}, score: 3},
-			},
-			wantBlock: false,
-		},
-		{
-			name: "mixed sources only blocks hook_auto_learned with sufficient fail_count and score",
-			matches: []matchedGotcha{
-				{learning: models.Learning{ID: 1, FailCount: 500, Source: "llm_extracted"}, score: 6},
-				{learning: models.Learning{ID: 2, FailCount: 5, Source: "hook_auto_learned"}, score: 4},
-			},
-			wantBlock: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := findBlockableGotcha(tt.matches)
-			if tt.wantBlock && got == nil {
-				t.Error("expected a blockable gotcha, got nil")
-			}
-			if !tt.wantBlock && got != nil {
-				t.Errorf("expected no blockable gotcha, got ID=%d", got.learning.ID)
-			}
-		})
-	}
-}
-
 func TestHashInputDeterministic(t *testing.T) {
 	h1 := hashInput("cp yesmem /usr/local/bin/yesmem")
 	h2 := hashInput("cp yesmem /usr/local/bin/yesmem")
@@ -161,36 +85,6 @@ func TestHashInputDeterministic(t *testing.T) {
 	h3 := hashInput("mv -f yesmem-new /usr/local/bin/yesmem")
 	if h1 == h3 {
 		t.Error("different inputs should produce different hashes")
-	}
-}
-
-func TestFindBlockableGotchaRequiresHighScore(t *testing.T) {
-	// A gotcha with fail_count >= threshold but low match score should NOT block.
-	// This prevents broad cross-matching (e.g., "go test ./ivf/" matching a gotcha for "go test ./embedding/").
-	tests := []struct {
-		name      string
-		score     int
-		wantBlock bool
-	}{
-		{"score 2 should NOT block", 2, false},
-		{"score 3 should NOT block", 3, false},
-		{"score 4 should block", 4, true},
-		{"score 10 should block", 10, true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			matches := []matchedGotcha{
-				{learning: models.Learning{ID: 1, FailCount: 10, Source: "hook_auto_learned"}, score: tt.score},
-			}
-			got := findBlockableGotcha(matches)
-			if tt.wantBlock && got == nil {
-				t.Error("expected block")
-			}
-			if !tt.wantBlock && got != nil {
-				t.Error("expected no block")
-			}
-		})
 	}
 }
 
@@ -410,6 +304,7 @@ func TestRunCheckWebFetchProducesKeywords(t *testing.T) {
 		t.Errorf("buildWebFetchKeywords(%q) = %v — no reddit-related keyword found", rawURL, kw)
 	}
 }
+
 // TestWebFetchKeywordsNotMatchedByOldDefault verifies that BEFORE the WebFetch case
 // was added, the default: return branch would have dropped the call entirely.
 // This is a regression guard: WebFetch must NOT fall through to the default return.
