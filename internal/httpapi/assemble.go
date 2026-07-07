@@ -126,8 +126,9 @@ func (s *Server) handleAssemble(w http.ResponseWriter, r *http.Request) {
 	// Step 8: Fresh remember — pop recently saved learnings
 	// NOTE: Disabled in proxy path (echo-loop: Claude sees own remember() output twice).
 	// Kept here for OpenClaw/HTTP-API where remember() has no MCP tool_result feedback.
-	// TODO: In OpenClaw, evaluate whether the calling environment provides tool_result
-	// feedback for remember(). If yes, this becomes redundant here too.
+	// This is only safe to remove if the calling environment provides tool_result
+	// feedback for remember() (i.e., the agent sees its own remember() output and
+	// does not need it injected twice).
 	if s.handler != nil {
 		remResp := s.handler.Handle(RPCRequest{
 			Method: "pop_recent_remember",
