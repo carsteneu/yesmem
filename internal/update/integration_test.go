@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -15,20 +16,29 @@ func TestFullUpdateFlow(t *testing.T) {
 	binaryContent := []byte("#!/bin/sh\necho 'yesmem v1.1.0'")
 	archive := createTarGz(t, "yesmem", binaryContent)
 	archiveHash := fmt.Sprintf("%x", sha256.Sum256(archive))
-	checksums := fmt.Sprintf("%s  yesmem_1.1.0_linux_amd64.tar.gz\n%s  yesmem_1.1.0_darwin_arm64.tar.gz\n", archiveHash, archiveHash)
+	platforms := []string{"linux_amd64", "linux_arm64", "darwin_amd64", "darwin_arm64"}
+	checksums := ""
+	for _, p := range platforms {
+		checksums += fmt.Sprintf("%s  yesmem_1.1.0_%s.tar.gz\n", archiveHash, p)
+	}
 
 	var srv *httptest.Server
-	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/release":
+			assets := []githubAsset{
+				{Name: "checksums.txt", DownloadURL: srv.URL + "/checksums"},
+			}
+			for _, p := range platforms {
+				assets = append(assets, githubAsset{
+					Name:        fmt.Sprintf("yesmem_1.1.0_%s.tar.gz", p),
+					DownloadURL: srv.URL + "/binary",
+				})
+			}
 			release := githubRelease{
 				TagName: "v1.1.0",
 				Body:    "## What's New\n- Auto-update support",
-				Assets: []githubAsset{
-					{Name: "yesmem_1.1.0_linux_amd64.tar.gz", DownloadURL: srv.URL + "/binary"},
-					{Name: "yesmem_1.1.0_darwin_arm64.tar.gz", DownloadURL: srv.URL + "/binary"},
-					{Name: "checksums.txt", DownloadURL: srv.URL + "/checksums"},
-				},
+				Assets:  assets,
 			}
 			json.NewEncoder(w).Encode(release)
 		case "/binary":
@@ -36,7 +46,8 @@ func TestFullUpdateFlow(t *testing.T) {
 		case "/checksums":
 			w.Write([]byte(checksums))
 		}
-	}))
+	})
+	srv = httptest.NewServer(handler)
 	defer srv.Close()
 
 	// Step 1: Check for update
@@ -56,7 +67,7 @@ func TestFullUpdateFlow(t *testing.T) {
 	dest := filepath.Join(tmpDir, "yesmem")
 	os.WriteFile(dest, []byte("old-binary"), 0755)
 
-	asset := assetName("1.1.0", "linux", "amd64")
+	asset := assetName("1.1.0", runtime.GOOS, runtime.GOARCH)
 	err = DownloadAndReplace(info.BinaryURL, info.ChecksumURL, asset, dest)
 	if err != nil {
 		t.Fatalf("download+replace failed: %v", err)

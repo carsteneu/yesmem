@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"runtime"
 	"testing"
 )
 
@@ -75,13 +74,25 @@ func TestAssetName(t *testing.T) {
 }
 
 func TestFindAssetURL(t *testing.T) {
+	platforms := []struct {
+		goos, goarch, want string
+	}{
+		{"linux", "amd64", "https://example.com/linux_amd64"},
+		{"linux", "arm64", "https://example.com/linux_arm64"},
+		{"darwin", "amd64", "https://example.com/darwin_amd64"},
+		{"darwin", "arm64", "https://example.com/darwin_arm64"},
+	}
 	assets := []githubAsset{
-		{Name: "yesmem_1.1.0_linux_amd64.tar.gz", DownloadURL: "https://example.com/linux"},
-		{Name: "yesmem_1.1.0_darwin_arm64.tar.gz", DownloadURL: "https://example.com/darwin"},
+		{Name: "yesmem_1.1.0_linux_amd64.tar.gz", DownloadURL: "https://example.com/linux_amd64"},
+		{Name: "yesmem_1.1.0_linux_arm64.tar.gz", DownloadURL: "https://example.com/linux_arm64"},
+		{Name: "yesmem_1.1.0_darwin_amd64.tar.gz", DownloadURL: "https://example.com/darwin_amd64"},
+		{Name: "yesmem_1.1.0_darwin_arm64.tar.gz", DownloadURL: "https://example.com/darwin_arm64"},
 		{Name: "checksums.txt", DownloadURL: "https://example.com/checksums"},
 	}
-	url := findAssetURL(assets, "v1.1.0", runtime.GOOS, runtime.GOARCH)
-	if url == "" {
-		t.Error("should find asset for current OS/Arch")
+	for _, p := range platforms {
+		url := findAssetURL(assets, "v1.1.0", p.goos, p.goarch)
+		if url != p.want {
+			t.Errorf("findAssetURL(%s, %s) = %q, want %q", p.goos, p.goarch, url, p.want)
+		}
 	}
 }
