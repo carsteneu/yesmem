@@ -9,9 +9,9 @@ import (
 
 // createSchema creates all tables if they don't exist.
 func (s *Store) createSchema() error {
-	// Migrations FIRST — fix schema before CREATE TABLE IF NOT EXISTS skips
-	for _, mig := range migrations {
-		s.db.Exec(mig) // Ignore errors (column may already exist)
+	// Migrations FIRST — fix schema before CREATE TABLE IF NOT EXISTS skips.
+	if err := runMigrations(s.db, migrations); err != nil {
+		return fmt.Errorf("apply migrations: %w", err)
 	}
 
 	tables := []string{
@@ -135,9 +135,9 @@ func (s *Store) createMessagesSchema() error {
 		return fmt.Errorf("create messages_fts: %w", err)
 	}
 
-	// Migrations for messages.db (run idempotently, ignore "duplicate column" errors)
-	for _, mig := range messagesMigrations {
-		db.Exec(mig)
+	// Migrations for messages.db (idempotent; tracked by runMigrations).
+	if err := runMigrations(db, messagesMigrations); err != nil {
+		return fmt.Errorf("apply messages migrations: %w", err)
 	}
 
 	return nil
@@ -452,27 +452,27 @@ var migrations = []string{
 	`ALTER TABLE learnings ADD COLUMN target_agent TEXT NOT NULL DEFAULT ''`,
 	// v0.60: Backfill learnings.source_agent from sessions.source_agent (idempotent).
 	`UPDATE learnings SET source_agent = COALESCE((SELECT s.source_agent FROM sessions s WHERE s.id = learnings.session_id), 'claude') WHERE source_agent = ''`,
-		// v0.61: Canonical project — family-scoped learnings across worktree/main boundaries
-		`ALTER TABLE learnings ADD COLUMN canonical_project TEXT NOT NULL DEFAULT ''`,
-		`UPDATE learnings SET canonical_project = project`,
-		`UPDATE learnings SET canonical_project = 'yesmem' WHERE project IN ('checkcodebase', 'bridge-langgraph-bridge', 'opencode-proxy', 'feat+capability-memory', 'feat+security-hardening', 'codex-anpassungen', 'worktree-scoring-fixes', 'forked-agent-proxy', 'briefing-injection')`,
-		`CREATE INDEX IF NOT EXISTS idx_learnings_canonical ON learnings(canonical_project, superseded_by)`,
-		// v0.62: Attribution field for external source tracking
-		`ALTER TABLE learnings ADD COLUMN attribution TEXT NOT NULL DEFAULT ''`,
-		// v0.63: Flavor learnings count on sessions for grounding check
-		`ALTER TABLE sessions ADD COLUMN flavor_learnings_count INTEGER NOT NULL DEFAULT -1`,
-		// v0.64: Staleness detection — score instead of binary resolve, fingerprint for change detection
-		`ALTER TABLE learnings ADD COLUMN staleness_score REAL DEFAULT 0.0`,
-		`ALTER TABLE learnings ADD COLUMN staleness_reason TEXT DEFAULT ''`,
-		`ALTER TABLE learnings ADD COLUMN staleness_checked_at TEXT DEFAULT ''`,
-		`ALTER TABLE learnings ADD COLUMN staleness_type TEXT DEFAULT ''`,
-		`ALTER TABLE learnings ADD COLUMN code_fingerprint TEXT DEFAULT ''`,
-		// v0.65: project-fullpath migration — store/query full absolute paths instead of basenames.
-		// Backfill sessions.project_short and learnings.project from the authoritative full path
-		// in sessions.project. Idempotent: rows already using a full path are left unchanged.
-		`UPDATE sessions SET project_short = project WHERE project LIKE '/%' AND project_short != project`,
-		`UPDATE learnings SET project = (SELECT s.project FROM sessions s WHERE s.id = learnings.session_id) WHERE learnings.session_id IS NOT NULL AND learnings.session_id != '' AND learnings.project NOT LIKE '/%'`,
-	}
+	// v0.61: Canonical project — family-scoped learnings across worktree/main boundaries
+	`ALTER TABLE learnings ADD COLUMN canonical_project TEXT NOT NULL DEFAULT ''`,
+	`UPDATE learnings SET canonical_project = project`,
+	`UPDATE learnings SET canonical_project = 'yesmem' WHERE project IN ('checkcodebase', 'bridge-langgraph-bridge', 'opencode-proxy', 'feat+capability-memory', 'feat+security-hardening', 'codex-anpassungen', 'worktree-scoring-fixes', 'forked-agent-proxy', 'briefing-injection')`,
+	`CREATE INDEX IF NOT EXISTS idx_learnings_canonical ON learnings(canonical_project, superseded_by)`,
+	// v0.62: Attribution field for external source tracking
+	`ALTER TABLE learnings ADD COLUMN attribution TEXT NOT NULL DEFAULT ''`,
+	// v0.63: Flavor learnings count on sessions for grounding check
+	`ALTER TABLE sessions ADD COLUMN flavor_learnings_count INTEGER NOT NULL DEFAULT -1`,
+	// v0.64: Staleness detection — score instead of binary resolve, fingerprint for change detection
+	`ALTER TABLE learnings ADD COLUMN staleness_score REAL DEFAULT 0.0`,
+	`ALTER TABLE learnings ADD COLUMN staleness_reason TEXT DEFAULT ''`,
+	`ALTER TABLE learnings ADD COLUMN staleness_checked_at TEXT DEFAULT ''`,
+	`ALTER TABLE learnings ADD COLUMN staleness_type TEXT DEFAULT ''`,
+	`ALTER TABLE learnings ADD COLUMN code_fingerprint TEXT DEFAULT ''`,
+	// v0.65: project-fullpath migration — store/query full absolute paths instead of basenames.
+	// Backfill sessions.project_short and learnings.project from the authoritative full path
+	// in sessions.project. Idempotent: rows already using a full path are left unchanged.
+	`UPDATE sessions SET project_short = project WHERE project LIKE '/%' AND project_short != project`,
+	`UPDATE learnings SET project = (SELECT s.project FROM sessions s WHERE s.id = learnings.session_id) WHERE learnings.session_id IS NOT NULL AND learnings.session_id != '' AND learnings.project NOT LIKE '/%'`,
+}
 
 // messagesMigrations runs against messages.db (separate from yesmem.db migrations).
 var messagesMigrations = []string{
