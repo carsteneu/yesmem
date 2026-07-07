@@ -75,6 +75,7 @@ func ScanHealth(rootDir string) CodeHealth {
 }
 
 // countTodos counts TODO, FIXME, HACK comments in a file.
+// Only counts lines that start with a comment marker (// or #) after optional whitespace.
 func countTodos(path string) int {
 	f, err := os.Open(path)
 	if err != nil {
@@ -85,8 +86,13 @@ func countTodos(path string) int {
 	count := 0
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
-		line := strings.ToUpper(scanner.Text())
-		if strings.Contains(line, "TODO") || strings.Contains(line, "FIXME") || strings.Contains(line, "HACK") {
+		line := scanner.Text()
+		trimmed := strings.TrimLeft(line, " \t")
+		if !strings.HasPrefix(trimmed, "//") && !strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		upper := strings.ToUpper(trimmed)
+		if strings.Contains(upper, "TODO") || strings.Contains(upper, "FIXME") || strings.Contains(upper, "HACK") {
 			count++
 		}
 	}
