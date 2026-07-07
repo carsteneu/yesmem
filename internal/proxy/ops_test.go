@@ -157,6 +157,46 @@ func TestRequestFingerprint_DifferentLength(t *testing.T) {
 	}
 }
 
+// TestRequestFingerprint_PriorMessagesMatter pins the collision that made the
+// weak fingerprint dangerous: hashing only the LAST message meant two distinct
+// conversations sharing a final turn (common: "continue", "ok", a one-line
+// follow-up) collapsed to the same fingerprint → false isRetry → the second
+// request's side effects silently skipped. The full-content hash must
+// distinguish histories that share a tail.
+func TestRequestFingerprint_PriorMessagesMatter(t *testing.T) {
+	sameTail := map[string]any{"role": "user", "content": "continue"}
+	msgs1 := []any{
+		map[string]any{"role": "user", "content": "write a merge sort"},
+		map[string]any{"role": "assistant", "content": "func mergeSort..."},
+		sameTail,
+	}
+	msgs2 := []any{
+		map[string]any{"role": "user", "content": "write a quick sort"},
+		map[string]any{"role": "assistant", "content": "func quickSort..."},
+		sameTail,
+	}
+	if requestFingerprint(msgs1) == requestFingerprint(msgs2) {
+		t.Error("conversations with different histories but same last message must not collide")
+	}
+}
+
+// TestRequestFingerprint_LongMessageNotTruncated pins the second collision: the
+// old code truncated last-message content at 200 bytes, so two requests whose
+// last message shares a 200-byte prefix but diverges after collided → false
+// retry. Large code/prompt turns routinely exceed 200 bytes.
+func TestRequestFingerprint_LongMessageNotTruncated(t *testing.T) {
+	prefix := strings.Repeat("a", 300) // > 200-byte truncation point
+	msgs1 := []any{
+		map[string]any{"role": "user", "content": prefix + "-variant-A"},
+	}
+	msgs2 := []any{
+		map[string]any{"role": "user", "content": prefix + "-variant-B"},
+	}
+	if requestFingerprint(msgs1) == requestFingerprint(msgs2) {
+		t.Error("messages differing only past the old 200-byte truncation point must not collide")
+	}
+}
+
 func TestRetryDetection_SkipsSideEffects(t *testing.T) {
 	s := &Server{cfg: Config{TokenThreshold: 100000}}
 	msgs := []any{

@@ -69,16 +69,20 @@ func (s *Server) shouldStub(totalTokens int, model string) bool {
 
 // === Task #7: Idempotenz (Side-Effect Skip) ===
 
-// requestFingerprint creates a short hash from messages length + last message content.
+// requestFingerprint creates a short hash from the full, serialized message
+// history. It must hash EVERY message (not just the last) and must not
+// truncate: two distinct conversations sharing a tail message, or two long
+// turns sharing a byte prefix, would otherwise collide and cause a false
+// isRetry that silently skips the second request's side effects.
+//
+// The length prefix is kept as a fast differentiator; the per-message framing
+// ("len:...") prevents message-boundary ambiguity in the hash input.
 func requestFingerprint(messages []any) string {
 	h := sha256.New()
 	fmt.Fprintf(h, "%d:", len(messages))
-	if len(messages) > 0 {
-		last, _ := json.Marshal(messages[len(messages)-1])
-		if len(last) > 200 {
-			last = last[:200]
-		}
-		h.Write(last)
+	for i := range messages {
+		b, _ := json.Marshal(messages[i])
+		fmt.Fprintf(h, "%d:%s|", len(b), b)
 	}
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
@@ -96,4 +100,3 @@ func (s *Server) markRequest(fp string) {
 	defer s.retryMu.Unlock()
 	s.lastFingerprint = fp
 }
-
