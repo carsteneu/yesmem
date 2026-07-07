@@ -61,7 +61,12 @@ func isTaskList(text string) bool {
 	}
 	return strings.Contains(text, "- [ ]") ||
 		strings.Contains(text, "- [x]") ||
-		strings.Contains(text, "TODO:")
+		strings.Contains(text, "* [ ]") ||
+		strings.Contains(text, "* [x]") ||
+		strings.Contains(text, "+ [ ]") ||
+		strings.Contains(text, "+ [x]") ||
+		strings.Contains(text, "TODO:") ||
+		strings.Contains(text, "TODO ")
 }
 
 // isProtectedExtended combines all protection checks: pivot moments,
