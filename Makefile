@@ -6,8 +6,16 @@ INSTALL_NEW := $(INSTALL)-new
 VERSION   := $(shell git describe --tags --always 2>/dev/null || echo "dev")
 
 # Go build settings
+# Override GOROOT/PATH only if a custom SDK exists at ~/memory/go-sdk/go;
+# otherwise fall back to system Go (e.g. /usr/local/Cellar/go/1.26.4/libexec).
+# Setting GOROOT to a non-existent path causes `go: cannot find GOROOT directory`.
+ifdef GOROOT_FALLBACK
+export GOROOT  := $(GOROOT_FALLBACK)
+endif
+ifneq ($(wildcard $(HOME)/memory/go-sdk/go),)
 export GOROOT  := $(HOME)/memory/go-sdk/go
 export PATH    := $(GOROOT)/bin:$(PATH)
+endif
 export GOPATH  := $(HOME)/.cache/yesmem/gopath
 export GOCACHE := $(HOME)/.cache/yesmem/gocache
 export CGO_ENABLED := 0
