@@ -860,7 +860,7 @@ func (e *TwoPassExtractor) ExtractFromSession(sessionID string, msgs []models.Me
 			content = chunk.PrevSummary + "\n\n" + content
 		}
 
-		summary, err := e.summarizeClient.Complete(SummarizeSystemPrompt, content, WithMaxTokens(1024))
+		summary, err := e.summarizeClient.Complete(SummarizeSystemPrompt, content, WithMaxTokens(4096))
 		if err != nil {
 			log.Printf("warn: summarize chunk %d/%d for %s: %v", chunk.Index+1, chunk.Total, sessionID, err)
 			if strings.Contains(err.Error(), "rate_limit") {

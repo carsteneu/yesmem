@@ -67,10 +67,11 @@ func (c *OpenAIClient) CompleteJSON(system, userMessage string, schema map[strin
 // ━━━ Chat Completions types ━━━
 
 type openAIChatRequest struct {
-	Model       string              `json:"model"`
-	Messages    []openAIChatMessage `json:"messages"`
-	MaxTokens   int                 `json:"max_tokens,omitempty"`
-	Temperature *float64            `json:"temperature,omitempty"`
+	Model           string              `json:"model"`
+	Messages        []openAIChatMessage `json:"messages"`
+	MaxTokens       int                 `json:"max_tokens,omitempty"`
+	Temperature     *float64            `json:"temperature,omitempty"`
+	ReasoningEffort string              `json:"reasoning_effort,omitempty"` // StepFun: "none" disables thinking mode
 }
 
 type openAIChatMessage struct {
@@ -242,6 +243,13 @@ func (c *OpenAIClient) doChatRequest(system, userMessage string, schema map[stri
 		Messages:    messages,
 		MaxTokens:   o.maxTokens,
 		Temperature: &temp,
+	}
+	// StepFun defaults to thinking mode which burns output tokens on
+	// reasoning_content and leaves content empty → yesmem returns
+	// "chat: empty response" (openai_client.go:291). Disabling reasoning
+	// for StepFun keeps extraction working; DeepSeek/OpenAI ignore the field.
+	if strings.Contains(c.endpoint, "stepfun.com") {
+		reqBody.ReasoningEffort = "none"
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
