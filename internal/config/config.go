@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -531,13 +530,11 @@ func Load(path string) (*Config, error) {
 		if os.IsNotExist(err) {
 			return cfg, nil // No config file = use defaults
 		}
-		log.Printf("warn: config read error: %v (using defaults)", err)
-		return cfg, nil
+		return nil, fmt.Errorf("config read error: %w", err)
 	}
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
-		log.Printf("warn: config parse error: %v (using defaults)", err)
-		return Default(), nil
+		return nil, fmt.Errorf("config parse error: %w", err)
 	}
 
 	if cfg.API.APIKey == "" {
