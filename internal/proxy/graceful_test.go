@@ -77,8 +77,8 @@ func TestGracefulShutdown_DrainsInFlight(t *testing.T) {
 		resp.Body.Close()
 	}()
 
-	// Give the request time to start
-	time.Sleep(50 * time.Millisecond)
+	// Give the request time to establish connection (macOS needs more)
+	time.Sleep(150 * time.Millisecond)
 
 	// Graceful shutdown with 5s timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

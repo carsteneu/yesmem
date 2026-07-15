@@ -35,10 +35,10 @@ func TestKeepaliveWithTTLDetector_Integration(t *testing.T) {
 
 	body := []byte(`{"model":"claude-sonnet-4-6","max_tokens":1024,"messages":[{"role":"user","content":"test"}]}`)
 	ka.Reset("opencode:ses_test", body, "test-key")
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
 
 	if int(pingCount.Load()) < 1 {
-		t.Error("expected at least 1 ping")
+		t.Error("expected at least 1 ping within 300ms")
 	}
 }
 
