@@ -125,6 +125,50 @@ func (s *Store) MarkBashJobRunProcessed(id int64) error {
 	return err
 }
 
+// sqliteDateTimeFormat mirrors SQLite's CURRENT_TIMESTAMP format (UTC,
+// space-separated, second precision). SaveBashJobRun relies on the column
+// default, so stored rows already use this format and lexical comparison
+// against a cutoff formatted the same way is correct.
+const sqliteDateTimeFormat = "2006-01-02 15:04:05"
+
+// PurgeBashJobRuns removes expired scheduler run history. Successful and
+// otherwise non-error runs use the shorter retention window. Error runs are
+// only eligible for deletion after they have been processed, so pending error
+// diagnosis and auto-correction work is never discarded.
+func (s *Store) PurgeBashJobRuns(nonErrorBefore, processedErrorBefore time.Time) (int64, error) {
+	nonErrorCut := nonErrorBefore.UTC().Format(sqliteDateTimeFormat)
+	processedErrorCut := processedErrorBefore.UTC().Format(sqliteDateTimeFormat)
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	nonErrorResult, err := tx.Exec(`DELETE FROM bash_job_runs
+		WHERE status != 'error' AND created_at < ?`, nonErrorCut)
+	if err != nil {
+		return 0, err
+	}
+	nonErrorDeleted, err := nonErrorResult.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	processedErrorResult, err := tx.Exec(`DELETE FROM bash_job_runs
+		WHERE status = 'error' AND processed = 1 AND created_at < ?`, processedErrorCut)
+	if err != nil {
+		return 0, err
+	}
+	processedErrorDeleted, err := processedErrorResult.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return nonErrorDeleted + processedErrorDeleted, nil
+}
+
 func scanBashJobRuns(rows *sql.Rows) ([]BashJobRun, error) {
 	var runs []BashJobRun
 	for rows.Next() {

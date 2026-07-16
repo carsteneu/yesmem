@@ -345,6 +345,43 @@ func Run(cfg Config) error {
 	daemonCtx, daemonCancel := context.WithCancel(context.Background())
 	_ = daemonCancel // used at shutdown
 
+	// Keep scheduler execution history bounded. Pending errors are retained
+	// indefinitely so diagnosis and auto-correction cannot lose work.
+	go func() {
+		const (
+			bashRunCleanupInterval  = 24 * time.Hour
+			nonErrorRetention       = 24 * time.Hour
+			processedErrorRetention = 30 * 24 * time.Hour
+		)
+		cleanup := func() {
+			now := time.Now()
+			deleted, err := store.PurgeBashJobRuns(
+				now.Add(-nonErrorRetention),
+				now.Add(-processedErrorRetention),
+			)
+			if err != nil {
+				log.Printf("[scheduler] bash run cleanup failed: %v", err)
+				return
+			}
+			if deleted > 0 {
+				log.Printf("[scheduler] purged %d expired bash job runs (retention: %s non-error, %s processed-error)",
+					deleted, nonErrorRetention, processedErrorRetention)
+			}
+		}
+
+		cleanup()
+		ticker := time.NewTicker(bashRunCleanupInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-daemonCtx.Done():
+				return
+			case <-ticker.C:
+				cleanup()
+			}
+		}
+	}()
+
 	// FTS5 background sync — replaces triggers to avoid write contention on BM25 reads
 	store.StartFTSSync(daemonCtx, 10*time.Second)
 
