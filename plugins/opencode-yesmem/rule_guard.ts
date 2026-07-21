@@ -6,6 +6,7 @@
 // - PASS: no issue
 
 import { appendFileSync } from "node:fs";
+import { isSkillInstalled } from "./skill_whitelist";
 
 const LOG_FILE = `${process.env.HOME}/.claude/yesmem/logs/plugin.log`;
 
@@ -356,8 +357,13 @@ export function ruleGuardHook(directory: string) {
         if (result.decision === "BLOCK" && canBlock) {
           throw new Error(`🚫 ${(result.violations || []).join("; ")}`);
         } else if (result.decision === "SUGGEST") {
-          const level = toolName === "bash" ? "MANDATORY" : "REQUIRED";
-          suggestions.set(input.callID, { suggestion: result.suggestion || "", level });
+          const suggestion = result.suggestion || "";
+          if (suggestion && !isSkillInstalled(suggestion)) {
+            dbgLog("guard", `SKIP ghost skill: ${suggestion}`);
+          } else {
+            const level = toolName === "bash" ? "MANDATORY" : "REQUIRED";
+            suggestions.set(input.callID, { suggestion, level });
+          }
         }
       } catch (e: any) {
         dbgLog("guard", `CRASH ${e?.message || String(e)}`);
