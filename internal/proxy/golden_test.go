@@ -48,8 +48,8 @@ var goldenRegistry = map[models.PromptProfile][]goldenSpec{
 		{
 			Name:            "001_synthetic_codex_openai_parity",
 			Synthetic:       true,
-			PreSHA256:       "790cbbe9831c539bef968c20e504119ffefaca401a8aa4266a52f20e5ff9d87c",
-			FinalSHA256:     "78c64efbb62cd402546e8bef709737866142b123eedbc42d59d7691429accd1d",
+			PreSHA256:       "ac8cf9ec7297c62f26e761e72291665186015eeca219f47ced73e301be2594f3",
+			FinalSHA256:     "8e2093b67befb542b93d6c1bc0a11b0365a0fc5a92522d37548390d276f1e636",
 			RequiredTokens:  openAIRequiredTokens(),
 			ForbiddenTokens: openAIForbiddenTokens(),
 		},
@@ -58,8 +58,8 @@ var goldenRegistry = map[models.PromptProfile][]goldenSpec{
 		{
 			Name:            "001_synthetic_opencode_openai_parity",
 			Synthetic:       true,
-			PreSHA256:       "154e772a1bec92cfa8dbfd4e1c4a4a59e20f315c6df332feeaeca965e5e79aeb",
-			FinalSHA256:     "ff213fd9cc7bf4e2508e8c20e88fcfd607869c006d668d4c8750e465ccec542f",
+			PreSHA256:       "9bc7f1964dcba0ce77328d8bc6b2e5fa9c14aa96f7a8cedc417a52a3f4e5e0c9",
+		FinalSHA256:     "f96234def5db03e7047a24e24692e4caa320fc75198254453ec67c19aedd7d5b",
 			RequiredTokens:  openAIRequiredTokens(),
 			ForbiddenTokens: openAIForbiddenTokens(),
 		},

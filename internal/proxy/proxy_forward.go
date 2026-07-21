@@ -106,6 +106,10 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 		}
 		w.Write(bodyBytes)
 
+		if resp.StatusCode != 200 && len(bodyBytes) > 0 {
+			s.logger.Printf("%s[req %d tid=%s] upstream %d: %s%s", colorRed, reqIdx, threadID, resp.StatusCode, truncateBytes(bodyBytes, 500), colorReset)
+		}
+
 		if threadID != "" {
 			go s.trackStreamState(threadID, false, int64(len(bodyBytes)), isSub, proj)
 		}
