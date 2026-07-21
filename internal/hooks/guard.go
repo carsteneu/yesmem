@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/carsteneu/yesmem/internal/setup"
 	"gopkg.in/yaml.v3"
 )
 
@@ -176,6 +177,12 @@ func RunGuard(dataDir string) {
 		return
 	}
 
+	// Filter out catalog entries for skills that aren't loadable on this
+	// machine (ghost dirs without SKILL.md). Prevents false-positive
+	// SUGGESTs naming skills the agent cannot activate. No-op if the
+	// filesystem scan fails — pass through conservatively.
+	rules = setup.FilterStaleSkillRules(rules, setup.LoadAgentLoadableSkillNames())
+
 	// Hardcoded pre-check for destructive bash/REPL patterns: bypass DeepSeek
 	// entirely and BLOCK before any model roundtrip. These patterns describe
 	// commands no plausible workflow needs (rm -rf /, force-push to main,
@@ -203,6 +210,13 @@ func RunGuard(dataDir string) {
 	decision = downgradeUnauthorizedBlock(decision, hook.ToolName)
 
 	cooldownPath := filepath.Join(dataDir, "guard_state.db")
+
+	// Drop suggestions for skills that aren't loadable on this machine
+	// (ghost dirs without SKILL.md). Runs before the cooldown check so an
+	// unavailable suggestion doesn't get recorded as fired. Conservative:
+	// empty available set (filesystem scan failed) = pass through.
+	decision = maybeSuppressUnavailableSkill(decision, setup.LoadAgentLoadableSkillNames())
+
 	if maybeSuppressSuggestion(decision, cooldownPath, suggestCooldownTTL, time.Now()) {
 		return
 	}

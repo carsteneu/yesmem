@@ -104,12 +104,7 @@ func TestGenerateRULESmd_SkillCatalog(t *testing.T) {
 		"yesmem-agents",
 		"yesmem-cap-builder",
 		"yesmem-config",
-		"yesmem-docs",
-		"yesmem-orientation",
-		"yesmem-planning",
 		"yesmem-remember",
-		"yesmem-search",
-		"yesmem-sessions",
 	}
 
 	for _, skill := range expectedSkills {

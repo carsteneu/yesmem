@@ -5,6 +5,7 @@
 
 import { appendFileSync } from "node:fs";
 import { resolveGuardConfig } from "./rule_guard";
+import { isSkillInstalled } from "./skill_whitelist";
 
 const LOG_FILE = `${process.env.HOME}/.claude/yesmem/logs/plugin.log`;
 function dbgLog(tag: string, msg: string) {
@@ -204,6 +205,10 @@ export function skillNudgeHook() {
 
         // 6. Prepend nudge to user message
         if (matchedSkill) {
+          if (!isSkillInstalled(matchedSkill)) {
+            dbgLog("skill_nudge", `SKIP ghost skill: ${matchedSkill}`);
+            return;
+          }
           for (let i = msgs.length - 1; i >= 0; i--) {
             const m = msgs[i];
             const info = m?.info || m;

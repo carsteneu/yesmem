@@ -37,8 +37,8 @@ The following rules are non-negotiable. Evaluate each tool call against EVERY ru
 18. Report tool results literally — errors, empty output, and partial results must be stated exactly, not smoothed over or summarized away.
 
 ## BEFORE Answering / Acting
-19. ALWAYS search memory (yesmem-search, hybrid_search) before answering questions about past work, architecture, prior decisions, or before proposing fixes.
-20. At session start or returning after a break: use yesmem-orientation skill.
+19. ALWAYS search memory (hybrid_search) before answering questions about past work, architecture, prior decisions, or before proposing fixes.
+20. At session start or returning after a break: read the auto-injected briefing to recall active plan and recent decisions.
 21. After ANY decision, correction, gotcha, or discovery: use yesmem-remember skill.
 
 ## Shell & Commands
@@ -81,36 +81,11 @@ rules:
     priority: MUST
     triggers: ["configuration changes like token_threshold", "managing pins", "persistent instructions", "persona overrides", "persona traits", "pin this\"/\"merk dir als Regel", "runtime config", "scratchpad", "session settings", "shared agent state"]
     rule: "Use when managing pins, scratchpad, runtime config, session settings, or persona traits. Trigger on \"pin this\"/\"merk dir als Regel\", persistent instructions, shared agent state, persona overrides, or configuration changes like token_threshold."
-  - id: 29
-    skill: yesmem-docs
-    priority: MUST
-    triggers: ["function signatures", "idiomatic patterns", "writing code and unsure about API behavior"]
-    rule: "Use when writing code and unsure about API behavior, function signatures, or idiomatic patterns. Use when debugging errors that might stem from incorrect API usage. Use when managing indexed documentation sources. Check docs_search() before guessing — indexed docs exist for a reason."
-  - id: 30
-    skill: yesmem-orientation
-    priority: MUST
-    triggers: ["what's open?", "when context about the current project is needed", "where were we?", "wo waren wir?"]
-    rule: "Use at session start (first user message), when switching projects, returning after a break, or when disoriented about project state. Trigger on \"where were we?\", \"what's open?\", \"wo waren wir?\", or when context about the current project is needed."
-  - id: 31
-    skill: yesmem-planning
-    priority: MUST
-    triggers: ["debug spirals", "exploring more than 1 hypothesis", "like work spanning more than 5 tool cycles", "side-quests parallel to a main thread", "starting iterative work that needs to survive context-collapse", "touching multiple files or worktrees", "when prompted by [Plan Checkpoint]"]
-    rule: "Use when starting iterative work that needs to survive context-collapse, like work spanning more than 5 tool cycles, exploring more than 1 hypothesis, touching multiple files or worktrees, debug spirals, side-quests parallel to a main thread, or when prompted by [Plan Checkpoint]. Plans are thread-scoped (parallel sessions don't conflict) and re-injected on every turn. They are the only context-loss-proof anchor for the active task. Activate via set_plan(), update via update_plan() at each pivot."
   - id: 32
     skill: yesmem-remember
     priority: MUST
     triggers: ["and relate_learnings() for connecting insights", "confirmed approaches", "debugging surprises", "remember this\"/\"merk dir das"]
     rule: "Use after ANY decision, correction, gotcha, or discovery worth preserving. Also on task completion — resolve open tasks via resolve_by_text() after commits, \"fertig\", or confirmed fixes. Trigger on \"remember this\"/\"merk dir das\", confirmed approaches, debugging surprises, and relate_learnings() for connecting insights."
-  - id: 33
-    skill: yesmem-search
-    priority: MUST
-    triggers: ["encountering errors with possible prior context", "when the user references previous sessions", "when working with unfamiliar components"]
-    rule: "ALWAYS check memory BEFORE answering questions about past work, architecture, or prior decisions. Also before proposing fixes or solutions — check if similar issues were solved before. Use when encountering errors with possible prior context, when the user references previous sessions, or when working with unfamiliar components. Search first, respond second."
-  - id: 34
-    skill: yesmem-sessions
-    priority: MUST
-    triggers: ["asking \"what happened last week/yesterday", "exploring past sessions", "last time we", "letzte Session", "needing full conversation details", "when the user references a specific past conversation"]
-    rule: "Use when exploring past sessions, asking \"what happened last week/yesterday\", needing full conversation details, or when the user references a specific past conversation. Trigger on \"letzte Session\", \"last time we...\", session history investigation."
   - id: 35
     skill: brainstorming
     priority: MUST
@@ -129,7 +104,7 @@ rules:
   - id: 38
     skill: finishing-a-development-branch
     priority: MUST
-    triggers: ["PR", "all tests pass", "and you need to decide how to integrate the work - guides completion of development work by presenting structured options for merge", "cleanup", "implementation is complete"]
+    triggers: ["branch is ready to merge", "merge into main", "create a pull request", "finish the branch", "prepare merge", "branch is done and staged", "ready for merge or pr"]
     rule: "Use when implementation is complete, all tests pass, and you need to decide how to integrate the work - guides completion of development work by presenting structured options for merge, PR, or cleanup"
   - id: 39
     skill: receiving-code-review
@@ -186,8 +161,3 @@ rules:
     priority: MUST
     triggers: ["creating new skills", "editing existing skills", "new skill", "verifying skills work before deployment"]
     rule: "Use when creating new skills, editing existing skills, or verifying skills work before deployment"
-  - id: 50
-    skill: yesmem-docs
-    priority: SHOULD
-    triggers: ["grep", "glob", "find", "cat", "head", "tail", "ls", "code navigation", "code search", "symbol lookup", "file listing", "codebase browsing", "code exploration"]
-    rule: "SHOULD be activated when using shell tools (grep, glob, find, read, cat, head, tail, ls) for code navigation, file listing, or symbol lookup. YesMem provides index-aware MCP tools: search_code_index for symbols, get_file_index for file listings, get_code_snippet for source, graph_traverse for call paths, get_file_symbols for file symbols. These are faster and provide gotcha annotations and call-path context that shell tools lack. Shell tools remain appropriate for log files, config files, and non-code text searches."
