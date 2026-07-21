@@ -23,6 +23,7 @@ import (
 	"github.com/carsteneu/yesmem/internal/briefing"
 	"github.com/carsteneu/yesmem/internal/buildinfo"
 	"github.com/carsteneu/yesmem/internal/config"
+	"github.com/carsteneu/yesmem/internal/logrotate"
 	"github.com/carsteneu/yesmem/internal/embedding"
 	"github.com/carsteneu/yesmem/internal/extraction"
 	"github.com/carsteneu/yesmem/internal/graph"
@@ -102,14 +103,12 @@ func Run(cfg Config) error {
 		os.Setenv("PATH", filepath.Join(home, ".local/bin")+":"+os.Getenv("PATH"))
 	}
 
-	// Set up log file
-	logDir := filepath.Join(cfg.DataDir, "logs")
-	os.MkdirAll(logDir, 0755)
-	logPath := filepath.Join(logDir, "daemon.log")
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	// Set up log file with rotation (50MB default, keeps 5 timestamped backups)
+	logPath := filepath.Join(cfg.DataDir, "logs", "daemon.log")
+	logWriter, err := logrotate.New(logPath)
 	if err == nil {
-		log.SetOutput(io.MultiWriter(os.Stderr, logFile))
-		defer logFile.Close()
+		log.SetOutput(io.MultiWriter(os.Stderr, logWriter))
+		defer logWriter.Close()
 	}
 
 	log.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
