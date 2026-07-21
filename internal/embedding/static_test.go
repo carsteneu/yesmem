@@ -8,7 +8,7 @@ import (
 
 func TestStaticProviderEmbed(t *testing.T) {
 	// StaticProvider code still works — test with SSE weights (same format, no DyT step)
-	p, err := NewStaticProvider(sseWeightsData, tokenizerData)
+	p, err := NewStaticProvider(concatSSEWeights(), tokenizerData)
 	if err != nil {
 		t.Fatalf("NewStaticProvider: %v", err)
 	}

@@ -127,7 +127,7 @@ func TestSSESingletonIndependentOfDirect(t *testing.T) {
 	resetSSESingleton()
 
 	// Direct NewSSEProvider must still work (separate from singleton)
-	direct, err := NewSSEProvider(sseWeightsData, sseDyTData, tokenizerData)
+	direct, err := NewSSEProvider(concatSSEWeights(), sseDyTData, tokenizerData)
 	if err != nil {
 		t.Fatalf("direct: %v", err)
 	}

@@ -17,14 +17,25 @@ var sseWeightsPart1 []byte
 //go:embed assets/sse_weights_part2.bin
 var sseWeightsPart2 []byte
 
-// sseWeightsData is assembled from split parts at init time (each part <100MB for GitHub).
+// sseWeightsData is assembled lazily from split parts on first use (each part
+// <100MB for GitHub). The parts stay file-backed (//go:embed data section)
+// until concatSSEWeights() is called, which only happens when a provider is
+// actually constructed. This keeps the MCP process (which never creates a
+// provider) at ~20 MB PSS instead of ~120 MB.
 var sseWeightsData []byte
 
-func init() {
+// concatSSEWeights assembles the three weight parts into a single contiguous
+// slice. Called lazily by NewProviderFromConfig and by tests. The result is
+// cached in sseWeightsData so subsequent callers see the same slice.
+func concatSSEWeights() []byte {
+	if sseWeightsData != nil {
+		return sseWeightsData
+	}
 	sseWeightsData = make([]byte, 0, len(sseWeightsPart0)+len(sseWeightsPart1)+len(sseWeightsPart2))
 	sseWeightsData = append(sseWeightsData, sseWeightsPart0...)
 	sseWeightsData = append(sseWeightsData, sseWeightsPart1...)
 	sseWeightsData = append(sseWeightsData, sseWeightsPart2...)
+	return sseWeightsData
 }
 
 //go:embed assets/sse_dyt_512d.bin

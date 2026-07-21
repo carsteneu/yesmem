@@ -6,8 +6,26 @@ import (
 	"testing"
 )
 
+func TestSSEWeightsData_LazyLoad_Defaults(t *testing.T) {
+	orig := sseWeightsData
+	defer func() { sseWeightsData = orig }()
+	sseWeightsData = nil
+
+	if sseWeightsData != nil {
+		t.Fatalf("sseWeightsData should be nil before explicit load (lazy), got %d bytes", len(sseWeightsData))
+	}
+	data := concatSSEWeights()
+	if len(data) == 0 {
+		t.Fatal("concatSSEWeights returned empty")
+	}
+	if len(data) != len(sseWeightsPart0)+len(sseWeightsPart1)+len(sseWeightsPart2) {
+		t.Fatalf("concat size mismatch: got %d, want %d", len(data),
+			len(sseWeightsPart0)+len(sseWeightsPart1)+len(sseWeightsPart2))
+	}
+}
+
 func TestSSEProviderEmbed(t *testing.T) {
-	p, err := NewSSEProvider(sseWeightsData, sseDyTData, tokenizerData)
+	p, err := NewSSEProvider(concatSSEWeights(), sseDyTData, tokenizerData)
 	if err != nil {
 		t.Fatalf("NewSSEProvider: %v", err)
 	}
@@ -42,7 +60,7 @@ func TestSSEProviderEmbed(t *testing.T) {
 }
 
 func TestSSESemanticSimilarity(t *testing.T) {
-	p, err := NewSSEProvider(sseWeightsData, sseDyTData, tokenizerData)
+	p, err := NewSSEProvider(concatSSEWeights(), sseDyTData, tokenizerData)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,12 +77,12 @@ func TestSSESemanticSimilarity(t *testing.T) {
 }
 
 func TestSSEDyTEffect(t *testing.T) {
-	sse, err := NewSSEProvider(sseWeightsData, sseDyTData, tokenizerData)
+	sse, err := NewSSEProvider(concatSSEWeights(), sseDyTData, tokenizerData)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Same weights through StaticProvider (no DyT) — vectors must differ
-	static, err := NewStaticProvider(sseWeightsData, tokenizerData)
+	static, err := NewStaticProvider(concatSSEWeights(), tokenizerData)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +98,7 @@ func TestSSEDyTEffect(t *testing.T) {
 }
 
 func TestSSEEmptyInput(t *testing.T) {
-	p, err := NewSSEProvider(sseWeightsData, sseDyTData, tokenizerData)
+	p, err := NewSSEProvider(concatSSEWeights(), sseDyTData, tokenizerData)
 	if err != nil {
 		t.Fatal(err)
 	}
