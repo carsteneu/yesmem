@@ -19,6 +19,7 @@ var contentToolNames = []string{
 	"save_cap",
 	"set_persona",
 	"scratchpad_write",
+	"scratchpad_append",
 }
 
 func TestContentToolDescriptions_IncludeLanguageDirective(t *testing.T) {
