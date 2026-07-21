@@ -486,6 +486,13 @@ var migrations = []string{
 		SELECT COUNT(DISTINCT s2.project) FROM sessions s2
 		WHERE s2.project LIKE '/%' AND s2.project LIKE '%/' || agents.project
 	)`,
+	// v0.67: Null out self-cycles in supersedes / superseded_by columns.
+	// Production DB had ≥10 rows with supersedes=id or superseded_by=id, which
+	// caused GetLearningChain to spin forever (handler_learnings.go history=true
+	// path consumed 97% daemon CPU). Idempotent: only rows where the column
+	// equals the row's own id are touched.
+	`UPDATE learnings SET supersedes = NULL WHERE supersedes = id`,
+	`UPDATE learnings SET superseded_by = NULL WHERE superseded_by = id`,
 }
 
 // messagesMigrations runs against messages.db (separate from yesmem.db migrations).
