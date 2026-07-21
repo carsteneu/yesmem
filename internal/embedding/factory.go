@@ -68,7 +68,8 @@ func NewProviderFromConfig(cfg EmbeddingConfig) (Provider, error) {
 		return NewNoneProvider(), nil
 	case "sse":
 		sseOnce.Do(func() {
-			prov, err := NewSSEProvider(sseWeightsData, sseDyTData, tokenizerData)
+			weights := concatSSEWeights()
+			prov, err := NewSSEProvider(weights, sseDyTData, tokenizerData)
 			if err != nil {
 				sseInitErr = err
 				return
