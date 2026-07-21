@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/carsteneu/yesmem/internal/codescan"
@@ -14,6 +15,13 @@ import (
 )
 
 const wikiTickInterval = 5 * time.Minute
+
+// hotTierAge: hot if latest session is within this window. Older = cold tier.
+const hotTierAge = 24 * time.Hour
+
+// coldTierRenderInterval: cold-tier projects render at most this often.
+// Slightly under 24h so a tick in the nightly window re-renders them.
+const coldTierRenderInterval = 20 * time.Hour
 
 // wikiSnapshot tracks what the last wiki render saw, so we skip re-renders when nothing changed.
 type wikiSnapshot struct {
@@ -51,6 +59,13 @@ func runWikiOnce(ctx context.Context, store *storage.Store, outRoot string, scan
 	for _, p := range projects {
 		dir := store.ResolveProjectPath(p)
 		out := filepath.Join(outRoot, p)
+
+		// Cold-tier throttle: projects with no session in the last hotTierAge
+		// render at most once per coldTierRenderInterval. Hot-tier projects
+		// render every tick (subject to the content-change check below).
+		if !projectTierHot(ctx, store, p) && !coldTierDueForRender(out) {
+			continue
+		}
 
 		// Skip when nothing changed since last render.
 		if !wikiNeedsRender(ctx, store, p, out) {
@@ -170,8 +185,67 @@ func activeProjects(ctx context.Context, store *storage.Store) ([]string, error)
 		if err := rows.Scan(&p); err != nil {
 			return nil, err
 		}
+		if !isLiveProjectPath(p) {
+			continue
+		}
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// isLiveProjectPath returns false for /tmp/* paths (transient opencode session
+// dirs) and absolute paths that no longer exist on disk (removed worktrees).
+// Returns true for relative paths and stat errors other than IsNotExist so we
+// fail open on transient FS issues rather than silently dropping projects.
+func isLiveProjectPath(p string) bool {
+	if strings.HasPrefix(p, "/tmp/") {
+		return false
+	}
+	if p == "" || p[0] != '/' {
+		return true
+	}
+	if _, err := os.Stat(p); os.IsNotExist(err) {
+		return false
+	}
+	return true
+}
+
+// projectTierHot returns true if the project's most recent session is within
+// hotTierAge. Projects with no sessions are treated as hot so brand-new
+// projects (learnings but no sessions yet) still get a wiki page on the next
+// tick.
+func projectTierHot(ctx context.Context, store *storage.Store, project string) bool {
+	last := projectLastActiveAt(ctx, store, project)
+	if last.IsZero() {
+		return true
+	}
+	return time.Since(last) <= hotTierAge
+}
+
+func projectLastActiveAt(ctx context.Context, store *storage.Store, project string) time.Time {
+	var ts string
+	if err := store.DB().QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(started_at), '') FROM sessions WHERE project_short = ?`, project,
+	).Scan(&ts); err != nil || ts == "" {
+		return time.Time{}
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05"} {
+		if t, err := time.Parse(layout, ts); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
+// coldTierDueForRender returns true when a cold-tier project should render.
+// Decision is based on .wiki-snapshot.json mtime: a snapshot younger than
+// coldTierRenderInterval means the previous render is still fresh. Returns
+// true when no snapshot exists (first render) or stat fails.
+func coldTierDueForRender(outDir string) bool {
+	info, err := os.Stat(filepath.Join(outDir, ".wiki-snapshot.json"))
+	if err != nil {
+		return true
+	}
+	return time.Since(info.ModTime()) >= coldTierRenderInterval
 }
 

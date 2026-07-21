@@ -1257,6 +1257,11 @@ func regenerateBriefingsForTargets(store *storage.Store, cfg *config.Config, llm
 	}
 }
 
+// briefingInactivityThreshold: projects whose most recent session is older
+// than this are skipped by listProjectsNeedingBriefingRefresh. Saves LLM
+// refinement calls on long-dormant projects.
+const briefingInactivityThreshold = 30 * 24 * time.Hour
+
 func listProjectsNeedingBriefingRefresh(store *storage.Store, cfg *config.Config) ([]briefingRefreshTarget, error) {
 	projects, err := store.ListProjects()
 	if err != nil {
@@ -1267,6 +1272,18 @@ func listProjectsNeedingBriefingRefresh(store *storage.Store, cfg *config.Config
 
 	for _, project := range projects {
 		if project.ProjectShort == "" {
+			continue
+		}
+		// Dead-path filter: /tmp/* opencode session dirs and removed worktrees.
+		// Same predicate as the wiki-tick filter so the two loops agree.
+		if !isLiveProjectPath(project.ProjectShort) {
+			continue
+		}
+		// Inactivity filter: skip projects dormant longer than the threshold.
+		// Uses the sessions table's MAX(started_at); falls back to "include"
+		// when the timestamp can't be parsed so we fail open.
+		if last := projectLastActiveAt(context.Background(), store, project.ProjectShort); !last.IsZero() &&
+			time.Since(last) > briefingInactivityThreshold {
 			continue
 		}
 		// Lightweight change detection: compare DB fingerprint instead of

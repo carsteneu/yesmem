@@ -15,13 +15,21 @@ import (
 	"time"
 )
 
+// maybeDumpRequestBody writes the request body to <dataDir>/logs/req_<idx>_body.json
+// only when YESMEM_PROXY_DEBUG=1. Mirrors the guard at proxy.go:865 and proxy.go:1789.
+// No-op when the env var is unset, set to anything other than "1", or dataDir is empty.
+func maybeDumpRequestBody(dataDir string, reqIdx int, body []byte) {
+	if os.Getenv("YESMEM_PROXY_DEBUG") != "1" || dataDir == "" {
+		return
+	}
+	debugPath := filepath.Join(dataDir, "logs", fmt.Sprintf("req_%d_body.json", reqIdx))
+	os.WriteFile(debugPath, body, 0644)
+}
+
 // forwardWithAnnotation forwards the request and extracts annotations from the SSE response.
 func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Request, body []byte, reqIdx int, toolUseIDs []string, proj string, threadID string, msgCount int, estimatedTokens ...int) {
-	// Debug: dump request body to file for inspection
-	if s.cfg.DataDir != "" {
-		debugPath := filepath.Join(s.cfg.DataDir, "logs", fmt.Sprintf("req_%d_body.json", reqIdx))
-		os.WriteFile(debugPath, body, 0644)
-	}
+	// Debug: dump request body to file for inspection (enable with YESMEM_PROXY_DEBUG=1)
+	maybeDumpRequestBody(s.cfg.DataDir, reqIdx, body)
 
 	targetURL := s.resolveAnthropicTarget(extractModelFromBody(body)) + origReq.URL.RequestURI()
 
