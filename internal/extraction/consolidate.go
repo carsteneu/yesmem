@@ -15,14 +15,21 @@ import (
 type ConsolidateConfig struct {
 	MaxRounds     int
 	RuleBasedOnly bool
+	AfterID       int64
+	ThroughID     int64
 }
 
 // ConsolidateResult holds the outcome of a consolidation run.
 type ConsolidateResult struct {
-	Rounds          int
-	TotalChecked    int
-	TotalSuperseded int
-	PerRound        []RoundResult
+	Rounds               int
+	TotalChecked         int
+	TotalSuperseded      int
+	BigramComparisons    int
+	EmbeddingComparisons int
+	EmbeddingDimensions  int
+	Errors               int
+	HighWatermark        int64
+	PerRound             []RoundResult
 }
 
 // RoundResult holds stats for a single consolidation round.
@@ -230,7 +237,16 @@ func RunConsolidation(store *storage.Store, extractor *Extractor, onSupersede fu
 		cfg.MaxRounds = 3
 	}
 
-	result := ConsolidateResult{}
+	result := ConsolidateResult{HighWatermark: cfg.ThroughID}
+	if result.HighWatermark == 0 {
+		var err error
+		result.HighWatermark, err = store.GetMaxLearningID()
+		if err != nil {
+			result.Errors++
+			log.Printf("warn: consolidation high-watermark: %v", err)
+			return result
+		}
+	}
 
 	for round := 1; round <= cfg.MaxRounds; round++ {
 		log.Printf("━━━ Consolidation Round %d/%d ━━━", round, cfg.MaxRounds)
@@ -240,7 +256,12 @@ func RunConsolidation(store *storage.Store, extractor *Extractor, onSupersede fu
 		if extractor != nil && !cfg.RuleBasedOnly {
 			checked, superseded = extractor.RunEvolution(store, onSupersede)
 		} else {
-			checked, superseded = runRuleBasedEvolution(store, onSupersede)
+			var bigramComparisons, embeddingComparisons, embeddingDimensions, errors int
+			checked, superseded, bigramComparisons, embeddingComparisons, embeddingDimensions, errors = runRuleBasedEvolution(store, onSupersede, cfg.AfterID, result.HighWatermark)
+			result.BigramComparisons += bigramComparisons
+			result.EmbeddingComparisons += embeddingComparisons
+			result.EmbeddingDimensions += embeddingDimensions
+			result.Errors += errors
 		}
 
 		roundResult := RoundResult{Checked: checked, Superseded: superseded}
@@ -258,69 +279,83 @@ func RunConsolidation(store *storage.Store, extractor *Extractor, onSupersede fu
 		}
 	}
 
-	log.Printf("━━━ Consolidation complete: %d rounds, %d checked, %d superseded ━━━",
-		result.Rounds, result.TotalChecked, result.TotalSuperseded)
+	log.Printf("━━━ Consolidation complete: %d rounds, %d checked, %d superseded, %d bigram candidates, %d embedding comparisons (%d dimensions) ━━━",
+		result.Rounds, result.TotalChecked, result.TotalSuperseded, result.BigramComparisons, result.EmbeddingComparisons, result.EmbeddingDimensions)
 	return result
 }
 
 // runRuleBasedEvolution applies BigramJaccard + embedding dedup without LLM.
-func runRuleBasedEvolution(store *storage.Store, onSupersede func(int64)) (int, int) {
-	categories, err := store.GetActiveCategories()
+func runRuleBasedEvolution(store *storage.Store, onSupersede func(int64), afterID, throughID int64) (int, int, int, int, int, int) {
+	learnings, err := store.GetConsolidationLearnings(afterID, throughID)
 	if err != nil {
-		return 0, 0
+		log.Printf("warn: get incremental consolidation scopes: %v", err)
+		return 0, 0, 0, 0, 0, 1
+	}
+
+	type groupKey struct{ project, category string }
+	groups := make(map[groupKey][]models.Learning)
+	for _, learning := range learnings {
+		project := learning.CanonicalProject
+		if project == "" {
+			project = learning.Project
+		}
+		key := groupKey{project: project, category: learning.Category}
+		groups[key] = append(groups[key], learning)
 	}
 
 	totalChecked, totalSuperseded := 0, 0
-
-	for _, cat := range categories {
-		if cat == "narrative" || cat == "cap" {
+	totalBigramComparisons, totalEmbeddingComparisons, totalEmbeddingDimensions, totalErrors := 0, 0, 0, 0
+	for _, group := range groups {
+		dirty := 0
+		for _, learning := range group {
+			if afterID == 0 || learning.ID > afterID {
+				dirty++
+			}
+		}
+		totalChecked += dirty
+		if len(group) < 2 && dirty == 0 {
 			continue
 		}
-		learnings, err := store.GetActiveLearnings(cat, "", "", "", 0)
-		if err != nil || len(learnings) < 2 {
-			continue
-		}
 
-		totalChecked += len(learnings)
-
-		// Pass 1: IsSubstanzlos + BigramJaccard
-		var cleaned []models.Learning
-		for _, l := range learnings {
+		// Pass 1: remove new junk and compare only pairs involving new rows.
+		cleaned := make([]models.Learning, 0, len(group))
+		for _, l := range group {
 			if IsSubstanzlos(l.Content) {
+				if afterID > 0 && l.ID <= afterID {
+					continue
+				}
 				if err := store.SupersedeLearning(l.ID, 0, "rule-based: substanzlos"); err == nil {
 					totalSuperseded++
 					if onSupersede != nil {
 						onSupersede(l.ID)
 					}
+				} else {
+					totalErrors++
 				}
 				continue
 			}
-			isDupe := false
-			for _, kept := range cleaned {
-				if BigramJaccard(l.Content, kept.Content) > 0.85 {
-					loserID, winnerID := l.ID, kept.ID
-					if l.ID > kept.ID {
-						loserID, winnerID = kept.ID, l.ID
-						for ci := range cleaned {
-							if cleaned[ci].ID == kept.ID {
-								cleaned[ci] = l
-								break
-							}
-						}
-					}
-					if err := store.SupersedeLearning(loserID, winnerID, "rule-based: near-duplicate"); err == nil {
-						totalSuperseded++
-						if onSupersede != nil {
-							onSupersede(loserID)
-						}
-					}
-					isDupe = true
-					break
+			cleaned = append(cleaned, l)
+		}
+		lexicalDupes, comparisons := findBigramDuplicates(cleaned, 0.85, afterID)
+		totalBigramComparisons += comparisons
+		for loserID, winnerID := range lexicalDupes {
+			if err := store.SupersedeLearning(loserID, winnerID, "rule-based: near-duplicate"); err == nil {
+				totalSuperseded++
+				if onSupersede != nil {
+					onSupersede(loserID)
+				}
+			} else {
+				totalErrors++
+			}
+		}
+		if len(lexicalDupes) > 0 {
+			remaining := cleaned[:0]
+			for _, learning := range cleaned {
+				if _, loser := lexicalDupes[learning.ID]; !loser {
+					remaining = append(remaining, learning)
 				}
 			}
-			if !isDupe {
-				cleaned = append(cleaned, l)
-			}
+			cleaned = remaining
 		}
 
 		// Pass 2: Embedding cosine similarity
@@ -329,20 +364,29 @@ func runRuleBasedEvolution(store *storage.Store, onSupersede func(int64)) (int, 
 			for i, l := range cleaned {
 				ids[i] = l.ID
 			}
-			vectors := LoadVectorsForLearnings(store, ids)
+			vectors, err := LoadVectorsForLearnings(store, ids)
+			if err != nil {
+				log.Printf("warn: load consolidation vectors: %v", err)
+				totalErrors++
+				continue
+			}
 			if len(vectors) >= 2 {
-				embDupes := FindEmbeddingDuplicates(cleaned, vectors, 0.92)
+				embDupes, stats := findEmbeddingDuplicatesSince(cleaned, vectors, 0.92, afterID)
+				totalEmbeddingComparisons += stats.Comparisons
+				totalEmbeddingDimensions += stats.Dimensions
 				for loserID, winnerID := range embDupes {
 					if err := store.SupersedeLearning(loserID, winnerID, "rule-based: embedding near-duplicate"); err == nil {
 						totalSuperseded++
 						if onSupersede != nil {
 							onSupersede(loserID)
 						}
+					} else {
+						totalErrors++
 					}
 				}
 			}
 		}
 	}
 
-	return totalChecked, totalSuperseded
+	return totalChecked, totalSuperseded, totalBigramComparisons, totalEmbeddingComparisons, totalEmbeddingDimensions, totalErrors
 }

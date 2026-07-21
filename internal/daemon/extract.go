@@ -95,6 +95,7 @@ func runInitialExtraction(ext extraction.SessionExtractor, evoExt *extraction.Ex
 		log.Println("━━━ Initial background scan skipped: no extraction/profile/narrative/persona work pending ━━━")
 		return
 	}
+	evolutionAfterID, _ := store.GetMaxLearningID()
 
 	// ━━━ Phase 2: Extraction (LLM — learnings only, NO evolution) ━━━
 	if len(toExtract) > 0 {
@@ -145,7 +146,7 @@ func runInitialExtraction(ext extraction.SessionExtractor, evoExt *extraction.Ex
 				log.Println("━━━ Phase 3: Evolution skipped (no new learning categories) ━━━")
 			} else {
 				log.Printf("━━━ Phase 3: Knowledge Evolution (scoped to %d project/category groups) ━━━", countEvolutionScope(evolutionScope))
-				checked, superseded := evoExt.RunEvolutionForScope(store, evolutionScope, nil)
+				checked, superseded := evoExt.RunEvolutionForScopeSince(store, evolutionScope, nil, evolutionAfterID)
 				log.Printf("  Evolution complete: %d checked, %d superseded", checked, superseded)
 			}
 		}
@@ -782,6 +783,7 @@ func runBatchExtraction(ext extraction.SessionExtractor, evoExt *extraction.Extr
 	if len(toExtract) == 0 {
 		return
 	}
+	evolutionAfterID, _ := store.GetMaxLearningID()
 
 	// Phase 2: Extraction
 	if !extraction.HasBudget(client) {
@@ -816,7 +818,7 @@ func runBatchExtraction(ext extraction.SessionExtractor, evoExt *extraction.Extr
 		evolutionScope, err := buildEvolutionScope(store, toExtract)
 		if err == nil && len(evolutionScope) > 0 {
 			log.Printf("  Phase 3: Evolution (%d project/category groups)", countEvolutionScope(evolutionScope))
-			checked, superseded := evoExt.RunEvolutionForScope(store, evolutionScope, nil)
+			checked, superseded := evoExt.RunEvolutionForScopeSince(store, evolutionScope, nil, evolutionAfterID)
 			log.Printf("  Evolution: %d checked, %d superseded", checked, superseded)
 		}
 	}

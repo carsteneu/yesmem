@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/carsteneu/yesmem/internal/models"
 )
@@ -349,6 +350,75 @@ func TestApplyEvolutionResponse_SingleIDNoOp(t *testing.T) {
 	l, _ := store.GetLearning(id1)
 	if l.SupersededBy != nil {
 		t.Errorf("learning should not be superseded, got superseded_by=%v", *l.SupersededBy)
+	}
+}
+
+func TestApplyEvolutionResponseReRanksWinnerByQuality(t *testing.T) {
+	store := mustOpenStore(t)
+	trustedID, err := store.InsertLearning(&models.Learning{
+		Content: "User explicitly prefers concise German answers", Category: "preference",
+		Source: "user_stated", Importance: 3, Confidence: 0.8, CreatedAt: time.Now().Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("insert trusted learning: %v", err)
+	}
+	extractedID, err := store.InsertLearning(&models.Learning{
+		Content: "User prefers concise German answers", Category: "preference",
+		Source: "llm_extracted", Importance: 3, Confidence: 1, CreatedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("insert extracted learning: %v", err)
+	}
+
+	ext := &Extractor{store: store}
+	response := fmt.Sprintf(`{"actions":[{"type":"supersede","supersedes_ids":[%d,%d],"reason":"duplicate","new_learning":""}]}`, extractedID, trustedID)
+	if superseded := ext.applyEvolutionResponse(response, "test", store, nil); superseded != 1 {
+		t.Fatalf("expected one superseded learning, got %d", superseded)
+	}
+	trusted, _ := store.GetLearning(trustedID)
+	extracted, _ := store.GetLearning(extractedID)
+	if trusted.SupersededBy != nil {
+		t.Fatalf("higher-trust learning was superseded by #%d", *trusted.SupersededBy)
+	}
+	if extracted.SupersededBy == nil || *extracted.SupersededBy != trustedID {
+		t.Fatalf("lower-trust learning should point to trusted winner #%d, got %v", trustedID, extracted.SupersededBy)
+	}
+}
+
+func TestResolveConflictsDoesNotReplaceHigherTrustLearning(t *testing.T) {
+	store := mustOpenStore(t)
+	trusted := &models.Learning{
+		Content: "User explicitly prefers concise German answers", Category: "preference", Project: "test",
+		Source: "user_stated", Importance: 3, Confidence: 0.8, CreatedAt: time.Now().Add(-time.Hour),
+	}
+	trustedID, err := store.InsertLearning(trusted)
+	if err != nil {
+		t.Fatalf("insert trusted learning: %v", err)
+	}
+	extracted := &models.Learning{
+		Content: "User prefers concise German answers", Category: "preference", Project: "test",
+		Source: "llm_extracted", Importance: 3, Confidence: 1, CreatedAt: time.Now(),
+	}
+	extractedID, err := store.InsertLearning(extracted)
+	if err != nil {
+		t.Fatalf("insert extracted learning: %v", err)
+	}
+	client := &mockLLMClient{
+		model: "test",
+		completeJSONFunc: func(_, _ string, _ map[string]any) (string, error) {
+			return fmt.Sprintf(`{"actions":[{"type":"supersede","supersedes_ids":[%d],"reason":"duplicate","new_learning":""}]}`, trustedID), nil
+		},
+	}
+
+	NewExtractor(client, store).resolveConflicts(extractedID, extracted)
+
+	storedTrusted, _ := store.GetLearning(trustedID)
+	storedExtracted, _ := store.GetLearning(extractedID)
+	if storedTrusted.SupersededBy != nil {
+		t.Fatalf("higher-trust learning was superseded by #%d", *storedTrusted.SupersededBy)
+	}
+	if storedExtracted.SupersededBy == nil || *storedExtracted.SupersededBy != trustedID {
+		t.Fatalf("lower-trust learning should point to trusted winner #%d, got %v", trustedID, storedExtracted.SupersededBy)
 	}
 }
 

@@ -363,8 +363,8 @@ func runConsolidate() {
 		RuleBasedOnly: ruleOnly,
 	})
 
-	fmt.Printf("Consolidation: %d rounds, %d checked, %d superseded\n",
-		result.Rounds, result.TotalChecked, result.TotalSuperseded)
+	fmt.Printf("Consolidation: %d rounds, %d checked, %d superseded, %d bigram candidates, %d embedding comparisons (%d dimensions)\n",
+		result.Rounds, result.TotalChecked, result.TotalSuperseded, result.BigramComparisons, result.EmbeddingComparisons, result.EmbeddingDimensions)
 }
 
 func hasFlag(args []string, flags ...string) bool {

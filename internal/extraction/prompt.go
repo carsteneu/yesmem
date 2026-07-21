@@ -192,11 +192,11 @@ func ExtractionSchema() map[string]any {
 	learningObject := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"category":   map[string]any{"type": "string", "enum": []string{"fact", "explicit_teaching", "gotcha", "decision", "pattern", "user_preference", "unfinished", "relationship", "pivot_moment", "synthesis"}},
-			"content":    map[string]any{"type": "string"},
-			"context":    map[string]any{"type": "string"},
-			"entities":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-			"actions":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"category":            map[string]any{"type": "string", "enum": []string{"fact", "explicit_teaching", "gotcha", "decision", "pattern", "user_preference", "unfinished", "relationship", "pivot_moment", "synthesis"}},
+			"content":             map[string]any{"type": "string"},
+			"context":             map[string]any{"type": "string"},
+			"entities":            map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"actions":             map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			"keywords":            map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			"trigger":             map[string]any{"type": "string"},
 			"anticipated_queries": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
@@ -237,19 +237,25 @@ Find and mark for supersede:
 
 1. **Exact duplicates** — identical or nearly identical content
 2. **Near-duplicates** — same statement, slightly different wording (e.g. "User prefers German" vs "Language: German, casual")
-3. **Contradictions** — two learnings that contradict each other (newer wins)
+3. **Contradictions** — two learnings that contradict each other
 4. **Outdated facts** — paths, versions, configurations replaced by newer ones
 5. **Substanceless entries** — too short (<15 chars), broken sentences, JSON fragments, bare filenames without context
 
+Winner ranking, in this exact priority order:
+1. Higher trust level
+2. Explicit user source (user_stated, then agreed_upon) before automatic extraction
+3. Higher confidence
+4. More precise and complete content
+5. Newer learning / higher ID only as the final tie-breaker
+
 Rules:
-- Learning with HIGHER ID (newer) wins for duplicates/contradictions
-- For near-duplicates: the more precise/complete learning wins (regardless of ID)
+- Never replace a higher-trust learning with a lower-trust learning
 - Use the appropriate action type:
   - "supersede": One learning replaces another (contradiction or duplicate). supersedes_ids: first ID = winner, rest = losers.
   - "update": Two learnings describe the same thing, but the newer has additional details. supersedes_ids: first ID = to update, second = source. new_learning = merged content.
   - "confirmation": Two learnings independently confirm each other. supersedes_ids: both IDs. No new_learning needed.
   - "independent": No relationship. Empty supersedes_ids array.
-- Be thorough — better to mark one duplicate too many than too few.
+- Be thorough, but keep semantically distinct learnings independent.
 
 LANGUAGE: Always write responses in English. Technical tokens (JSON field names) remain verbatim.`
 
@@ -282,10 +288,10 @@ func EvolutionSchema() map[string]any {
 				"items": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"new_learning":  map[string]any{"type": "string"},
+						"new_learning":   map[string]any{"type": "string"},
 						"supersedes_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}},
-						"reason":        map[string]any{"type": "string"},
-						"type":          map[string]any{"type": "string", "enum": []string{"supersede", "independent", "update", "confirmation"}},
+						"reason":         map[string]any{"type": "string"},
+						"type":           map[string]any{"type": "string", "enum": []string{"supersede", "independent", "update", "confirmation"}},
 					},
 					"required":             []string{"new_learning", "supersedes_ids", "type"},
 					"additionalProperties": false,

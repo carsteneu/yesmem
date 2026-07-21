@@ -275,3 +275,53 @@ func TestMigration_CleansExistingSelfCycles(t *testing.T) {
 		t.Errorf("self-cycle reappeared after idempotent re-run — migration not stable")
 	}
 }
+
+func TestMigration_CleansReactivatedSupersedeMetadata(t *testing.T) {
+	s := mustOpen(t)
+	id, _ := s.InsertLearning(&models.Learning{Category: "pattern", Content: "reactivated", Confidence: 1, CreatedAt: time.Now(), ModelUsed: "test"})
+	if _, err := s.DB().Exec(`UPDATE learnings SET superseded_by = id, supersede_reason = 'rule-based: cross-chunk near-duplicate', valid_until = datetime('now') WHERE id = ?`, id); err != nil {
+		t.Fatalf("seed self-cycle: %v", err)
+	}
+
+	if err := s.createSchema(); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+
+	var supersededBy *int64
+	var reason, validUntil *string
+	if err := s.DB().QueryRow("SELECT superseded_by, supersede_reason, valid_until FROM learnings WHERE id = ?", id).Scan(&supersededBy, &reason, &validUntil); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if supersededBy != nil || reason != nil || validUntil != nil {
+		t.Fatalf("reactivated learning kept stale metadata: superseded_by=%v reason=%v valid_until=%v", supersededBy, reason, validUntil)
+	}
+}
+
+func TestMigration_ReactivatesCrossProjectRuleBasedSupersede(t *testing.T) {
+	s := mustOpen(t)
+	loser, _ := s.InsertLearning(&models.Learning{Category: "pattern", Content: "same content in alpha", Project: "/work/alpha", CanonicalProject: "alpha", Confidence: 1, CreatedAt: time.Now(), ModelUsed: "test"})
+	winner, _ := s.InsertLearning(&models.Learning{Category: "pattern", Content: "same content in beta", Project: "/work/beta", CanonicalProject: "beta", Confidence: 1, CreatedAt: time.Now(), ModelUsed: "test"})
+	if err := s.SupersedeLearning(loser, winner, "rule-based: near-duplicate"); err != nil {
+		t.Fatalf("seed cross-project supersede: %v", err)
+	}
+
+	if err := s.createSchema(); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+
+	var supersededBy *int64
+	var reason, validUntil *string
+	if err := s.DB().QueryRow("SELECT superseded_by, supersede_reason, valid_until FROM learnings WHERE id = ?", loser).Scan(&supersededBy, &reason, &validUntil); err != nil {
+		t.Fatalf("scan loser: %v", err)
+	}
+	if supersededBy != nil || reason != nil || validUntil != nil {
+		t.Fatalf("cross-project learning was not restored: superseded_by=%v reason=%v valid_until=%v", supersededBy, reason, validUntil)
+	}
+	var supersedes *int64
+	if err := s.DB().QueryRow("SELECT supersedes FROM learnings WHERE id = ?", winner).Scan(&supersedes); err != nil {
+		t.Fatalf("scan winner: %v", err)
+	}
+	if supersedes != nil {
+		t.Fatalf("winner kept stale backlink to restored learning: %d", *supersedes)
+	}
+}
