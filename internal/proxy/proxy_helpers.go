@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/carsteneu/yesmem/internal/logrotate"
 )
 
 // extractSessionID extracts the session ID from headers and request metadata.
@@ -456,12 +458,10 @@ func createLogger(dataDir string) *log.Logger {
 	writers := []io.Writer{os.Stderr}
 
 	if dataDir != "" {
-		logDir := filepath.Join(dataDir, "logs")
-		os.MkdirAll(logDir, 0755)
-		logPath := filepath.Join(logDir, "proxy.log")
-		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		logPath := filepath.Join(dataDir, "logs", "proxy.log")
+		w, err := logrotate.New(logPath)
 		if err == nil {
-			writers = append(writers, f)
+			writers = append(writers, w)
 		}
 	}
 
@@ -581,9 +581,23 @@ func prependMeta(msg map[string]any, meta string) {
 			b["text"] = prefix + text
 			return
 		}
-		// No text block found — insert one at position 0 so metadata is visible.
+		// No text block found — insert after leading tool_result blocks
+		// to preserve tool_use→tool_result pairing (Anthropic API requires
+		// tool_result to immediately follow tool_use in the next message).
+		insertAt := 0
+		for j := range content {
+			b, ok := content[j].(map[string]any)
+			if !ok || b["type"] != "tool_result" {
+				break
+			}
+			insertAt = j + 1
+		}
 		textBlock := map[string]any{"type": "text", "text": prefix}
-		msg["content"] = append([]any{textBlock}, content...)
+		result := make([]any, 0, len(content)+1)
+		result = append(result, content[:insertAt]...)
+		result = append(result, textBlock)
+		result = append(result, content[insertAt:]...)
+		msg["content"] = result
 	}
 }
 
