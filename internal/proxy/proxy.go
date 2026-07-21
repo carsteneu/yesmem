@@ -1765,7 +1765,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		repaired, orphans := validateToolPairs(msgs, s.logger)
 		if orphans > 0 {
 			req["messages"] = repaired
-			s.logger.Printf("%s[req %d %s tid=%s] validate: repaired %d orphan tool_result(s)%s", colorOrange, reqIdx, proj, threadID, orphans, colorReset)
+			s.logger.Printf("%s[req %d %s tid=%s] validate: repaired %d tool pairing issue(s)%s", colorOrange, reqIdx, proj, threadID, orphans, colorReset)
 			needsReserialization = true
 		}
 	}

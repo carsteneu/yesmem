@@ -13,11 +13,19 @@ import (
 func translateAnthropicToOpenAI(anthReq map[string]any) (map[string]any, error) {
 	oai := map[string]any{}
 
-	// Pass through scalar params
-	for _, key := range []string{"model", "max_tokens", "temperature", "top_p", "stream", "tool_choice"} {
+	// Pass through scalar params (except max_tokens — handled below)
+	for _, key := range []string{"model", "temperature", "top_p", "stream", "tool_choice"} {
 		if v, ok := anthReq[key]; ok {
 			oai[key] = v
 		}
+	}
+	// max_tokens → max_completion_tokens for GPT-5.5+ compatibility.
+	// Newer OpenAI models (gpt-5.5, gpt-5.6, o-series) reject "max_tokens":
+	// "Unsupported parameter: 'max_tokens' is not supported with this model.
+	// Use 'max_completion_tokens' instead." The API accepts max_completion_tokens
+	// universally across modern models; older models treat it as an alias.
+	if v, ok := anthReq["max_tokens"]; ok {
+		oai["max_completion_tokens"] = v
 	}
 	if meta, ok := anthReq["metadata"]; ok {
 		oai["metadata"] = meta

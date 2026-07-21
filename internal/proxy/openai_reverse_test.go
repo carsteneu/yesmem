@@ -304,8 +304,11 @@ func TestTranslateAnthropicToOpenAI_PassthroughParams(t *testing.T) {
 		t.Fatalf("translate: %v", err)
 	}
 
-	if oaiBody["max_tokens"] != float64(4096) {
-		t.Errorf("max_tokens = %v", oaiBody["max_tokens"])
+	if oaiBody["max_completion_tokens"] != float64(4096) {
+		t.Errorf("max_completion_tokens = %v", oaiBody["max_completion_tokens"])
+	}
+	if oaiBody["max_tokens"] != nil {
+		t.Errorf("max_tokens should not be present in output for GPT-5.5+ compat, got %v", oaiBody["max_tokens"])
 	}
 	if oaiBody["temperature"] != temp {
 		t.Errorf("temperature = %v", oaiBody["temperature"])

@@ -420,7 +420,7 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 		if fixed, orphans := validateToolPairs(msgs, s.logger); orphans > 0 {
 			req["messages"] = fixed
 			if s.logger != nil {
-				s.logger.Printf("%s[req %d %s tid=%s] validate: repaired %d orphan tool_result(s)%s", colorOrange, ctx.ReqIdx, ctx.Project, ctx.ThreadID, orphans, colorReset)
+				s.logger.Printf("%s[req %d %s tid=%s] validate: repaired %d tool pairing issue(s)%s", colorOrange, ctx.ReqIdx, ctx.Project, ctx.ThreadID, orphans, colorReset)
 			}
 		}
 	}
