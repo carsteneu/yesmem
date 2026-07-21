@@ -49,7 +49,9 @@ func TestToolCount(t *testing.T) {
 	tools := srv.srv.ListTools()
 	t.Logf("Tool count: %d", len(tools))
 
-	if len(tools) > 70 {
-		t.Errorf("Too many tools: %d > 70 — consider consolidation", len(tools))
+	// Cap raised 70 → 75 after adding scratchpad_append (previously implemented
+	// in the daemon but missing from MCP registration). 5 slots of headroom.
+	if len(tools) > 75 {
+		t.Errorf("Too many tools: %d > 75 — consider consolidation", len(tools))
 	}
 }

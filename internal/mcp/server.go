@@ -651,6 +651,28 @@ func formatScratchpadWrite(raw json.RawMessage) string {
 	return string(raw)
 }
 
+// formatScratchpadAppend renders the response from scratchpad_append.
+// Daemon returns {status, project, section, appended} or {message}.
+func formatScratchpadAppend(raw json.RawMessage) string {
+	var data struct {
+		Status   string `json:"status"`
+		Project  string `json:"project"`
+		Section  string `json:"section"`
+		Message  string `json:"message"`
+		Appended bool   `json:"appended"`
+	}
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return string(raw)
+	}
+	if data.Message != "" {
+		return data.Message
+	}
+	if data.Project != "" && data.Section != "" {
+		return fmt.Sprintf("✓ Appended to section '%s' in project '%s'", data.Section, data.Project)
+	}
+	return string(raw)
+}
+
 // formatScratchpadRead renders the response from scratchpad_read.
 func formatScratchpadRead(raw json.RawMessage) string {
 	var data struct {
@@ -1271,6 +1293,14 @@ func (s *Server) registerTools() {
 			mcplib.WithString("section", mcplib.Required(), mcplib.Description("Section name")),
 			mcplib.WithString("content", mcplib.Required(), mcplib.Description("Section content")),
 		), s.proxyCallFormat("scratchpad_write", formatScratchpadWrite))
+
+	s.srv.AddTool(
+		mcplib.NewTool("scratchpad_append",
+			mcplib.WithDescription("Append content to an existing scratchpad section (inserts a `---` separator between old and new content). Use for adding status updates, progress notes, or replies to an existing section without read-then-write. Project, section, and content are required."+contentLangDirective),
+			mcplib.WithString("project", mcplib.Required(), mcplib.Description(projectRequiredDesc)),
+			mcplib.WithString("section", mcplib.Required(), mcplib.Description("Section name to append to")),
+			mcplib.WithString("content", mcplib.Required(), mcplib.Description("Content to append")),
+		), s.proxyCallFormat("scratchpad_append", formatScratchpadAppend))
 
 	s.srv.AddTool(
 		mcplib.NewTool("scratchpad_read",
