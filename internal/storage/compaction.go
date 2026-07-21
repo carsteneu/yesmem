@@ -103,6 +103,12 @@ func (s *Store) GetProxyState(key string) (string, error) {
 	return val, nil
 }
 
+// DeleteProxyState removes one exact proxy_state entry.
+func (s *Store) DeleteProxyState(key string) error {
+	_, err := s.proxyStateDB().Exec(`DELETE FROM proxy_state WHERE key = ?`, key)
+	return err
+}
+
 // DeleteProxyStatePrefix deletes all proxy_state entries whose key starts with prefix.
 // Returns the number of rows deleted.
 func (s *Store) DeleteProxyStatePrefix(prefix string) (int, error) {

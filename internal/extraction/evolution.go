@@ -69,28 +69,18 @@ Antwort als JSON.`, newLearning.Category, existingList.String(), newID, newLearn
 	for _, action := range evoResp.Actions {
 		switch action.Type {
 		case "supersede":
+			candidate := *newLearning
+			candidate.ID = newID
+			candidates := []models.Learning{candidate}
 			for _, oldID := range action.SupersedesIDs {
-				// Trust check: don't supersede high-trust learnings
 				oldLearning, err := e.store.GetLearning(oldID)
 				if err != nil {
-					log.Printf("warn: get learning #%d for trust check: %v", oldID, err)
+					log.Printf("warn: get learning #%d for quality ranking: %v", oldID, err)
 					continue
 				}
-				trust := storage.TrustScore(oldLearning)
-				level := storage.ClassifyTrust(trust)
-
-				switch level {
-				case storage.TrustHigh:
-					e.store.SetSupersedeStatus(oldID, "pending_confirmation")
-					log.Printf("Learning #%d: supersede blocked (trust %.1f, high) — set pending_confirmation", oldID, trust)
-				default:
-					if err := e.store.SupersedeLearning(oldID, newID, action.Reason); err != nil {
-						log.Printf("warn: supersede #%d by #%d: %v", oldID, newID, err)
-					} else {
-						log.Printf("Learning #%d supersedes #%d: %s (trust %.1f)", newID, oldID, action.Reason, trust)
-					}
-				}
+				candidates = append(candidates, *oldLearning)
 			}
+			applyQualityRankedSupersede(e.store, candidates, action.Reason, nil)
 
 		case "update":
 			for _, targetID := range action.SupersedesIDs {
@@ -115,6 +105,46 @@ Antwort als JSON.`, newLearning.Category, existingList.String(), newID, newLearn
 			log.Printf("warn: unknown evolution action type: %s", action.Type)
 		}
 	}
+}
+
+func applyQualityRankedSupersede(store *storage.Store, candidates []models.Learning, reason string, onSupersede func(int64)) int {
+	if len(candidates) < 2 {
+		return 0
+	}
+	winner := candidates[0]
+	for _, candidate := range candidates[1:] {
+		if preferDuplicateWinner(candidate, winner) {
+			winner = candidate
+		}
+	}
+
+	superseded := 0
+	seen := make(map[int64]bool, len(candidates))
+	for _, loser := range candidates {
+		if loser.ID == winner.ID || seen[loser.ID] {
+			continue
+		}
+		seen[loser.ID] = true
+		trust := storage.TrustScore(&loser)
+		if storage.ClassifyTrust(trust) == storage.TrustHigh {
+			if err := store.SetSupersedeStatus(loser.ID, "pending_confirmation"); err != nil {
+				log.Printf("warn: set pending confirmation for #%d: %v", loser.ID, err)
+				continue
+			}
+			log.Printf("Learning #%d: supersede blocked (trust %.1f, high) — set pending_confirmation", loser.ID, trust)
+			continue
+		}
+		if err := store.SupersedeLearning(loser.ID, winner.ID, reason); err != nil {
+			log.Printf("warn: supersede #%d by #%d: %v", loser.ID, winner.ID, err)
+			continue
+		}
+		superseded++
+		if onSupersede != nil {
+			onSupersede(loser.ID)
+		}
+		log.Printf("Learning #%d supersedes #%d: %s (trust %.1f)", winner.ID, loser.ID, reason, trust)
+	}
+	return superseded
 }
 
 // findConflictCandidates returns learnings to compare against for conflict resolution.

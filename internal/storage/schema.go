@@ -31,6 +31,7 @@ func (s *Store) createSchema() error {
 		tableRefinedBriefings,
 		tableCompactedBlocks,
 		tableProxyState,
+		tableConsolidationState,
 		tableLearningClusters,
 		tableKnowledgeGaps,
 		tableContradictions,
@@ -452,25 +453,25 @@ var migrations = []string{
 	`ALTER TABLE learnings ADD COLUMN target_agent TEXT NOT NULL DEFAULT ''`,
 	// v0.60: Backfill learnings.source_agent from sessions.source_agent (idempotent).
 	`UPDATE learnings SET source_agent = COALESCE((SELECT s.source_agent FROM sessions s WHERE s.id = learnings.session_id), 'claude') WHERE source_agent = ''`,
-		// v0.61: Canonical project — family-scoped learnings across worktree/main boundaries
-		`ALTER TABLE learnings ADD COLUMN canonical_project TEXT NOT NULL DEFAULT ''`,
-		`UPDATE learnings SET canonical_project = project`,
-		`UPDATE learnings SET canonical_project = 'yesmem' WHERE project IN ('checkcodebase', 'bridge-langgraph-bridge', 'opencode-proxy', 'feat+capability-memory', 'feat+security-hardening', 'codex-anpassungen', 'worktree-scoring-fixes', 'forked-agent-proxy', 'briefing-injection')`,
-		`CREATE INDEX IF NOT EXISTS idx_learnings_canonical ON learnings(canonical_project, superseded_by)`,
-		// v0.62: Attribution field for external source tracking
-		`ALTER TABLE learnings ADD COLUMN attribution TEXT NOT NULL DEFAULT ''`,
-		// v0.63: Flavor learnings count on sessions for grounding check
-		`ALTER TABLE sessions ADD COLUMN flavor_learnings_count INTEGER NOT NULL DEFAULT -1`,
-		// v0.64: Staleness detection — score instead of binary resolve, fingerprint for change detection
-		`ALTER TABLE learnings ADD COLUMN staleness_score REAL DEFAULT 0.0`,
-		`ALTER TABLE learnings ADD COLUMN staleness_reason TEXT DEFAULT ''`,
-		`ALTER TABLE learnings ADD COLUMN staleness_checked_at TEXT DEFAULT ''`,
-		`ALTER TABLE learnings ADD COLUMN staleness_type TEXT DEFAULT ''`,
-		`ALTER TABLE learnings ADD COLUMN code_fingerprint TEXT DEFAULT ''`,
-		// v0.65: project-fullpath migration — store/query full absolute paths instead of basenames.
-		// Backfill sessions.project_short and learnings.project from the authoritative full path
-		// in sessions.project. Idempotent: rows already using a full path are left unchanged.
-		`UPDATE sessions SET project_short = project WHERE project LIKE '/%' AND project_short != project`,
+	// v0.61: Canonical project — family-scoped learnings across worktree/main boundaries
+	`ALTER TABLE learnings ADD COLUMN canonical_project TEXT NOT NULL DEFAULT ''`,
+	`UPDATE learnings SET canonical_project = project`,
+	`UPDATE learnings SET canonical_project = 'yesmem' WHERE project IN ('checkcodebase', 'bridge-langgraph-bridge', 'opencode-proxy', 'feat+capability-memory', 'feat+security-hardening', 'codex-anpassungen', 'worktree-scoring-fixes', 'forked-agent-proxy', 'briefing-injection')`,
+	`CREATE INDEX IF NOT EXISTS idx_learnings_canonical ON learnings(canonical_project, superseded_by)`,
+	// v0.62: Attribution field for external source tracking
+	`ALTER TABLE learnings ADD COLUMN attribution TEXT NOT NULL DEFAULT ''`,
+	// v0.63: Flavor learnings count on sessions for grounding check
+	`ALTER TABLE sessions ADD COLUMN flavor_learnings_count INTEGER NOT NULL DEFAULT -1`,
+	// v0.64: Staleness detection — score instead of binary resolve, fingerprint for change detection
+	`ALTER TABLE learnings ADD COLUMN staleness_score REAL DEFAULT 0.0`,
+	`ALTER TABLE learnings ADD COLUMN staleness_reason TEXT DEFAULT ''`,
+	`ALTER TABLE learnings ADD COLUMN staleness_checked_at TEXT DEFAULT ''`,
+	`ALTER TABLE learnings ADD COLUMN staleness_type TEXT DEFAULT ''`,
+	`ALTER TABLE learnings ADD COLUMN code_fingerprint TEXT DEFAULT ''`,
+	// v0.65: project-fullpath migration — store/query full absolute paths instead of basenames.
+	// Backfill sessions.project_short and learnings.project from the authoritative full path
+	// in sessions.project. Idempotent: rows already using a full path are left unchanged.
+	`UPDATE sessions SET project_short = project WHERE project LIKE '/%' AND project_short != project`,
 	`UPDATE learnings SET project = (SELECT s.project FROM sessions s WHERE s.id = learnings.session_id) WHERE learnings.session_id IS NOT NULL AND learnings.session_id != '' AND learnings.project NOT LIKE '/%'`,
 	// v0.66: Backfill agents.project from short names to full paths.
 	// v0.65 migrated sessions.project_short and learnings.project but missed the agents table.
@@ -493,6 +494,28 @@ var migrations = []string{
 	// equals the row's own id are touched.
 	`UPDATE learnings SET supersedes = NULL WHERE supersedes = id`,
 	`UPDATE learnings SET superseded_by = NULL WHERE superseded_by = id`,
+	// v0.68: Restore the supersede invariants after the v0.67 self-cycle repair.
+	// Rule-based consolidation is project-scoped; older global scans incorrectly
+	// linked unrelated canonical projects. Clear both sides of those links.
+	`UPDATE learnings SET supersedes = NULL WHERE supersedes IN (
+		SELECT loser.id FROM learnings loser
+		JOIN learnings winner ON winner.id = loser.superseded_by
+		WHERE loser.supersede_reason LIKE 'rule-based:%'
+		AND COALESCE(NULLIF(loser.canonical_project, ''), COALESCE(loser.project, ''))
+			!= COALESCE(NULLIF(winner.canonical_project, ''), COALESCE(winner.project, ''))
+	)`,
+	`UPDATE learnings SET superseded_by = NULL, supersede_reason = NULL, valid_until = NULL
+		WHERE id IN (
+			SELECT loser.id FROM learnings loser
+			JOIN learnings winner ON winner.id = loser.superseded_by
+			WHERE loser.supersede_reason LIKE 'rule-based:%'
+			AND COALESCE(NULLIF(loser.canonical_project, ''), COALESCE(loser.project, ''))
+				!= COALESCE(NULLIF(winner.canonical_project, ''), COALESCE(winner.project, ''))
+		)`,
+	// An active learning must not retain the invalidation metadata written when
+	// it was superseded. v0.67 reactivated self-linked rows but left these fields.
+	`UPDATE learnings SET supersede_reason = NULL, valid_until = NULL
+		WHERE superseded_by IS NULL AND (supersede_reason IS NOT NULL OR valid_until IS NOT NULL)`,
 }
 
 // messagesMigrations runs against messages.db (separate from yesmem.db migrations).
@@ -763,6 +786,12 @@ const tableProxyState = `CREATE TABLE IF NOT EXISTS proxy_state (
 	key        TEXT PRIMARY KEY,
 	value      TEXT NOT NULL,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)`
+
+const tableConsolidationState = `CREATE TABLE IF NOT EXISTS consolidation_state (
+	key              TEXT PRIMARY KEY,
+	last_learning_id INTEGER NOT NULL,
+	completed_at     TEXT NOT NULL
 )`
 
 const tableKnowledgeGaps = `CREATE TABLE IF NOT EXISTS knowledge_gaps (

@@ -80,7 +80,7 @@ func (r *extractionResult) allLearnings() []learningItem {
 		"unfinished":        r.Unfinished,
 		"relationship":      r.Relationships,
 		"pivot_moment":      r.PivotMoments,
-		"synthesis":          r.Syntheses,
+		"synthesis":         r.Syntheses,
 	} {
 		for _, item := range items {
 			if item.Category == "" {
@@ -230,19 +230,25 @@ func truncID(id string) string {
 // RunEvolution runs bulk conflict resolution — one LLM call per project+category.
 // Keeps batches small enough for Haiku's 4096 output token limit.
 func (e *Extractor) RunEvolution(store *storage.Store, onSupersede func(int64), sinceTime ...time.Time) (int, int) {
-	return e.runEvolution(store, onSupersede, nil)
+	return e.runEvolution(store, onSupersede, nil, 0)
 }
 
 // RunEvolutionForScope limits the evolution pass to project/category pairs touched by new extraction work.
 // Cross-project evolution is still allowed, but only for categories seen in the scoped delta.
 func (e *Extractor) RunEvolutionForScope(store *storage.Store, scope map[string]map[string]struct{}, onSupersede func(int64)) (int, int) {
+	return e.RunEvolutionForScopeSince(store, scope, onSupersede, 0)
+}
+
+// RunEvolutionForScopeSince restricts rule-based pair checks to comparisons
+// involving a learning inserted after afterID.
+func (e *Extractor) RunEvolutionForScopeSince(store *storage.Store, scope map[string]map[string]struct{}, onSupersede func(int64), afterID int64) (int, int) {
 	if len(scope) == 0 {
 		return 0, 0
 	}
-	return e.runEvolution(store, onSupersede, scope)
+	return e.runEvolution(store, onSupersede, scope, afterID)
 }
 
-func (e *Extractor) runEvolution(store *storage.Store, onSupersede func(int64), scope map[string]map[string]struct{}) (int, int) {
+func (e *Extractor) runEvolution(store *storage.Store, onSupersede func(int64), scope map[string]map[string]struct{}, afterID int64) (int, int) {
 	categories, err := store.GetActiveCategories()
 	if err != nil {
 		log.Printf("warn: get categories for evolution: %v", err)
@@ -264,6 +270,7 @@ func (e *Extractor) runEvolution(store *storage.Store, onSupersede func(int64), 
 	// Collect all active learnings, group by project+category
 	type groupKey struct{ project, category string }
 	groups := map[groupKey][]models.Learning{}
+	groupIDs := map[groupKey]map[int64]bool{}
 	scopedCategories := map[string]struct{}{}
 
 	for _, cat := range categories {
@@ -273,7 +280,11 @@ func (e *Extractor) runEvolution(store *storage.Store, onSupersede func(int64), 
 				continue
 			}
 			for _, l := range learnings {
-				key := groupKey{project: l.Project, category: cat}
+				project := l.CanonicalProject
+				if project == "" {
+					project = l.Project
+				}
+				key := groupKey{project: project, category: cat}
 				groups[key] = append(groups[key], l)
 			}
 			continue
@@ -291,7 +302,18 @@ func (e *Extractor) runEvolution(store *storage.Store, onSupersede func(int64), 
 				scopedCategories[cat] = struct{}{}
 			}
 			for _, l := range learnings {
-				key := groupKey{project: l.Project, category: cat}
+				canonicalProject := l.CanonicalProject
+				if canonicalProject == "" {
+					canonicalProject = l.Project
+				}
+				key := groupKey{project: canonicalProject, category: cat}
+				if groupIDs[key] == nil {
+					groupIDs[key] = make(map[int64]bool)
+				}
+				if groupIDs[key][l.ID] {
+					continue
+				}
+				groupIDs[key][l.ID] = true
 				groups[key] = append(groups[key], l)
 			}
 		}
@@ -304,45 +326,52 @@ func (e *Extractor) runEvolution(store *storage.Store, onSupersede func(int64), 
 		if len(learnings) < 2 {
 			continue
 		}
+		if afterID > 0 {
+			dirty := false
+			for _, learning := range learnings {
+				if learning.ID > afterID {
+					dirty = true
+					break
+				}
+			}
+			if !dirty {
+				continue
+			}
+		}
 
 		label := fmt.Sprintf("%s/%s", key.project, key.category)
 		if key.project == "" {
 			label = "(global)/" + key.category
 		}
 
-		// B1.1: Cross-chunk rule-based dedup BEFORE chunking.
-		// BigramJaccard is cheap (no LLM), so run over all learnings in the category.
-		var preCleaned []models.Learning
+		// Cross-chunk rule-based dedup BEFORE chunking. Bigram sets are prepared
+		// once and only exact sparse candidates involving the extraction delta run.
+		preCleaned := make([]models.Learning, 0, len(learnings))
 		preSuperseded := make(map[int64]int64)
 		for _, l := range learnings {
 			if IsSubstanzlos(l.Content) {
-				preSuperseded[l.ID] = 0
+				if afterID == 0 || l.ID > afterID {
+					preSuperseded[l.ID] = 0
+				}
 				continue
 			}
-			isDupe := false
-			for _, kept := range preCleaned {
-				if BigramJaccard(l.Content, kept.Content) > 0.85 {
-					if l.ID > kept.ID {
-						preSuperseded[kept.ID] = l.ID
-						for ci := range preCleaned {
-							if preCleaned[ci].ID == kept.ID {
-								preCleaned[ci] = l
-								break
-							}
-						}
-					} else {
-						preSuperseded[l.ID] = kept.ID
-					}
-					isDupe = true
-					break
+			preCleaned = append(preCleaned, l)
+		}
+		bigramDupes, comparisons := findBigramDuplicates(preCleaned, 0.85, afterID)
+		for loserID, winnerID := range bigramDupes {
+			preSuperseded[loserID] = winnerID
+		}
+		if len(bigramDupes) > 0 {
+			remaining := preCleaned[:0]
+			for _, learning := range preCleaned {
+				if _, loser := bigramDupes[learning.ID]; !loser {
+					remaining = append(remaining, learning)
 				}
 			}
-			if !isDupe {
-				preCleaned = append(preCleaned, l)
-			}
+			preCleaned = remaining
 		}
 		if len(preSuperseded) > 0 {
-			log.Printf("  Evolution: %s cross-chunk pre-dedup: %d superseded", label, len(preSuperseded))
+			log.Printf("  Evolution: %s cross-chunk pre-dedup: %d superseded from %d candidates", label, len(preSuperseded), comparisons)
 			for loserID, winnerID := range preSuperseded {
 				if err := store.SupersedeLearning(loserID, winnerID, "rule-based: cross-chunk near-duplicate"); err == nil {
 					totalSuperseded++
@@ -364,11 +393,14 @@ func (e *Extractor) runEvolution(store *storage.Store, onSupersede func(int64), 
 		for i, l := range learnings {
 			embIDs[i] = l.ID
 		}
-		vectors := LoadVectorsForLearnings(store, embIDs)
-		if len(vectors) >= 2 {
-			embDupes := FindEmbeddingDuplicates(learnings, vectors, 0.92)
+		vectors, err := LoadVectorsForLearnings(store, embIDs)
+		if err != nil {
+			log.Printf("warn: load evolution vectors for %s: %v", label, err)
+		}
+		if err == nil && len(vectors) >= 2 {
+			embDupes, stats := findEmbeddingDuplicatesSince(learnings, vectors, 0.92, afterID)
 			if len(embDupes) > 0 {
-				log.Printf("  Evolution: %s embedding pre-dedup: %d superseded", label, len(embDupes))
+				log.Printf("  Evolution: %s embedding pre-dedup: %d superseded from %d comparisons", label, len(embDupes), stats.Comparisons)
 				for loserID, winnerID := range embDupes {
 					if err := store.SupersedeLearning(loserID, winnerID, "rule-based: embedding near-duplicate"); err == nil {
 						totalSuperseded++
@@ -399,35 +431,31 @@ func (e *Extractor) runEvolution(store *storage.Store, onSupersede func(int64), 
 			}
 			log.Printf("  Evolution: %s (%d learnings)", chunkLabel, len(chunk))
 
-			// Rule-based pre-dedup: remove substanzlos + exact/near-duplicates
-			var cleaned []models.Learning
+			// Defensive chunk-local pass for LLM inputs. The cross-chunk pass above
+			// normally leaves no lexical duplicates here.
+			cleaned := make([]models.Learning, 0, len(chunk))
 			autoSuperseded := make(map[int64]int64) // loserID -> winnerID (0 = no winner for substanzlos)
 			for _, l := range chunk {
 				if IsSubstanzlos(l.Content) {
-					autoSuperseded[l.ID] = 0
+					if afterID == 0 || l.ID > afterID {
+						autoSuperseded[l.ID] = 0
+					}
 					continue
 				}
-				isDupe := false
-				for _, kept := range cleaned {
-					if BigramJaccard(l.Content, kept.Content) > 0.85 {
-						if l.ID > kept.ID {
-							autoSuperseded[kept.ID] = l.ID
-							for ci := range cleaned {
-								if cleaned[ci].ID == kept.ID {
-									cleaned[ci] = l
-									break
-								}
-							}
-						} else {
-							autoSuperseded[l.ID] = kept.ID
-						}
-						isDupe = true
-						break
+				cleaned = append(cleaned, l)
+			}
+			chunkDupes, _ := findBigramDuplicates(cleaned, 0.85, afterID)
+			for loserID, winnerID := range chunkDupes {
+				autoSuperseded[loserID] = winnerID
+			}
+			if len(chunkDupes) > 0 {
+				remaining := cleaned[:0]
+				for _, learning := range cleaned {
+					if _, loser := chunkDupes[learning.ID]; !loser {
+						remaining = append(remaining, learning)
 					}
 				}
-				if !isDupe {
-					cleaned = append(cleaned, l)
-				}
+				cleaned = remaining
 			}
 
 			for loserID, winnerID := range autoSuperseded {
@@ -448,10 +476,11 @@ func (e *Extractor) runEvolution(store *storage.Store, onSupersede func(int64), 
 
 			var list strings.Builder
 			for _, l := range chunk {
-				list.WriteString(fmt.Sprintf("#%d: %s\n", l.ID, l.Content))
+				trustLevel := []string{"low", "medium", "high"}[storage.ClassifyTrust(storage.TrustScore(&l))]
+				list.WriteString(fmt.Sprintf("#%d [trust=%s source=%s confidence=%.2f]: %s\n", l.ID, trustLevel, l.Source, l.Confidence, l.Content))
 			}
 
-			prompt := fmt.Sprintf("Project: %s, Category: %s (%d learnings)\n\n%s\nFind duplicates, near-duplicates, and contradictions. Newer learning (higher ID) wins.",
+			prompt := fmt.Sprintf("Project: %s, Category: %s (%d learnings)\n\n%s\nFind duplicates, near-duplicates, and contradictions. Apply the quality ranking from the system prompt.",
 				key.project, key.category, len(chunk), list.String())
 
 			response, err := e.client.CompleteJSON(BulkEvolutionSystemPrompt, prompt, EvolutionSchema())
@@ -591,28 +620,24 @@ func (e *Extractor) applyEvolutionResponse(response, label string, store *storag
 				// The LLM prompt defines: first ID = winner, rest = losers.
 				continue
 			}
-			// First ID = winner, rest = losers
-			winnerID := action.SupersedesIDs[0]
-			for _, loserID := range action.SupersedesIDs[1:] {
-				loser, err := store.GetLearning(loserID)
+			candidates := make([]models.Learning, 0, len(action.SupersedesIDs))
+			seen := make(map[int64]bool, len(action.SupersedesIDs))
+			for _, id := range action.SupersedesIDs {
+				if seen[id] {
+					continue
+				}
+				learning, err := store.GetLearning(id)
 				if err != nil {
-					log.Printf("  warn: get learning #%d for trust check: %v", loserID, err)
+					log.Printf("  warn: get learning #%d for quality ranking: %v", id, err)
 					continue
 				}
-				trust := storage.TrustScore(loser)
-				if storage.ClassifyTrust(trust) == storage.TrustHigh {
-					store.SetSupersedeStatus(loserID, "pending_confirmation")
-					log.Printf("  #%d: supersede blocked (trust %.1f, high) — set pending_confirmation", loserID, trust)
-					continue
-				}
-				if err := store.SupersedeLearning(loserID, winnerID, action.Reason); err == nil {
-					superseded++
-					if onSupersede != nil {
-						onSupersede(loserID)
-					}
-					log.Printf("  #%d supersedes #%d: %s (trust %.1f)", winnerID, loserID, action.Reason, trust)
-				}
+				seen[id] = true
+				candidates = append(candidates, *learning)
 			}
+			if len(candidates) < 2 {
+				continue
+			}
+			superseded += applyQualityRankedSupersede(store, candidates, action.Reason, onSupersede)
 
 		case "update":
 			for _, targetID := range action.SupersedesIDs {
@@ -741,7 +766,7 @@ func parseExtractionResponse(response, sessionID, model string) ([]models.Learni
 		"unfinished":        "unfinished",
 		"relationship":      "relationship",
 		"pivot_moment":      "pivot_moment",
-		"synthesis":          "synthesis",
+		"synthesis":         "synthesis",
 	}
 
 	for _, item := range result.allLearnings() {
