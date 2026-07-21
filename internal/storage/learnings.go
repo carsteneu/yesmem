@@ -674,7 +674,15 @@ func (s *Store) GetLearning(id int64) (*models.Learning, error) {
 
 // GetLearningChain returns the full version history of a learning by traversing
 // the supersedes chain in both directions. The result is ordered oldest-first.
+//
+// Both loops carry a visited-set: if a row references itself (supersedes=id or
+// superseded_by=id) or forms a longer cycle, traversal terminates instead of
+// spinning forever. This is defense-in-depth against malformed rows; the
+// migration in schema.go nulls self-cycles on startup and SupersedeLearningBatch
+// rejects self-loops at write time.
 func (s *Store) GetLearningChain(id int64) ([]models.Learning, error) {
+	visited := map[int64]bool{id: true}
+
 	// Walk backward from id to root, collecting all ancestors.
 	// supersedes points to older version.
 	backIDs := []int64{id}
@@ -685,13 +693,16 @@ func (s *Store) GetLearningChain(id int64) ([]models.Learning, error) {
 		if err != nil {
 			return nil, fmt.Errorf("get learning chain: traverse backward from %d: %w", id, err)
 		}
-		if supersedes == nil {
+		if supersedes == nil || *supersedes == cur || visited[*supersedes] {
+			// *supersedes == cur is the explicit self-loop short-circuit;
+			// visited[*supersedes] covers longer cycles. Both terminate safely.
 			break
 		}
+		visited[*supersedes] = true
 		backIDs = append(backIDs, *supersedes)
 		cur = *supersedes
 	}
-	// Walker forward from id to newest, collecting all descendants.
+	// Walk forward from id to newest, collecting all descendants.
 	// superseded_by points to newer version.
 	forwardIDs := []int64{}
 	cur = id
@@ -701,9 +712,12 @@ func (s *Store) GetLearningChain(id int64) ([]models.Learning, error) {
 		if err != nil {
 			return nil, fmt.Errorf("get learning chain: traverse forward from %d: %w", id, err)
 		}
-		if supersededBy == nil {
+		if supersededBy == nil || *supersededBy == cur || visited[*supersededBy] {
+			// *supersededBy == cur is the explicit self-loop short-circuit;
+			// visited[*supersededBy] covers longer cycles. Both terminate safely.
 			break
 		}
+		visited[*supersededBy] = true
 		forwardIDs = append(forwardIDs, *supersededBy)
 		cur = *supersededBy
 	}
@@ -977,10 +991,16 @@ func (s *Store) SupersedeLearningBatch(ids []int64, supersededByID int64, reason
 		return nil
 	}
 
-	// Cycle detection: skip any ID where the winner is already in the loser's chain.
+	// Cycle detection: skip any ID where the winner is already in the loser's chain,
+	// or where winner == loser (self-supersede is semantically meaningless and would
+	// create a self-loop that breaks GetLearningChain traversal).
 	if supersededByID > 0 {
 		filtered := make([]int64, 0, len(ids))
 		for _, id := range ids {
+			if id == supersededByID {
+				log.Printf("warn: supersede self-loop rejected: %d -> %d, skipping", id, supersededByID)
+				continue
+			}
 			if s.isInSupersededChain(supersededByID, id) {
 				log.Printf("warn: supersede cycle detected: %d -> %d -> ... -> %d, skipping", id, supersededByID, id)
 				continue
