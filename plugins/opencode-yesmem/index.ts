@@ -1,6 +1,7 @@
 // yesmem opencode plugin (rule_guard: provider-resolution v2)
 import { appendFileSync } from "node:fs";
 import { codeNavHook } from "./code_nav";
+import { injectYesMemToolContext } from "./context";
 
 let currentSessionID = "";
 
@@ -8,6 +9,7 @@ const LOG_FILE = `${process.env.HOME}/.claude/yesmem/logs/plugin.log`;
 function dbgLog(tag: string, msg: string) {
   try { appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ${tag} ${msg}\n`); } catch {}
 }
+
 import { failureLearnHook } from "./failure_learn";
 import { autoResolveHook } from "./auto_resolve";
 import { idleReminderHook } from "./idle_reminder";
@@ -18,8 +20,10 @@ import { YesMemRPC } from "./rpc";
 export const YesMemPlugin = async (ctx: any) => {
   const rpc = new YesMemRPC();
   const directory = ctx.directory || process.env.PWD || "";
-          const V = 14; // bump to bust Bun module cache
+          const V = 16; // bump to bust Bun module cache
 
+          // v16: keep helper exports out of the plugin entrypoint for legacy OpenCode loaders
+          // v15: inject authoritative per-call OpenCode session and cwd context into yesmem tools
           // v14: hs_nudge removed — non-idempotent per-request mutation busted prefix cache; frozen [think-reminder] carries the same message cache-safe
           // v12: skill_nudge user-message evaluation
   if (directory) {
@@ -42,6 +46,7 @@ export const YesMemPlugin = async (ctx: any) => {
   async function composedBefore(input: any, output: any) {
     try { await nv["tool.execute.before"]?.(input, output); } catch (e) { throw e; }
     try { await grd["tool.execute.before"]?.(input, output); } catch (e) { throw e; }
+    injectYesMemToolContext(input, output, directory);
   }
 
   // Compose: all three need tool.execute.after — rule_guard injects, failure_learn tracks, auto_resolve resolves

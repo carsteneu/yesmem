@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Persist opencode scan watermark
+- Keep helpers out of opencode entrypoint
+- Bind project resolution to call context
+- Blocker 3 addendum — restrict session-context to PID-proven identity, preserve plugin context
+- Resolve Blocker 3 — data race, multi-PID cleanup, session-context disambiguation
+- Resolve Blocker 2 — stale OpenCode cwd, scoped error cache, change-driven invalidation, generation-race guard
+- Composite cache keys prevent cross-caller cwd-based cache poisoning
+- Wire project cache invalidation on session insert
+- Cache project resolution results broadly, not only cwd-less successes
+- Ambiguous short names now return AmbiguousProjectError instead of silently routing to wrong project
+
+## [2.3.4] - 2026-07-21
+
 ### Added
 
 - Purge expired bash_job_runs (24h non-error, 30d processed-error)
@@ -7516,7 +7531,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add comprehensive tests for generator and storage
 
 
-[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.3.3-github...HEAD
+[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.3.4...HEAD
+[2.3.4]: https://github.com/carsteneu/yesmem/compare/v2.3.3-github...v2.3.4
 [2.3.3-github]: https://github.com/carsteneu/yesmem/compare/v2.3.3...v2.3.3-github
 [2.3.3]: https://github.com/carsteneu/yesmem/compare/v2.3.2...v2.3.3
 [2.3.2]: https://github.com/carsteneu/yesmem/compare/v2.3.1...v2.3.2

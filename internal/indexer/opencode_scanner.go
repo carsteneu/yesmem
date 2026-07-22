@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/carsteneu/yesmem/internal/models"
@@ -18,12 +20,15 @@ import (
 const scanOpencodeInterval = 5 * time.Minute
 
 type OpencodeScanner struct {
-	dbPath       string
-	store        *storage.Store
-	lastScanAt   time.Time
-	lastCheckAt  time.Time
-	logger       *log.Logger
-	notifyCh     chan<- struct{}
+	dbPath         string
+	sourceKey      string
+	store          *storage.Store
+	scanMu         sync.Mutex
+	lastScanAt     time.Time
+	lastSessionID  string
+	lastCheckAt    time.Time
+	logger         *log.Logger
+	notifyCh       chan<- struct{}
 	excludeProject map[string]bool
 }
 
@@ -32,15 +37,27 @@ func NewOpencodeScanner(dbPath string, store *storage.Store, logger *log.Logger,
 	for _, p := range excludeProjects {
 		exclude[strings.ToLower(p)] = true
 	}
-	return &OpencodeScanner{
-		dbPath:      dbPath,
-		store:       store,
-		lastScanAt:  time.Time{},
-		lastCheckAt: time.Now(),
-		logger:      logger,
-		notifyCh:    notifyCh,
+	sourceKey, err := filepath.Abs(dbPath)
+	if err != nil {
+		sourceKey = filepath.Clean(dbPath)
+	}
+	scanner := &OpencodeScanner{
+		dbPath:         dbPath,
+		sourceKey:      sourceKey,
+		store:          store,
+		lastCheckAt:    time.Now(),
+		logger:         logger,
+		notifyCh:       notifyCh,
 		excludeProject: exclude,
 	}
+	state, found, err := store.GetOpencodeScanState(sourceKey)
+	if err != nil {
+		scanner.logf("opencode scanner: load watermark: %v", err)
+	} else if found {
+		scanner.lastScanAt = time.UnixMilli(state.LastUpdatedMs)
+		scanner.lastSessionID = state.LastSessionID
+	}
+	return scanner
 }
 
 func (s *OpencodeScanner) logf(format string, args ...any) {
@@ -49,16 +66,25 @@ func (s *OpencodeScanner) logf(format string, args ...any) {
 	}
 }
 
-func (s *OpencodeScanner) MaybeScan() {
-	if time.Since(s.lastCheckAt) < scanOpencodeInterval {
-		return
+func (s *OpencodeScanner) MaybeScan() int {
+	// MaybeScan is called both by the daemon ticker and idle ticks. Do not make
+	// either caller wait behind a potentially long full scan.
+	if !s.scanMu.TryLock() {
+		return 0
 	}
-	s.lastCheckAt = time.Now()
+	defer s.scanMu.Unlock()
+
+	if time.Since(s.lastCheckAt) < scanOpencodeInterval {
+		return 0
+	}
+	// Rate-limit from completion, not start. Otherwise a scan taking longer
+	// than the interval can be followed immediately by another scan.
+	defer func() { s.lastCheckAt = time.Now() }()
 
 	db, err := sql.Open("sqlite", s.dbPath)
 	if err != nil {
 		s.logf("opencode scanner: open db: %v", err)
-		return
+		return 0
 	}
 	defer db.Close()
 
@@ -67,18 +93,29 @@ func (s *OpencodeScanner) MaybeScan() {
 	sessions, err := s.querySessions(db)
 	if err != nil {
 		s.logf("opencode scanner: query sessions: %v", err)
-		return
+		return 0
 	}
 
 	if len(sessions) == 0 {
-		return
+		return 0
 	}
 
 	var newlyIndexed int
+	watermarkAt := s.lastScanAt
+	watermarkSessionID := s.lastSessionID
+	watermarkBlocked := false
+	advanceWatermark := func(sess opencodeDBSession) {
+		if watermarkBlocked {
+			return
+		}
+		watermarkAt = sess.Updated
+		watermarkSessionID = sess.ID
+	}
 	for _, sess := range sessions {
 		dbMsgs, err := s.queryMessages(db, sess.ID)
 		if err != nil {
 			s.logf("opencode scanner: session %s messages: %v", sess.ID, err)
+			watermarkBlocked = true
 			continue
 		}
 
@@ -87,17 +124,20 @@ func (s *OpencodeScanner) MaybeScan() {
 			msgs[i].Model = sess.Model
 		}
 		if isExtractionPipelineSession(msgs) {
+			advanceWatermark(sess)
 			continue
 		}
 		yesSess := buildOpencodeSession(sess, msgs)
 
 		// Skip projects on the exclusion list
 		if s.excludeProject[strings.ToLower(yesSess.Project)] || s.excludeProject[yesSess.ProjectShort] {
+			advanceWatermark(sess)
 			continue
 		}
 
 		if err := s.store.UpsertSession(yesSess); err != nil {
 			s.logf("opencode scanner: upsert session %s: %v", yesSess.ID, err)
+			watermarkBlocked = true
 			continue
 		}
 
@@ -105,17 +145,31 @@ func (s *OpencodeScanner) MaybeScan() {
 
 		if err := s.store.DeleteMessagesBySession(yesSess.ID); err != nil {
 			s.logf("opencode scanner: delete old messages %s: %v", yesSess.ID, err)
+			watermarkBlocked = true
+			continue
 		}
 		if len(msgs) > 0 {
 			if err := s.store.InsertMessages(msgs); err != nil {
 				s.logf("opencode scanner: insert messages %s: %v", yesSess.ID, err)
+				watermarkBlocked = true
 				continue
 			}
 		}
 
 		newlyIndexed++
-		if s.lastScanAt.Before(sess.Updated) {
-			s.lastScanAt = sess.Updated
+		advanceWatermark(sess)
+	}
+
+	if !watermarkAt.Equal(s.lastScanAt) || watermarkSessionID != s.lastSessionID {
+		state := storage.OpencodeScanState{
+			LastUpdatedMs: watermarkAt.UnixMilli(),
+			LastSessionID: watermarkSessionID,
+		}
+		if err := s.store.SetOpencodeScanState(s.sourceKey, state); err != nil {
+			s.logf("opencode scanner: persist watermark: %v", err)
+		} else {
+			s.lastScanAt = watermarkAt
+			s.lastSessionID = watermarkSessionID
 		}
 	}
 
@@ -128,6 +182,7 @@ func (s *OpencodeScanner) MaybeScan() {
 			}
 		}
 	}
+	return newlyIndexed
 }
 
 func (s *OpencodeScanner) normalizeMessages(msgs []models.Message, sessionID string) {
@@ -147,7 +202,7 @@ func (s *OpencodeScanner) querySessions(db *sql.DB) ([]opencodeDBSession, error)
 				time_created, time_updated, parent_id,
 				COALESCE(model, ''), COALESCE(agent, '')
 			FROM session
-			ORDER BY time_created
+			ORDER BY time_updated, id
 		`)
 	} else {
 		rows, err = db.Query(`
@@ -155,9 +210,9 @@ func (s *OpencodeScanner) querySessions(db *sql.DB) ([]opencodeDBSession, error)
 				time_created, time_updated, parent_id,
 				COALESCE(model, ''), COALESCE(agent, '')
 			FROM session
-			WHERE time_updated > ?
-			ORDER BY time_created
-		`, s.lastScanAt.UnixMilli())
+			WHERE time_updated > ? OR (time_updated = ? AND id > ?)
+			ORDER BY time_updated, id
+		`, s.lastScanAt.UnixMilli(), s.lastScanAt.UnixMilli(), s.lastSessionID)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("query sessions: %w", err)

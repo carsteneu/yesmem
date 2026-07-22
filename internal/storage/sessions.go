@@ -89,6 +89,18 @@ func (s *Store) ResolveProjectPath(projectShort string) string {
 	return path
 }
 
+// AmbiguousProjectError is returned when a short project name resolves to
+// multiple candidates and no cwd tiebreaker is available. The Candidates
+// field lists all canonical paths so callers can disambiguate explicitly.
+type AmbiguousProjectError struct {
+	Name       string
+	Candidates []string
+}
+
+func (e *AmbiguousProjectError) Error() string {
+	return fmt.Sprintf("ambiguous project name %q matches %d candidates: %s", e.Name, len(e.Candidates), strings.Join(e.Candidates, ", "))
+}
+
 // ResolveProjectShort finds the project identifier for a directory path.
 // Full absolute paths (starting with '/') are returned cleaned — they are already
 // unique since ProjectShortFromPath moved to abs-path semantics. Legacy short-name
@@ -147,15 +159,15 @@ func (s *Store) ResolveProjectShort(projectDir string) string {
 // sessions.project (which stores full paths since v0.65). A unique hit returns the
 // full path. Multiple candidates are disambiguated via cwd: the candidate that
 // equals cwd or is a path-ancestor of cwd wins. If cwd doesn't match any candidate,
-// the first candidate (ordered by path) is returned with ambiguous=true so callers
-// can avoid caching the cwd-dependent resolution. Zero candidates returns the short
-// name verbatim with a warning log and ambiguous=false (no resolution happened).
-func (s *Store) ResolveProjectShortStrict(name string, cwd string) (resolved string, ambiguous bool, err error) {
+// an *AmbiguousProjectError is returned with all candidates — callers must
+// disambiguate or surface the error. Zero candidates returns the short name verbatim
+// with a warning log (no resolution happened).
+func (s *Store) ResolveProjectShortStrict(name string, cwd string) (resolved string, err error) {
 	if name == "" {
-		return "", false, nil
+		return "", nil
 	}
 	if name[0] == '/' {
-		return filepath.Clean(name), false, nil
+		return filepath.Clean(name), nil
 	}
 
 	// Basename match against sessions.project (full paths since v0.65).
@@ -165,7 +177,7 @@ func (s *Store) ResolveProjectShortStrict(name string, cwd string) (resolved str
 		name,
 	)
 	if err != nil {
-		return "", false, fmt.Errorf("resolve project %q: %w", name, err)
+		return "", fmt.Errorf("resolve project %q: %w", name, err)
 	}
 	defer rows.Close()
 
@@ -177,31 +189,29 @@ func (s *Store) ResolveProjectShortStrict(name string, cwd string) (resolved str
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return "", false, fmt.Errorf("resolve project %q: %w", name, err)
+		return "", fmt.Errorf("resolve project %q: %w", name, err)
 	}
 
 	switch len(candidates) {
 	case 0:
 		log.Printf("WARNING: ResolveProjectShortStrict: no project found for short name %q", name)
-		return name, false, nil
+		return name, nil
 	case 1:
-		return candidates[0], false, nil
+		return candidates[0], nil
 	default:
 		// Try cwd tiebreaker first — exact match or longest path-ancestor wins.
 		if cwd != "" {
 			if match := resolveByCWD(candidates, cwd); match != "" {
-				return match, false, nil
+				return match, nil
 			}
 		}
-		// Ambiguity unresolved by cwd: fall back to first candidate (ordered by path)
-		// so short-name callers get a working resolution instead of a hard error.
-		// Return ambiguous=true so handlers know not to cache the result — another
-		// caller's cwd may resolve to a different candidate. The tolerant project
-		// filter in learnings_search.go / embedding/store.go ensures learnings from
-		// the *other* candidates stay reachable via SearchUnfinished/QueryFacts.
-		log.Printf("WARNING: ResolveProjectShortStrict: ambiguous short name %q (%d candidates %v), using first: %s",
-			name, len(candidates), candidates, candidates[0])
-		return candidates[0], true, nil
+		// Ambiguity unresolved by cwd: return typed error with all candidates
+		// so callers can present a choice or require explicit disambiguation.
+		// Never fall back to an arbitrary first candidate — that silently
+		// routes operations to the wrong project.
+		log.Printf("WARNING: ResolveProjectShortStrict: ambiguous short name %q (%d candidates %v)",
+			name, len(candidates), candidates)
+		return "", &AmbiguousProjectError{Name: name, Candidates: candidates}
 	}
 }
 

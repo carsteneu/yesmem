@@ -42,6 +42,94 @@ func TestCurrentClientModelYesmemModelIDWins(t *testing.T) {
 	}
 }
 
+func TestBuildProxyParamsPreservesAuthoritativeContext(t *testing.T) {
+	for _, key := range []string{
+		"YESMEM_SOURCE_AGENT",
+		"YESMEM_SESSION_ID",
+		"CODEX_THREAD_ID",
+		"CLAUDE_SESSION_ID",
+		"CLAUDE_CODE_SESSION_ID",
+		"OPENCODE",
+		"YESMEM_MODEL_ID",
+		"CODEX_MODEL",
+		"OPENAI_MODEL",
+		"ANTHROPIC_MODEL",
+		"CLAUDE_MODEL",
+		"MODEL",
+	} {
+		t.Setenv(key, "")
+	}
+
+	arguments := map[string]any{
+		"query":         "needle",
+		"_session_id":   "opencode:session-a",
+		"_source_agent": "opencode",
+		"_cwd":          "/workspace/a",
+		"_caller_pid":   float64(4242),
+		"_client_model": "plugin-model",
+	}
+	params := buildProxyParams(arguments, true)
+
+	for key, want := range map[string]any{
+		"query":         "needle",
+		"_session_id":   "opencode:session-a",
+		"_source_agent": "opencode",
+		"_cwd":          "/workspace/a",
+		"_caller_pid":   float64(4242),
+		"_client_model": "plugin-model",
+		"thread_id":     "opencode:session-a",
+	} {
+		if got := params[key]; got != want {
+			t.Errorf("%s: got %v, want %v", key, got, want)
+		}
+	}
+	if _, exists := arguments["thread_id"]; exists {
+		t.Fatal("buildProxyParams mutated the caller's argument map")
+	}
+}
+
+func TestBuildProxyParamsSequentialSessionsDoNotLeak(t *testing.T) {
+	for _, key := range []string{
+		"YESMEM_SOURCE_AGENT",
+		"YESMEM_SESSION_ID",
+		"CODEX_THREAD_ID",
+		"CLAUDE_SESSION_ID",
+		"CLAUDE_CODE_SESSION_ID",
+		"OPENCODE",
+	} {
+		t.Setenv(key, "")
+	}
+
+	first := buildProxyParams(map[string]any{
+		"_session_id":   "opencode:session-a",
+		"_source_agent": "opencode",
+		"_cwd":          "/workspace/a",
+	}, true)
+	second := buildProxyParams(map[string]any{
+		"_session_id":   "opencode:session-b",
+		"_source_agent": "opencode",
+		"_cwd":          "/workspace/b",
+	}, true)
+
+	if first["_session_id"] != "opencode:session-a" || first["thread_id"] != "opencode:session-a" {
+		t.Fatalf("first call leaked or changed identity: %#v", first)
+	}
+	if second["_session_id"] != "opencode:session-b" || second["thread_id"] != "opencode:session-b" {
+		t.Fatalf("second call leaked or changed identity: %#v", second)
+	}
+	if first["_cwd"] != "/workspace/a" || second["_cwd"] != "/workspace/b" {
+		t.Fatalf("cwd leaked between calls: first=%#v second=%#v", first, second)
+	}
+
+	withoutThread := buildProxyParams(map[string]any{
+		"_session_id": "opencode:session-c",
+		"_cwd":        "/workspace/c",
+	}, false)
+	if _, exists := withoutThread["thread_id"]; exists {
+		t.Fatalf("non-thread wrapper unexpectedly injected thread_id: %#v", withoutThread)
+	}
+}
+
 func TestFormatRememberIncludesModel(t *testing.T) {
 	raw := []byte(`{
 		"id": 42,

@@ -26,7 +26,7 @@ func TestProcessCWD_InvalidPID(t *testing.T) {
 }
 
 func TestCallerCWD_NonEmpty(t *testing.T) {
-	if cwd := callerCWD(); cwd == "" {
+	if cwd := callerCWD("claude"); cwd == "" {
 		t.Error("callerCWD returned empty string")
 	}
 }
