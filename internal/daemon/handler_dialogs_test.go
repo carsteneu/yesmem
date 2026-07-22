@@ -1050,3 +1050,103 @@ func TestHandleWhoami_StripsCodexPrefix(t *testing.T) {
 		t.Errorf("project=%v, want proj-cx", m["project"])
 	}
 }
+
+// TestHandleRegisterPID_ReRegisterDisplacesOldSession verifies that
+// re-registering the same PID with a new session ID removes the old
+// mapping. Without this, resolveSessionID iterates pidMap and can
+// return a stale session from a previous PID→session registration.
+func TestHandleRegisterPID_ReRegisterDisplacesOldSession(t *testing.T) {
+	h, _ := mustHandler(t)
+
+	// Register session A with PID 100.
+	h.Handle(Request{Method: "register_pid", Params: map[string]any{
+		"session_id": "session-A", "pid": float64(100),
+	}})
+
+	// Verify session A is mapped.
+	h.pidMapMu.Lock()
+	_, hasA := h.pidMap["session-A"]
+	pidForA := 0
+	for sid, p := range h.pidMap {
+		if sid == "session-A" {
+			pidForA = p
+		}
+	}
+	h.pidMapMu.Unlock()
+	if !hasA || pidForA != 100 {
+		t.Fatalf("expected pidMap[session-A]=100, got has=%v pid=%d", hasA, pidForA)
+	}
+
+	// Re-register same PID 100 with session B.
+	h.Handle(Request{Method: "register_pid", Params: map[string]any{
+		"session_id": "session-B", "pid": float64(100),
+	}})
+
+	h.pidMapMu.Lock()
+	_, hasA = h.pidMap["session-A"]
+	pidForB, hasB := h.pidMap["session-B"]
+	h.pidMapMu.Unlock()
+	if hasA {
+		t.Error("session-A still in pidMap after re-registration with same PID — must be displaced")
+	}
+	if !hasB || pidForB != 100 {
+		t.Errorf("session-B not properly registered: has=%v pid=%d", hasB, pidForB)
+	}
+}
+
+// TestHandleRegisterPID_ReRegisterDisplacesAllOldSessions verifies that
+// ALL stale same-PID entries are removed (not just the first). Multiple
+// stale entries can accumulate if PID files persist across daemon restarts
+// or through the DB fallback path. Manual pidMap population simulates this.
+func TestHandleRegisterPID_ReRegisterDisplacesAllOldSessions(t *testing.T) {
+	h, _ := mustHandler(t)
+
+	// Manually inject multiple stale session→PID entries (simulates race
+	// or PID-file-based recovery that created duplicates).
+	h.pidMapMu.Lock()
+	h.pidMap["session-A"] = 100
+	h.pidMap["session-B"] = 100
+	h.pidMap["session-C"] = 100
+	h.pidMap["session-D"] = 200 // different PID, should survive
+	h.pidMapMu.Unlock()
+
+	// Verify initial state: 3 stale entries for PID 100, 1 for PID 200.
+	h.pidMapMu.Lock()
+	count100 := 0
+	for _, p := range h.pidMap {
+		if p == 100 {
+			count100++
+		}
+	}
+	h.pidMapMu.Unlock()
+	if count100 != 3 {
+		t.Fatalf("expected 3 pidMap entries for PID 100, got %d", count100)
+	}
+
+	// Register PID 100 with session X — must remove A, B, C.
+	h.Handle(Request{Method: "register_pid", Params: map[string]any{
+		"session_id": "session-X", "pid": float64(100),
+	}})
+
+	h.pidMapMu.Lock()
+	remaining100 := 0
+	has200 := false
+	for sid, p := range h.pidMap {
+		if p == 100 {
+			remaining100++
+			if sid != "session-X" {
+				t.Errorf("stale entry %q survived cleanup (PID=100)", sid)
+			}
+		}
+		if p == 200 {
+			has200 = true
+		}
+	}
+	h.pidMapMu.Unlock()
+	if remaining100 != 1 {
+		t.Errorf("expected 1 remaining entry for PID 100, got %d", remaining100)
+	}
+	if !has200 {
+		t.Error("unrelated PID 200 was incorrectly removed")
+	}
+}

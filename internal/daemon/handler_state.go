@@ -552,6 +552,9 @@ func (h *Handler) handleTrackSessionEnd(params map[string]any) Response {
 		h.store.ClearSessionPins(projectShort)
 	}
 
+	// New session data may add project paths → invalidate resolution cache.
+	h.InvalidateProjectCache()
+
 	return jsonResponse(map[string]any{"status": "tracked", "session_id": sessionID})
 }
 

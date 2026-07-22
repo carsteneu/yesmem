@@ -342,7 +342,7 @@ func (h *Handler) pauseAgent(id, reason string) {
 // later became compliant — no process spawn, pure DB flip.
 func (h *Handler) unpauseAgent(id, reason string) {
 	h.store.AgentUpdate(id, map[string]any{
-		"status":   "running",
+		"status": "running",
 		"progress": fmt.Sprintf("recovered by DONE-GUARD at %s: %s",
 			time.Now().Format("2006-01-02 15:04:05"), reason),
 	})
@@ -397,6 +397,9 @@ func (h *Handler) attemptRestart() {
 		if agent.Backend == "opencode" && agent.OpencodeSessionID == "" {
 			log.Printf("[heartbeat] agent %s has no opencode_session_id, skipping restart (would fall back to daemon UUID)", agent.ID)
 			h.stopAgent(agent.ID, opencodeUnresumableMsg)
+			continue
+		}
+		if h.disableAgentProcesses {
 			continue
 		}
 

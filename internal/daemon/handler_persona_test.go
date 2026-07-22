@@ -18,6 +18,7 @@ func mustHandler(t *testing.T) (*Handler, *storage.Store) {
 	t.Cleanup(func() { s.Close() })
 	h := NewHandler(s, nil)
 	h.dataDir = t.TempDir()
+	h.disableAgentProcesses = true
 	return h, s
 }
 

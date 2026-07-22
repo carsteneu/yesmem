@@ -407,6 +407,139 @@ func TestOpencodeScanner_ReindexSameSession(t *testing.T) {
 	}
 }
 
+func TestOpencodeScanner_PersistsWatermarkAcrossRestart(t *testing.T) {
+	tmpDir := t.TempDir()
+	ocDBPath := filepath.Join(tmpDir, "opencode.db")
+	ocDB, err := createTestOpencodeDB(ocDBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	created := time.Now().Add(-time.Hour)
+	updated := time.Now().Add(-30 * time.Minute).Truncate(time.Millisecond)
+	if err := writeOpencodeSession(ocDB, "ses_persist", "/tmp/persist", "Persist", created, updated, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeOpencodeMessage(ocDB, "pm1", "ses_persist", "user", created, map[string]any{"role": "user"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeOpencodePart(ocDB, "pp1", "pm1", "ses_persist", created, map[string]any{"type": "text", "text": "persist me"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ocDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	yesmemDBPath := filepath.Join(tmpDir, "yesmem.db")
+	store, err := storage.Open(yesmemDBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanner := NewOpencodeScanner(ocDBPath, store, nil, nil, nil)
+	scanner.lastCheckAt = time.Now().Add(-2 * scanOpencodeInterval)
+	if got := scanner.MaybeScan(); got != 1 {
+		store.Close()
+		t.Fatalf("first scan indexed %d sessions, want 1", got)
+	}
+	state, found, err := store.GetOpencodeScanState(scanner.sourceKey)
+	if err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	if !found || state.LastUpdatedMs != updated.UnixMilli() || state.LastSessionID != "ses_persist" {
+		store.Close()
+		t.Fatalf("persisted state = %+v, found=%v", state, found)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err = storage.Open(yesmemDBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	restarted := NewOpencodeScanner(ocDBPath, store, nil, nil, nil)
+	if !restarted.lastScanAt.Equal(updated) || restarted.lastSessionID != "ses_persist" {
+		t.Fatalf("reloaded watermark = %s/%q, want %s/%q",
+			restarted.lastScanAt, restarted.lastSessionID, updated, "ses_persist")
+	}
+	restarted.lastCheckAt = time.Now().Add(-2 * scanOpencodeInterval)
+	if got := restarted.MaybeScan(); got != 0 {
+		t.Fatalf("restart scan indexed %d sessions, want 0", got)
+	}
+}
+
+func TestOpencodeScanner_IncrementalCursorDisambiguatesEqualTimestamps(t *testing.T) {
+	tmpDir := t.TempDir()
+	ocDBPath := filepath.Join(tmpDir, "opencode.db")
+	ocDB, err := createTestOpencodeDB(ocDBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ocDB.Close()
+
+	store, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	created := time.Now().Add(-time.Hour)
+	updated := time.Now().Truncate(time.Millisecond)
+	if err := writeOpencodeSession(ocDB, "ses_a", "/tmp/equal", "Equal A", created, updated, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeOpencodeMessage(ocDB, "em1", "ses_a", "user", created, map[string]any{"role": "user"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeOpencodePart(ocDB, "ep1", "em1", "ses_a", created, map[string]any{"type": "text", "text": "a"}); err != nil {
+		t.Fatal(err)
+	}
+
+	scanner := NewOpencodeScanner(ocDBPath, store, nil, nil, nil)
+	scanner.lastCheckAt = time.Now().Add(-2 * scanOpencodeInterval)
+	if got := scanner.MaybeScan(); got != 1 {
+		t.Fatalf("first scan indexed %d sessions, want 1", got)
+	}
+
+	if err := writeOpencodeSession(ocDB, "ses_b", "/tmp/equal", "Equal B", created, updated, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeOpencodeMessage(ocDB, "em2", "ses_b", "user", created, map[string]any{"role": "user"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeOpencodePart(ocDB, "ep2", "em2", "ses_b", created, map[string]any{"type": "text", "text": "b"}); err != nil {
+		t.Fatal(err)
+	}
+
+	scanner.lastCheckAt = time.Now().Add(-2 * scanOpencodeInterval)
+	if got := scanner.MaybeScan(); got != 1 {
+		t.Fatalf("equal-timestamp incremental scan indexed %d sessions, want 1", got)
+	}
+	if scanner.lastSessionID != "ses_b" {
+		t.Fatalf("last session ID = %q, want ses_b", scanner.lastSessionID)
+	}
+}
+
+func TestOpencodeScanner_ConcurrentMaybeScanDoesNotWait(t *testing.T) {
+	scanner := &OpencodeScanner{}
+	scanner.scanMu.Lock()
+	defer scanner.scanMu.Unlock()
+
+	result := make(chan int, 1)
+	go func() { result <- scanner.MaybeScan() }()
+
+	select {
+	case got := <-result:
+		if got != 0 {
+			t.Fatalf("concurrent MaybeScan returned %d, want 0", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("concurrent MaybeScan blocked behind active scan")
+	}
+}
+
 func TestOpencodeScanner_SessionOrder(t *testing.T) {
 	// Test case to ensure sessions are loaded in the correct order
 	// based on time_created, not by how they appear in the DB.

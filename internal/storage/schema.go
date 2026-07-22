@@ -20,6 +20,7 @@ func (s *Store) createSchema() error {
 		tableLearnings,
 		tableAssociations,
 		tableIndexState,
+		tableOpencodeScanState,
 		tableProjectProfiles,
 		tableStrategicContext,
 		tableFileCoverage,
@@ -640,6 +641,13 @@ const tableIndexState = `CREATE TABLE IF NOT EXISTS index_state (
 	file_size   INTEGER NOT NULL,
 	file_mtime  TEXT NOT NULL,
 	indexed_at  TEXT NOT NULL
+)`
+
+const tableOpencodeScanState = `CREATE TABLE IF NOT EXISTS opencode_scan_state (
+	source_path      TEXT PRIMARY KEY,
+	last_updated_ms  INTEGER NOT NULL,
+	last_session_id  TEXT NOT NULL,
+	updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 )`
 
 const tableProjectProfiles = `CREATE TABLE IF NOT EXISTS project_profiles (

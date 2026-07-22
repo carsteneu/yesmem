@@ -216,7 +216,9 @@ func Run(cfg Config) error {
 			ticker := time.NewTicker(60 * time.Second)
 			defer ticker.Stop()
 			for range ticker.C {
-				ocScanner.MaybeScan()
+				if ocScanner.MaybeScan() > 0 {
+					handler.InvalidateProjectCache()
+				}
 			}
 		}()
 	}
@@ -429,6 +431,7 @@ func Run(cfg Config) error {
 				if err := idx.IndexSession(path); err != nil {
 					log.Printf("warn: index %s: %v", path, err)
 				}
+				handler.InvalidateProjectCache()
 			},
 			func(path string) {
 				log.Printf("Session settled (5min quiet): %s — queued for batch extraction", filepath.Base(path))
@@ -496,6 +499,11 @@ func Run(cfg Config) error {
 			log.Printf("warn: initial index: %v", idxErr)
 		}
 		log.Printf("Indexed %d sessions (%d skipped) in %v", totalIndexed, totalSkipped, time.Since(start).Round(time.Millisecond))
+
+		// New sessions may introduce project paths → invalidate resolution cache.
+		if totalIndexed > 0 {
+			handler.InvalidateProjectCache()
+		}
 
 		// Load graph from DB
 		assocs, assocErr := store.LoadAllAssociations()

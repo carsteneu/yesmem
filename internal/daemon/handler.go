@@ -42,6 +42,7 @@ type Handler struct {
 	agentMaxDepth         int                // max spawn depth — set by daemon from config
 	agentTokenBudget      int                // max tokens per agent — set by daemon from config
 	agentDefaultBackend   string             // default agent backend — set by daemon from config
+	disableAgentProcesses bool               // test guard; production default remains false
 	defaultSandboxProfile SandboxProfile     // default sandbox for scheduled jobs — set by daemon from config
 	httpRPCAddr           string             // HTTP API listen address for bun MCP polyfill (e.g. 127.0.0.1:9377)
 	httpAuthToken         string             // bearer token for HTTP API authentication
@@ -120,9 +121,12 @@ type Handler struct {
 	windowMap   map[string]string
 	terminalMap map[string]string // session_id → terminal type (ghostty, gnome-terminal, etc.)
 
-	// Project name resolution cache (directory path → resolved project_short)
-	projectCacheMu sync.RWMutex
-	projectCache   map[string]string
+	// Project name resolution cache: input key → resolved full path or
+	// ambiguous-marker error. Keys are composite: bare "project" for global
+	// (cwd-independent) results and "project\x00cwd" for cwd-specific results.
+	projectCacheMu  sync.RWMutex
+	projectCache    map[string]string
+	projectCacheGen uint64 // incremented on invalidation; guards against stale writes
 
 	// Code graph per project — lazy initialized on first MCP tool access
 	codeGraphMu sync.RWMutex
@@ -152,10 +156,10 @@ func injectExcludeSession(params map[string]any) {
 }
 
 // resolveProjectParam resolves the "project" field in params from a directory path
-// to the canonical full project path via strict DB lookup. Results are cached per
-// session. On ambiguity (short name matching multiple distinct project paths) the
-// error message is stored under the "_project_error" key for the dispatcher to
-// surface as an error response before the handler runs.
+// or short name to the canonical full project path via strict DB lookup. Results
+// are cached per session. On unresolved ambiguity (short name matching multiple
+// distinct project paths), the error is stored under "_project_error" and surfaced
+// as an MCP error response before the handler runs.
 func (h *Handler) resolveProjectParam(params map[string]any) map[string]any {
 	project, ok := params["project"].(string)
 	if !ok || project == "" {
@@ -167,11 +171,71 @@ func (h *Handler) resolveProjectParam(params map[string]any) map[string]any {
 	// a caller standing inside one of the candidate directories.
 	cwd, _ := params["_cwd"].(string)
 
-	// Check cache (short names and full paths share one keyspace)
+	// Resolve authoritative per-call session context before shared cwd/global
+	// cache entries. A resumed process can carry the same stale cwd while serving
+	// different same-basename sessions, so session-derived results need their own
+	// cache key and must never be shadowed by another caller's cwd entry.
+	if !strings.HasPrefix(project, "/") {
+		sessionID, _ := params["_session_id"].(string)
+		if sessionID == "" {
+			if pid, ok := params["_caller_pid"].(float64); ok && pid > 0 {
+				sessionID = h.resolveSessionIDFromPID(int(pid))
+			}
+		}
+		if sessionID != "" {
+			cacheKey := project + "\x00session\x00" + sessionID
+			h.projectCacheMu.RLock()
+			generation := h.projectCacheGen
+			cached, found := h.projectCache[cacheKey]
+			h.projectCacheMu.RUnlock()
+			if found {
+				params["project"] = cached
+				return params
+			}
+
+			if session, err := h.store.GetSession(sessionID); err == nil && session != nil && filepath.Base(session.Project) == project {
+				h.projectCacheMu.Lock()
+				if h.projectCache == nil {
+					h.projectCache = make(map[string]string)
+				}
+				if h.projectCacheGen == generation {
+					h.projectCache[cacheKey] = session.Project
+				}
+				h.projectCacheMu.Unlock()
+				params["project"] = session.Project
+				return params
+			}
+		}
+	}
+
+	// Check cache. Keys are composite: bare project (global, for results
+	// that do not depend on cwd — unique basenames, passthrough, cwd-less
+	// ambiguous errors) and project+"\x00"+cwd (cwd-specific, for results
+	// produced by cwd-dependent resolution among same-basename candidates).
+	//
+	// Lookup order: cwd-specific first (scoped hit always returns), then
+	// global fallback (returns only for cwd-less callers; cwd-bearing
+	// callers with global ambiguous markers fall through to DB).
 	h.projectCacheMu.RLock()
-	cached, found := h.projectCache[project]
-	h.projectCacheMu.RUnlock()
-	if found {
+	// Snapshot generation under lock — prevents data race with
+	// InvalidateProjectCache's projectCacheGen++ write.
+	gen := h.projectCacheGen
+	// Cwd-specific key: hit here means this exact cwd was already resolved
+	// (success or scoped error). Return unconditionally.
+	if cwd != "" {
+		if cached, ok := h.projectCache[project+"\x00"+cwd]; ok {
+			h.projectCacheMu.RUnlock()
+			if isAmbiguousMarker(cached) {
+				params["_project_error"] = stripMarker(cached)
+			} else {
+				params["project"] = cached
+			}
+			return params
+		}
+	}
+	// Global key: deterministic results shared across all callers.
+	if cached, ok := h.projectCache[project]; ok {
+		h.projectCacheMu.RUnlock()
 		if !isAmbiguousMarker(cached) {
 			params["project"] = cached
 			return params
@@ -180,33 +244,65 @@ func (h *Handler) resolveProjectParam(params map[string]any) map[string]any {
 			params["_project_error"] = stripMarker(cached)
 			return params
 		}
-		// Cached ambiguity error but cwd present: fall through to the DB
-		// lookup — the cwd tiebreaker may resolve it.
+		// Global ambiguous marker but cwd present: fall through to
+		// DB lookup — the cwd tiebreaker may resolve it.
+	} else {
+		h.projectCacheMu.RUnlock()
 	}
 
-	// DB lookup. Hard-errors only on DB failures; ambiguous short names now fall back
-	// to the first candidate with ambiguous=true so the cache decision can treat them
-	// as cwd-dependent (not cacheable when cwd is empty either, because a later caller
-	// with a matching cwd may resolve to a different candidate).
-	resolved, ambiguous, err := h.store.ResolveProjectShortStrict(project, cwd)
+	// DB lookup. Ambiguous short names return *AmbiguousProjectError with
+	// all candidate paths. The error is cached via ambiguousMarker so cwd-less
+	// callers get a fast error response; cwd-bearing callers bypass the cache
+	// and retry the DB lookup to run the cwd tiebreaker.
+	//
+	// gen was captured under projectCacheMu.RLock above. If invalidation
+	// fires during the DB lookup, gen will have advanced and the write
+	// below is skipped — preventing stale-data reinsertion.
+	resolved, err := h.store.ResolveProjectShortStrict(project, cwd)
 	cacheVal := resolved
 	if err != nil {
 		cacheVal = ambiguousMarker(err.Error())
 	}
 
-	// Cache results unless this is a cwd-dependent resolution:
-	//   - cwd provided → tiebreaker is cwd-specific, would leak to other callers
-	//   - ambiguous fallback (no cwd resolved) → another caller's cwd may pick a
-	//     different candidate, must not cache the fallback either
-	// Full-path inputs resolve to themselves (deterministic) and are always safe.
-	shouldCache := strings.HasPrefix(project, "/") || (cwd == "" && !ambiguous)
+	// Cache results with composite keys to prevent cross-caller pollution:
+	//   - cwd!="":  key = project+"\x00"+cwd (cwd-specific, per-directory)
+	//   - cwd=="":  key = project (global, deterministic)
+	// Rules for what gets cached:
+	//   - Full path       → always cache (deterministic).
+	//   - Short, success  → cache (unique basename or passthrough).
+	//   - Short, ambiguous, cwd=="" → cache error as global marker (permanent
+	//     fact for cwd-less callers; cwd-bearing callers fall through to DB).
+	//   - Short, ambiguous, cwd!="" → cache error under cwd-specific key
+	//     (scoped: repeated unmatched identical cwd queries/logs once).
+	//   - Other errors (transient DB) → never cache.
+	isAmbiguous := false
+	if err != nil {
+		_, isAmbiguous = err.(*storage.AmbiguousProjectError)
+	}
+
+	shouldCache := false
+	if strings.HasPrefix(project, "/") {
+		shouldCache = true
+	} else if err == nil {
+		shouldCache = true
+	} else if isAmbiguous {
+		shouldCache = true // global or scoped, depending on key
+	}
 
 	if shouldCache {
+		cacheKey := project
+		if cwd != "" {
+			cacheKey = project + "\x00" + cwd
+		}
 		h.projectCacheMu.Lock()
 		if h.projectCache == nil {
 			h.projectCache = make(map[string]string)
 		}
-		h.projectCache[project] = cacheVal
+		// Generation guard: only write if no invalidation happened
+		// during the DB lookup. Prevents stale-data reinsertion.
+		if h.projectCacheGen == gen {
+			h.projectCache[cacheKey] = cacheVal
+		}
 		h.projectCacheMu.Unlock()
 	}
 
@@ -223,6 +319,19 @@ const ambiguousPrefix = "__ambiguous__:"
 func ambiguousMarker(msg string) string { return ambiguousPrefix + msg }
 func isAmbiguousMarker(s string) bool   { return strings.HasPrefix(s, ambiguousPrefix) }
 func stripMarker(s string) string       { return strings.TrimPrefix(s, ambiguousPrefix) }
+
+// InvalidateProjectCache clears the project resolution cache.
+// Call after new sessions are indexed so stale cached resolutions
+// (e.g. pre-ambiguity passthrough or stale candidate lists) are
+// re-queried from the DB on next lookup. Increments a generation
+// counter so concurrent in-flight DB lookups do not reinsert stale
+// data after the flush.
+func (h *Handler) InvalidateProjectCache() {
+	h.projectCacheMu.Lock()
+	h.projectCache = nil
+	h.projectCacheGen++
+	h.projectCacheMu.Unlock()
+}
 
 type idleState struct {
 	count    int
@@ -258,7 +367,9 @@ func (h *Handler) handleIdleTick(params map[string]any) Response {
 
 	// Periodic opencode DB scanning (every ~5min via MaybeScan rate-limit)
 	if h.opencodeScanner != nil {
-		h.opencodeScanner.MaybeScan()
+		if h.opencodeScanner.MaybeScan() > 0 {
+			h.InvalidateProjectCache()
+		}
 	}
 
 	// Track active session for remember() calls

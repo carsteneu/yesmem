@@ -15,6 +15,32 @@ import (
 
 // resolveSessionID extracts session ID from params, falls back to pidMap lookup, then activeSessionID.
 // Note: activeSessionID fallback can be wrong with concurrent sessions — PID lookup is preferred.
+// resolveSessionIDFromPID resolves a session ID from a caller PID using only
+// PID-proven sources: pidMap, PID file, and agent DB table. Never falls back
+// to global active-session state (active_session_opencode, activeSessionID)
+// which is Last-Writer-Wins and can silently pick a different same-basename
+// session. Returns "" if no PID mapping exists.
+func (h *Handler) resolveSessionIDFromPID(pid int) string {
+	h.pidMapMu.Lock()
+	for sid, p := range h.pidMap {
+		if p == pid {
+			h.pidMapMu.Unlock()
+			return sid
+		}
+	}
+	h.pidMapMu.Unlock()
+	if sid := h.tryRecoverFromPIDFile(pid); sid != "" {
+		h.pidMapMu.Lock()
+		h.pidMap[sid] = pid
+		h.pidMapMu.Unlock()
+		return sid
+	}
+	if agent, err := h.store.AgentGetByPID(pid); err == nil && agent != nil {
+		return agent.SessionID
+	}
+	return ""
+}
+
 func (h *Handler) resolveSessionID(params map[string]any, key string) string {
 	if sid, ok := params[key].(string); ok && sid != "" {
 		return sid
@@ -305,6 +331,15 @@ func (h *Handler) handleRegisterPID(params map[string]any) Response {
 		return errorResponse("session_id and pid required")
 	}
 	h.pidMapMu.Lock()
+	// Remove ALL old session→PID entries for this PID. A TUI server may
+	// handle multiple sessions over its lifetime and can accumulate stale
+	// mappings; re-registration must displace all of them so resolveSessionID
+	// returns only the current session.
+	for sid, p := range h.pidMap {
+		if p == int(pid) {
+			delete(h.pidMap, sid)
+		}
+	}
 	h.pidMap[sessionID] = int(pid)
 	h.pidMapMu.Unlock()
 

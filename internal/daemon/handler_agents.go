@@ -146,7 +146,9 @@ func (h *Handler) handleSpawnAgent(params map[string]any) Response {
 	// Start PTY bridge + terminal in background goroutine
 	sockPath := filepath.Join(h.dataDir, fmt.Sprintf("%s.sock", id))
 	workDir = h.resolveAgentWorkDir(project, workDir, backend)
-	go h.spawnAgentProcess(id, sessionID, project, section, prompt, sockPath, workDir, backend, model, maxTurns, false)
+	if !h.disableAgentProcesses {
+		go h.spawnAgentProcess(id, sessionID, project, section, prompt, sockPath, workDir, backend, model, maxTurns, false)
+	}
 
 	return jsonResponse(map[string]any{
 		"id":         id,
