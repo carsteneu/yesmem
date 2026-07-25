@@ -101,7 +101,7 @@ func (s *Server) loadBriefing(project, projectDir string) briefingData {
 		return briefingData{}
 	}
 	result, err := s.queryDaemon("generate_briefing", map[string]any{
-		"project":     project,
+		"project":     daemonProject(project, projectDir),
 		"project_dir": projectDir,
 	})
 	if err != nil {

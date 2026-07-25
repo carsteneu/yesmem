@@ -10,7 +10,7 @@ import (
 
 // runStubCycle executes the full stub pipeline: strip reminders, compress context,
 // stubify, compact, collapse, narrative, re-expand. Used by both sawtooth and legacy paths.
-func (s *Server) runStubCycle(messages []any, req map[string]any, reqIdx int, proj string, threadID string, overhead int, totalTokens int, userQuery string, isRetryReq bool) StubResult {
+func (s *Server) runStubCycle(messages []any, req map[string]any, reqIdx int, proj string, projDir string, threadID string, overhead int, totalTokens int, userQuery string, isRetryReq bool) StubResult {
 	// Get annotations snapshot
 	s.mu.RLock()
 	annSnapshot := make(map[string]string, len(s.annotations))
@@ -99,7 +99,7 @@ func (s *Server) runStubCycle(messages []any, req map[string]any, reqIdx int, pr
 	}
 	{
 		// Fetch learnings — resolve project_short via daemon (handles renames/moves)
-		resolveResult, _ := s.queryDaemon("resolve_project", map[string]any{"project_dir": proj})
+		resolveResult, _ := s.queryDaemon("resolve_project", map[string]any{"project_dir": projDir})
 		projShort := proj
 		if resolveResult != nil {
 			var resolved struct {
@@ -110,7 +110,7 @@ func (s *Server) runStubCycle(messages []any, req map[string]any, reqIdx int, pr
 			}
 		}
 		result, err := s.queryDaemon("get_learnings_since", map[string]any{
-			"project": projShort,
+			"project": daemonProject(projShort, projDir),
 			"since":   sessionStart.Format(time.RFC3339),
 			"limit":   20,
 		})
@@ -136,7 +136,7 @@ func (s *Server) runStubCycle(messages []any, req map[string]any, reqIdx int, pr
 
 		// Fetch session flavors from other sessions (grouped by session_id)
 		flavorResult, err := s.queryDaemon("get_session_flavors_since", map[string]any{
-			"project": projShort,
+			"project": daemonProject(projShort, projDir),
 			"since":   sessionStart.Format(time.RFC3339),
 			"limit":   20,
 		})
@@ -196,7 +196,7 @@ func (s *Server) runStubCycle(messages []any, req map[string]any, reqIdx int, pr
 
 		// Fetch pulse learnings (CC recaps) and merge into timeline
 		pulseResult, err := s.queryDaemon("get_pulse_learnings_since", map[string]any{
-			"project": projShort,
+			"project": daemonProject(projShort, projDir),
 			"since":   sessionStart.Format(time.RFC3339),
 			"limit":   20,
 		})
@@ -231,15 +231,15 @@ func (s *Server) runStubCycle(messages []any, req map[string]any, reqIdx int, pr
 		s.logger.Printf("[req %d] COLLAPSE: %d -> %d messages (learnings=%d flavors=%d proj=%s since=%s)", reqIdx, beforeLen, len(finalMessages), len(archiveLearnings), len(archiveFlavors), proj, sessionStart.Format(time.RFC3339))
 
 		// Re-inject active skills after archive block (Option B)
-		skillBlocks := s.buildSkillBlocksForThread(proj, threadID)
+		skillBlocks := s.buildSkillBlocksForThread(daemonProject(proj, projDir), threadID)
 		if len(skillBlocks) > 0 {
 			finalMessages = injectSkillsAfterArchive(finalMessages, skillBlocks)
 			s.logger.Printf("%s[req %d] COLLAPSE: re-injected %d skill blocks after archive%s", colorBlue, reqIdx, len(skillBlocks), colorReset)
 		}
 
 		// Re-inject rules after collapse (counter reset, immediate injection)
-		if rulesBlock := s.rulesInjectAfterCollapse(threadID, proj); rulesBlock != "" {
-			finalMessages = injectAssociativeContext(finalMessages, s.formatRulesReminder(rulesBlock, proj, false), s.cfg.SawtoothEnabled)
+		if rulesBlock := s.rulesInjectAfterCollapse(threadID, daemonProject(proj, projDir)); rulesBlock != "" {
+			finalMessages = injectAssociativeContext(finalMessages, s.formatRulesReminder(rulesBlock, daemonProject(proj, projDir), false), s.cfg.SawtoothEnabled)
 			s.logger.Printf("%s[req %d] COLLAPSE: re-injected rules reminder%s", colorBlue, reqIdx, colorReset)
 		}
 

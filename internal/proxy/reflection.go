@@ -18,7 +18,8 @@ type ReflectionContext struct {
 	ActiveGaps        []string // open knowledge gap topics for this project
 	ReqIdx            int
 	ThreadID          string
-	Project           string
+	Project           string   // short display name
+	ProjectDir        string   // absolute path; the only form safe for daemon RPCs
 	HasLearnings      bool
 }
 
@@ -29,6 +30,7 @@ func (s *Server) buildReflectionRequest(ctx ReflectionContext) ([]byte, error) {
 		ReqIdx:       ctx.ReqIdx,
 		ThreadID:     ctx.ThreadID,
 		Project:      ctx.Project,
+		ProjectDir:   ctx.ProjectDir,
 		HasLearnings: ctx.HasLearnings,
 	}
 	activeHandlers := s.signalBus.Evaluate(reqCtx)
@@ -169,7 +171,7 @@ func doReflectionCall(endpoint, apiKey string, reqBody []byte) ([]ToolCallResult
 func (s *Server) fireReflectionCall(ctx ReflectionContext) {
 	// Fetch active gaps for this project to include in the reflection context
 	if ctx.Project != "" {
-		if raw, err := s.queryDaemon("get_active_gaps", map[string]any{"project": ctx.Project, "limit": 10}); err == nil {
+		if raw, err := s.queryDaemon("get_active_gaps", map[string]any{"project": daemonProject(ctx.Project, ctx.ProjectDir), "limit": 10}); err == nil {
 			var gapResp struct {
 				Gaps []struct {
 					Topic string `json:"topic"`
@@ -206,6 +208,7 @@ func (s *Server) fireReflectionCall(ctx ReflectionContext) {
 		ReqIdx:       ctx.ReqIdx,
 		ThreadID:     ctx.ThreadID,
 		Project:      ctx.Project,
+		ProjectDir:   ctx.ProjectDir,
 		HasLearnings: ctx.HasLearnings,
 	}
 	for _, call := range calls {

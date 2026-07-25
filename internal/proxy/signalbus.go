@@ -8,9 +8,14 @@ import (
 
 // RequestContext provides information about the current request for handler activation decisions.
 type RequestContext struct {
-	ReqIdx       int
-	ThreadID     string
-	Project      string
+	ReqIdx int
+	// ThreadID identifies the conversation.
+	ThreadID string
+	// Project is the short display name, used for logs and prompt injection.
+	Project string
+	// ProjectDir is the absolute project path and the only form safe to send
+	// to the daemon — a bare basename is ambiguous across same-named projects.
+	ProjectDir   string
 	UserQuery    string
 	MessageCount int
 	HasLearnings bool

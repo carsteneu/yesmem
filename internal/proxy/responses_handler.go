@@ -113,7 +113,7 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "marshal: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.forwardOpenAIWithTracking(w, r, outBody, reqIdx, ctx.ToolUseIDs, ctx.Project, ctx.ThreadID, ctx.EstimatedTokens, ctx.MessageCount, responsesParser{})
+	s.forwardOpenAIWithTracking(w, r, outBody, reqIdx, ctx.ToolUseIDs, daemonProject(ctx.Project, ctx.ProjectDir), ctx.ThreadID, ctx.EstimatedTokens, ctx.MessageCount, responsesParser{})
 }
 
 func copyResponsesPassthroughFields(dst, src map[string]any) {

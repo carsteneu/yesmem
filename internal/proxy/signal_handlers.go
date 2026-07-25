@@ -118,7 +118,7 @@ func (h *knowledgeGapHandler) HandleResult(ctx RequestContext, call ToolCallResu
 	if topic != "" {
 		severity, _ := call.Input["severity"].(string)
 		go func() {
-			params := map[string]any{"topic": topic, "project": ctx.Project}
+			params := map[string]any{"topic": topic, "project": daemonProject(ctx.Project, ctx.ProjectDir)}
 			if severity != "" {
 				params["severity"] = severity
 			}
@@ -133,7 +133,7 @@ func (h *knowledgeGapHandler) HandleResult(ctx RequestContext, call ToolCallResu
 		go func() {
 			for _, rt := range rawTopics {
 				if t, ok := rt.(string); ok && t != "" {
-					if _, err := h.call("resolve_gap", map[string]any{"topic": t, "project": ctx.Project}); err != nil {
+					if _, err := h.call("resolve_gap", map[string]any{"topic": t, "project": daemonProject(ctx.Project, ctx.ProjectDir)}); err != nil {
 						h.logger.Printf("[signal:knowledge_gap] resolve_gap error: %v", err)
 					} else {
 						h.logger.Printf("[signal:knowledge_gap] resolved: %s", truncateStr(t, 60))
@@ -192,7 +192,7 @@ func (h *contradictionHandler) HandleResult(ctx RequestContext, call ToolCallRes
 	go func() {
 		params := map[string]any{
 			"description": desc,
-			"project":     ctx.Project,
+			"project":     daemonProject(ctx.Project, ctx.ProjectDir),
 			"thread_id":   ctx.ThreadID,
 		}
 		if len(learningIDs) > 0 {

@@ -16,8 +16,11 @@ import (
 )
 
 type openAIRequestContext struct {
-	ReqIdx          int
+	ReqIdx int
+	// Project is the short display name; ProjectDir is the absolute path and
+	// the only form safe to send to the daemon.
 	Project         string
+	ProjectDir      string
 	ThreadID        string
 	SessionID       string
 	Fingerprint     string
@@ -103,6 +106,7 @@ func (s *Server) prepareOpenAIRequestContext(req map[string]any, reqIdx int, hea
 	ctx := openAIRequestContext{
 		ReqIdx:      reqIdx,
 		Project:     extractProjectName(req),
+		ProjectDir:  extractProjectPath(req),
 		SessionID:   extractSessionID(req, headerSessionID, opencodeSessionID),
 		Fingerprint: fp,
 		UserQuery:   lastUserText(messages),
@@ -222,7 +226,7 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 	ctx.MessageCount = len(messages)
 
 	if !ctx.Retry && s.cfg.DataDir != "" {
-		turnProject := ctx.Project
+		turnProject := daemonProject(ctx.Project, ctx.ProjectDir)
 		if turnProject == "" {
 			turnProject = "__global__"
 		}
@@ -237,7 +241,7 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 			s.logger.Printf("[req %d %s tid=%s] git commit detected: %s %s", ctx.ReqIdx, ctx.Project, ctx.ThreadID, ci.Hash, ci.Message)
 		}
 		go s.queryDaemon("invalidate_on_commit", map[string]any{
-			"hash": ci.Hash, "project": ctx.Project, "workdir": workdir,
+			"hash": ci.Hash, "project": daemonProject(ctx.Project, ctx.ProjectDir), "workdir": workdir,
 		})
 	}
 
@@ -311,7 +315,7 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 			triggerReason := s.sawtoothTrigger.ShouldTrigger(ctx.ThreadID, totalTokens)
 			if triggerReason != TriggerNone {
 				s.setRawEstimate(ctx.ThreadID, totalTokens)
-				_ = s.runStubCycle(messages, req, ctx.ReqIdx, ctx.Project, ctx.ThreadID, overhead, totalTokens, ctx.UserQuery, ctx.Retry)
+				_ = s.runStubCycle(messages, req, ctx.ReqIdx, ctx.Project, ctx.ProjectDir, ctx.ThreadID, overhead, totalTokens, ctx.UserQuery, ctx.Retry)
 				finalMessages, _ := req["messages"].([]any)
 				if len(finalMessages) > 0 {
 					cutoff := len(messages)
@@ -327,7 +331,7 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 		}
 	} else if s.shouldStub(totalTokens, model) {
 		s.setRawEstimate(ctx.ThreadID, totalTokens)
-		s.runStubCycle(messages, req, ctx.ReqIdx, ctx.Project, ctx.ThreadID, overhead, totalTokens, ctx.UserQuery, ctx.Retry)
+		s.runStubCycle(messages, req, ctx.ReqIdx, ctx.Project, ctx.ProjectDir, ctx.ThreadID, overhead, totalTokens, ctx.UserQuery, ctx.Retry)
 	}
 
 	messages, _ = req["messages"].([]any)
@@ -340,8 +344,8 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 		// Re-enable when injection-state-per-message store is implemented.
 
 		if isFeatureEnabled(&s.cfg, model, "rules_reminder") {
-			if rulesBlock := s.rulesInject(ctx.ThreadID, totalTokens, ctx.Project); rulesBlock != "" {
-				req["messages"] = injectAssociativeContext(messages, s.formatRulesReminder(rulesBlock, ctx.Project, true), s.cfg.SawtoothEnabled)
+			if rulesBlock := s.rulesInject(ctx.ThreadID, totalTokens, daemonProject(ctx.Project, ctx.ProjectDir)); rulesBlock != "" {
+				req["messages"] = injectAssociativeContext(messages, s.formatRulesReminder(rulesBlock, daemonProject(ctx.Project, ctx.ProjectDir), true), s.cfg.SawtoothEnabled)
 				messages, _ = req["messages"].([]any)
 				s.logger.Printf("%s[req %d %s tid=%s] rules reminder injected%s", colorBlue, ctx.ReqIdx, ctx.Project, ctx.ThreadID, colorReset)
 			}
@@ -357,7 +361,7 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 		}
 
 		if isFeatureEnabled(&s.cfg, model, "skill_eval") && ctx.ThreadID != "" && ctx.Project != "" && isUserInputTurn(messages) && s.skillTracker != nil {
-			s.syncSkillActivations(messages, ctx.Project, ctx.ThreadID)
+			s.syncSkillActivations(messages, daemonProject(ctx.Project, ctx.ProjectDir), ctx.ThreadID)
 			skillEval := buildSkillEvalBlock(s.cfg.SkillEvalInject)
 			if skillEval != "" {
 				req["messages"] = injectAssociativeContext(messages, skillEval, s.cfg.SawtoothEnabled)
@@ -376,7 +380,7 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 				messages, _ = req["messages"].([]any)
 			}
 
-			dr := s.checkDialogMessages(ctx.ThreadID, ctx.Project)
+			dr := s.checkDialogMessages(ctx.ThreadID, daemonProject(ctx.Project, ctx.ProjectDir))
 			if dr.Extra != "" {
 				if ctx.SessionID != "" {
 					dr.Extra = fmt.Sprintf("DEINE_SESSION_ID: %s\n", ctx.SessionID) + dr.Extra
@@ -518,10 +522,10 @@ func (s *Server) runOpenAIInlineReflection(ctx *openAIRequestContext, messages [
 	}
 
 	for _, topic := range signals.GapTopics {
-		go s.queryDaemon("track_gap", map[string]any{"topic": topic, "project": ctx.Project})
+		go s.queryDaemon("track_gap", map[string]any{"topic": topic, "project": daemonProject(ctx.Project, ctx.ProjectDir)})
 	}
 	for _, desc := range signals.Contradictions {
-		go s.queryDaemon("flag_contradiction", map[string]any{"description": desc, "project": ctx.Project, "thread_id": ctx.ThreadID})
+		go s.queryDaemon("flag_contradiction", map[string]any{"description": desc, "project": daemonProject(ctx.Project, ctx.ProjectDir), "thread_id": ctx.ThreadID})
 	}
 
 	if s.logger != nil && (len(confirmedUsed) > 0 || len(signals.GapTopics) > 0 || len(signals.Contradictions) > 0 || len(noiseIDs) > 0) {
@@ -629,16 +633,16 @@ func (s *Server) annotateOpenAIMessageMetadata(req map[string]any, ctx *openAIRe
 					entry.ThinkReminder = s.buildThinkReminder(ctx.ThreadID, ctx.SessionID, true)
 				}
 				if isFeatureEnabled(&s.cfg, model, "skill_eval") && ctx.ThreadID != "" && ctx.Project != "" && isUserInputTurn(messages) && s.skillTracker != nil {
-					s.syncSkillActivations(messages, ctx.Project, ctx.ThreadID)
+					s.syncSkillActivations(messages, daemonProject(ctx.Project, ctx.ProjectDir), ctx.ThreadID)
 					entry.SkillEval = buildSkillEvalBlock(s.cfg.SkillEvalInject)
 				}
 				if isFeatureEnabled(&s.cfg, model, "rules_reminder") {
-					if rulesBlock := s.rulesInject(ctx.ThreadID, totalTokens, ctx.Project); rulesBlock != "" {
-						entry.Rules = s.formatRulesReminder(rulesBlock, ctx.Project, true)
+					if rulesBlock := s.rulesInject(ctx.ThreadID, totalTokens, daemonProject(ctx.Project, ctx.ProjectDir)); rulesBlock != "" {
+						entry.Rules = s.formatRulesReminder(rulesBlock, daemonProject(ctx.Project, ctx.ProjectDir), true)
 					}
 				}
 				if isFeatureEnabled(&s.cfg, model, "assoc_context") && ctx.UserQuery != "" {
-					if ac := s.findAssociativeContextFor(ctx.UserQuery, ctx.Project, ctx.ThreadID, messages); ac != "" {
+					if ac := s.findAssociativeContextFor(ctx.UserQuery, daemonProject(ctx.Project, ctx.ProjectDir), ctx.ThreadID, messages); ac != "" {
 						entry.AssocContext = ac
 					}
 				}
@@ -656,7 +660,7 @@ func (s *Server) annotateOpenAIMessageMetadata(req map[string]any, ctx *openAIRe
 				}
 
 				// Docs hint: inject docs-available reminder if interval fires
-				if docsHint := s.docsHintInject(ctx.ThreadID, totalTokens, ctx.Project); docsHint != "" {
+				if docsHint := s.docsHintInject(ctx.ThreadID, totalTokens, daemonProject(ctx.Project, ctx.ProjectDir)); docsHint != "" {
 					entry.DocsHint = docsHint
 					if s.logger != nil {
 						s.logger.Printf("%s[req %d %s tid=%s] docs hint stashed (cached via TimestampMeta)%s", colorBlue, ctx.ReqIdx, ctx.Project, ctx.ThreadID, colorReset)
