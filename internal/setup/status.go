@@ -38,7 +38,7 @@ func Status(dataDir string) error {
 		totalSessions := 0
 		for _, p := range projects {
 			totalSessions += p.SessionCount
-			fmt.Printf("  %-30s %4d sessions (last: %s)\n", p.ProjectShort, p.SessionCount, p.LastActive[:10])
+			fmt.Printf("  %-30s %4d sessions (last: %s)\n", p.ProjectShort, p.SessionCount, statusDatePrefix(p.LastActive))
 		}
 		fmt.Printf("\nTotal sessions: %d\n", totalSessions)
 		for _, line := range formatSessionSourceCounts(sessionSources) {
@@ -156,6 +156,13 @@ func Status(dataDir string) error {
 	printSize("  Archive", filepath.Join(dataDir, "archive"))
 
 	return nil
+}
+
+func statusDatePrefix(value string) string {
+	if len(value) <= 10 {
+		return value
+	}
+	return value[:10]
 }
 
 func printSize(label, path string) {
