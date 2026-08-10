@@ -27,7 +27,7 @@ func maybeDumpRequestBody(dataDir string, reqIdx int, body []byte) {
 }
 
 // forwardWithAnnotation forwards the request and extracts annotations from the SSE response.
-func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Request, body []byte, reqIdx int, toolUseIDs []string, proj string, threadID string, msgCount int, estimatedTokens ...int) {
+func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Request, body []byte, reqIdx int, toolUseIDs []string, proj string, projDir string, threadID string, msgCount int, estimatedTokens ...int) {
 	// Debug: dump request body to file for inspection (enable with YESMEM_PROXY_DEBUG=1)
 	maybeDumpRequestBody(s.cfg.DataDir, reqIdx, body)
 
@@ -100,7 +100,7 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 		// Non-SSE response — track stream start/stop
 		isSub := isSubagentFromBody(body)
 		if threadID != "" {
-			go s.trackStreamState(threadID, true, 0, isSub, proj)
+			go s.trackStreamState(threadID, true, 0, isSub, projDir)
 		}
 
 		// Read body to extract usage, then write to client
@@ -108,7 +108,7 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 		if readErr != nil {
 			s.logger.Printf("[req %d] read error: %v", reqIdx, readErr)
 			if threadID != "" {
-				go s.trackStreamState(threadID, false, 0, isSub, proj)
+				go s.trackStreamState(threadID, false, 0, isSub, projDir)
 			}
 			return
 		}
@@ -119,7 +119,7 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 		}
 
 		if threadID != "" {
-			go s.trackStreamState(threadID, false, int64(len(bodyBytes)), isSub, proj)
+			go s.trackStreamState(threadID, false, int64(len(bodyBytes)), isSub, projDir)
 		}
 
 		// Parse usage from JSON response
@@ -143,7 +143,7 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 			if threadID != "" {
 				go s.queryDaemon("_track_usage", map[string]any{
 					"thread_id":          threadID,
-					"project":            proj,
+					"project":            projDir,
 					"input_tokens":       jsonResp.Usage.InputTokens,
 					"output_tokens":      jsonResp.Usage.OutputTokens,
 					"cache_read_tokens":  jsonResp.Usage.CacheReadInputTokens,
@@ -222,7 +222,7 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 				// Stream tracking: notify daemon on first SSE event
 				if !streamStarted && threadID != "" {
 					streamStarted = true
-					go s.trackStreamState(threadID, true, 0, isSub, proj)
+					go s.trackStreamState(threadID, true, 0, isSub, projDir)
 				}
 				data := bytes.TrimPrefix(trimmedLine, []byte("data: "))
 				data = bytes.TrimSpace(data)
@@ -256,7 +256,7 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 						if _, writeErr := w.Write(deflatedLine); writeErr != nil {
 							s.logger.Printf("[req %d] write error: %v", reqIdx, writeErr)
 							if threadID != "" {
-								go s.trackStreamState(threadID, false, totalClientBytes, isSub, proj)
+								go s.trackStreamState(threadID, false, totalClientBytes, isSub, projDir)
 							}
 							return
 						}
@@ -273,7 +273,7 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 			if _, writeErr := w.Write(line); writeErr != nil {
 				s.logger.Printf("[req %d] write error: %v", reqIdx, writeErr)
 				if threadID != "" {
-					go s.trackStreamState(threadID, false, totalClientBytes, isSub, proj)
+					go s.trackStreamState(threadID, false, totalClientBytes, isSub, projDir)
 				}
 				return
 			}
@@ -290,7 +290,7 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 
 	// Notify daemon that stream ended
 	if threadID != "" {
-		go s.trackStreamState(threadID, false, totalClientBytes, isSub, proj)
+		go s.trackStreamState(threadID, false, totalClientBytes, isSub, projDir)
 	}
 
 	// Task #3: Log real usage
@@ -310,7 +310,7 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 		if threadID != "" {
 			go s.queryDaemon("_track_usage", map[string]any{
 				"thread_id":          threadID,
-				"project":            proj,
+				"project":            projDir,
 				"input_tokens":       usage.TotalInputTokens(),
 				"output_tokens":      usage.OutputTokens,
 				"cache_read_tokens":  usage.CacheReadInputTokens,
@@ -539,7 +539,7 @@ func (s *Server) evictOldAnnotations() {
 
 // trackStreamState notifies the daemon about SSE stream state changes.
 // Must be called via goroutine (fire-and-forget) so it never blocks the SSE forward loop.
-func (s *Server) trackStreamState(threadID string, active bool, bytesSoFar int64, isSubagent bool, project string) {
+func (s *Server) trackStreamState(threadID string, active bool, bytesSoFar int64, isSubagent bool, projectDir string) {
 	if s.cfg.DataDir == "" {
 		return
 	}
@@ -548,7 +548,7 @@ func (s *Server) trackStreamState(threadID string, active bool, bytesSoFar int64
 		"stream_active": active,
 		"bytes_so_far":  bytesSoFar,
 		"is_subagent":   isSubagent,
-		"project":       project,
+		"project":       projectDir,
 	})
 }
 

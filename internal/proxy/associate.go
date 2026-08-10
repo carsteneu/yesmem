@@ -33,7 +33,10 @@ const associativeProjectBoost = 2.0   // bonus for matching project (0-100 scale
 func (s *Server) findAssociativeContextFor(userQuery, currentProject, threadID string, messages []any) string {
 	searchQuery := userQuery
 
-	// Resolve project name once (handles renames like "memory" → "yesmem")
+	// Resolve project name once (handles renames like "memory" → "yesmem").
+	// projectDir keeps the absolute path: the resolve below replaces
+	// currentProject with the short form, which is ambiguous on the wire.
+	projectDir := currentProject
 	if currentProject != "" {
 		if resolved, err := s.queryDaemon("resolve_project", map[string]any{"project_dir": currentProject}); err == nil && resolved != nil {
 			var rp struct{ ProjectShort string `json:"project_short"` }
@@ -70,7 +73,7 @@ func (s *Server) findAssociativeContextFor(userQuery, currentProject, threadID s
 		"skip_recent": float64(3),
 	}
 	if currentProject != "" {
-		params["project"] = currentProject
+		params["project"] = daemonProject(currentProject, projectDir)
 	}
 
 	result, err := s.queryDaemon("hybrid_search", params)

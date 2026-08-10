@@ -204,6 +204,46 @@ func extractProjectName(req map[string]any) string {
 	return ""
 }
 
+// extractProjectPath returns the absolute project path for daemon RPCs.
+// Daemon-side resolution treats a full path as deterministic, while a bare
+// basename is ambiguous as soon as two indexed projects share it — the daemon
+// then refuses to resolve and the call comes back empty.
+// Use this for anything sent over the wire; extractProjectName stays the
+// short display form for logs and the wiki hint in prompt_rewrite.
+func extractProjectPath(req map[string]any) string {
+	return extractWorkingDirectory(req)
+}
+
+// relativeProjectParam reports a daemon RPC that still carries a bare
+// basename as its project param. Such calls resolve only by luck, so the
+// caller logs a warning instead of letting the ambiguity fail silently.
+func relativeProjectParam(params map[string]any) (string, bool) {
+	v, ok := params["project"].(string)
+	if !ok || v == "" {
+		return v, false
+	}
+	if strings.HasPrefix(v, "/") {
+		return v, false
+	}
+	// Sentinels like "__global__" stand in for "no project" and are resolved
+	// by name on purpose — they are not paths and never ambiguous.
+	if strings.HasPrefix(v, "__") {
+		return v, false
+	}
+	return v, true
+}
+
+// daemonProject picks the project identifier to send to the daemon: the
+// absolute path when known, else the short name. Falling back keeps behaviour
+// unchanged for requests that carry no working directory — those were never
+// resolvable by path anyway.
+func daemonProject(short, dir string) string {
+	if dir != "" {
+		return dir
+	}
+	return short
+}
+
 // extractWorkingDirectory extracts the full working directory path from the request.
 // Supports two formats:
 // - Claude Code: "Primary working directory: /path/to/project" in system prompt
