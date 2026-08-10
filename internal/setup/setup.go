@@ -1645,6 +1645,22 @@ func setupSystemd(home, binaryPath string) error {
 	serviceDir := filepath.Join(home, ".config", "systemd", "user")
 	os.MkdirAll(serviceDir, 0755)
 
+	// Agent terminals (gnome-terminal, etc.) need the graphical session env to
+	// render a window. systemd-user services do not inherit it, so capture at
+	// setup time and bake into the unit.
+	display := os.Getenv("DISPLAY")
+	if display == "" {
+		display = ":0"
+	}
+	xauth := os.Getenv("XAUTHORITY")
+	if xauth == "" {
+		xauth = filepath.Join(home, ".Xauthority")
+	}
+	dbus := os.Getenv("DBUS_SESSION_BUS_ADDRESS")
+	if dbus == "" {
+		dbus = fmt.Sprintf("unix:path=/run/user/%d/bus", os.Getuid())
+	}
+
 	// Daemon unit
 	daemonUnit := fmt.Sprintf(`[Unit]
 Description=YesMem — Long-term memory for coding agents
@@ -1656,10 +1672,13 @@ Type=simple
 ExecStart=%s daemon --replace
 Restart=always
 RestartSec=10
+Environment="DISPLAY=%s"
+Environment="XAUTHORITY=%s"
+Environment="DBUS_SESSION_BUS_ADDRESS=%s"
 
 [Install]
 WantedBy=default.target
-`, binaryPath)
+`, binaryPath, display, xauth, dbus)
 	if err := os.WriteFile(filepath.Join(serviceDir, "yesmem.service"), []byte(daemonUnit), 0644); err != nil {
 		return err
 	}
