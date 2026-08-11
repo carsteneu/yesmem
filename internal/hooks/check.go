@@ -163,7 +163,14 @@ func RunCheck(dataDir string) {
 		checkSaveCount(store, hook.ToolName, hashInput(inputStr))
 	}
 
-	gotchas, err := store.GetActiveLearnings("gotcha", "", "", "", 0)
+	// Derive canonical project from cwd for gotcha scoping (worktree-aware).
+	// The code-nav block below keeps using projectFromCWD (basename) unchanged.
+	gotchaProject := ""
+	if hook.CWD != "" {
+		gotchaProject = models.CanonicalProject(hook.CWD)
+	}
+
+	gotchas, err := store.GetActiveLearnings("gotcha", gotchaProject, "", "", 0)
 	if err != nil || len(gotchas) == 0 {
 		emitReminder("")
 		return
@@ -274,7 +281,7 @@ func RunCheck(dataDir string) {
 			effScore = 2.0
 		}
 		mg := matchedGotcha{learning: g, score: score, effScore: effScore}
-		if project != "" && models.ProjectMatches(g.Project, project) {
+		if gotchaProject != "" && models.ProjectMatches(g.CanonicalProject, gotchaProject) {
 			projectMatches = append(projectMatches, mg)
 		} else {
 			globalMatches = append(globalMatches, mg)
