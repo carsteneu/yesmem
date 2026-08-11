@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -716,5 +717,157 @@ func TestIsRelevantForTool(t *testing.T) {
 					tt.actions, tt.toolName, got, tt.want)
 			}
 		})
+	}
+}
+
+// runCheckWithHook executes RunCheck with a HookInput payload on stdin and
+// returns everything written to stdout (the hook's JSON response).
+func runCheckWithHook(t *testing.T, dataDir string, hook HookInput) string {
+	t.Helper()
+	payload, err := json.Marshal(hook)
+	if err != nil {
+		t.Fatalf("marshal hook: %v", err)
+	}
+
+	oldStdin, oldStdout := os.Stdin, os.Stdout
+	t.Cleanup(func() { os.Stdin, os.Stdout = oldStdin, oldStdout })
+
+	inR, inW, _ := os.Pipe()
+	inW.Write(payload)
+	inW.Close()
+	os.Stdin = inR
+
+	outR, outW, _ := os.Pipe()
+	os.Stdout = outW
+
+	RunCheck(dataDir)
+
+	outW.Close()
+	os.Stdout = oldStdout
+	var buf bytes.Buffer
+	buf.ReadFrom(outR)
+	return buf.String()
+}
+
+func insertProjectGotcha(t *testing.T, store *storage.Store, content, project, canonical string) {
+	t.Helper()
+	_, err := store.InsertLearning(&models.Learning{
+		Category:         "gotcha",
+		Content:          content,
+		Project:          project,
+		CanonicalProject: canonical,
+		Confidence:       1.0,
+		CreatedAt:        time.Now(),
+		ModelUsed:        "test",
+	})
+	if err != nil {
+		t.Fatalf("insert gotcha %q: %v", content, err)
+	}
+}
+
+// insertNullProjectRow mimics production data: gotchas are stored with
+// project=NULL and only carry a canonical_project short name. The v0.61
+// migration (UPDATE learnings SET canonical_project = project) runs on every
+// Open; with a NULL project row it fails atomically (NOT NULL constraint) and
+// is ignored, so short canonical names survive. Without such a row the
+// migration would overwrite canonical_project with the full project path on
+// the reopen RunCheck performs, which does not happen in production.
+func insertNullProjectRow(t *testing.T, store *storage.Store) {
+	t.Helper()
+	_, err := store.DB().Exec(
+		`INSERT INTO learnings (category, content, created_at, model_used) VALUES ('gotcha', 'sentinel no-match', ?, 'test')`,
+		time.Now().UTC().Format(time.RFC3339),
+	)
+	if err != nil {
+		t.Fatalf("insert null-project row: %v", err)
+	}
+}
+
+// TestRunCheckScopesGotchasToProjectCWD verifies that the gotcha query is
+// filtered to the hook payload's cwd project. Before the fix, the project
+// filter was empty, so gotchas from OTHER projects leaked into every session.
+func TestRunCheckScopesGotchasToProjectCWD(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.Open(filepath.Join(dir, "yesmem.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	insertProjectGotcha(t, store, "embedding tests flaky in projectA", "/home/user/projectA", "projectA")
+	insertProjectGotcha(t, store, "sandbox blocked in projectB", "/home/user/projectB", "projectB")
+	insertNullProjectRow(t, store)
+	store.Close()
+
+	t.Run("foreign project gotcha hidden", func(t *testing.T) {
+		// Command matches ONLY the projectB gotcha. With cwd=projectA it must
+		// not appear: before the fix the empty filter loaded it and it became
+		// the top match (full text in output).
+		out := runCheckWithHook(t, dir, HookInput{
+			ToolName:  "Bash",
+			CWD:       "/home/user/projectA",
+			ToolInput: json.RawMessage(`{"command":"go test ./sandbox"}`),
+		})
+		if strings.Contains(out, "sandbox blocked") {
+			t.Errorf("projectB gotcha leaked into projectA session, got: %s", out)
+		}
+	})
+
+	t.Run("own project gotcha visible", func(t *testing.T) {
+		out := runCheckWithHook(t, dir, HookInput{
+			ToolName:  "Bash",
+			CWD:       "/home/user/projectA",
+			ToolInput: json.RawMessage(`{"command":"go test ./embedding"}`),
+		})
+		if !strings.Contains(out, "projectA") {
+			t.Errorf("expected projectA gotcha in output for cwd=projectA, got: %s", out)
+		}
+	})
+}
+
+// TestRunCheckWorktreeCWDSeesCanonicalProject verifies that a session inside
+// a .worktrees/ directory still sees gotchas learned in that worktree. The
+// storage layer stores worktree learnings under the canonical PARENT project,
+// so the hook must derive the canonical project (not the basename) from cwd.
+func TestRunCheckWorktreeCWDSeesCanonicalProject(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.Open(filepath.Join(dir, "yesmem.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	insertProjectGotcha(t, store, "embedding worktree gotcha", "/home/chief/memory/yesmem/.worktrees/fix-hook-check-cwd", "yesmem")
+	insertNullProjectRow(t, store)
+	store.Close()
+
+	out := runCheckWithHook(t, dir, HookInput{
+		ToolName:  "Bash",
+		CWD:       "/home/chief/memory/yesmem/.worktrees/fix-hook-check-cwd",
+		ToolInput: json.RawMessage(`{"command":"go test ./embedding"}`),
+	})
+
+	if !strings.Contains(out, "worktree gotcha") {
+		t.Errorf("worktree learning not visible from its own cwd, got: %s", out)
+	}
+}
+
+// TestRunCheckCWDKeepsGlobalGotchas verifies that project-scoped filtering
+// still surfaces global gotchas (canonical_project = ''), which are
+// intentionally project-agnostic.
+func TestRunCheckCWDKeepsGlobalGotchas(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.Open(filepath.Join(dir, "yesmem.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	insertProjectGotcha(t, store, "embedding global rule", "", "")
+	insertNullProjectRow(t, store)
+	store.Close()
+
+	out := runCheckWithHook(t, dir, HookInput{
+		ToolName:  "Bash",
+		CWD:       "/home/user/projectA",
+		ToolInput: json.RawMessage(`{"command":"go test ./embedding"}`),
+	})
+
+	if !strings.Contains(out, "global rule") {
+		t.Errorf("expected global gotcha in output even with project cwd, got: %s", out)
 	}
 }
