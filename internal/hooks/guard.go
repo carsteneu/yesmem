@@ -59,7 +59,8 @@ type GuardDecision struct {
 
 // formatGuardOutput converts a GuardDecision into the Claude Code PreToolUse
 // hook output schema so SUGGEST/BLOCK reach the model as system-reminders.
-// PASS and ill-formed decisions return "" (silent — no stdout, exit 0).
+// PASS and ill-formed decisions return "" (silent — no stdout, exit 0),
+// which Claude Code treats as "no decision; normal permission flow applies".
 func formatGuardOutput(d GuardDecision) string {
 	switch d.Decision {
 	case "SUGGEST":
@@ -80,11 +81,15 @@ func formatGuardOutput(d GuardDecision) string {
 			reason = "blocked by RULES.md"
 		}
 		out := map[string]any{
+			// Legacy decision field retained for older Claude Code versions;
+			// modern versions prefer hookSpecificOutput.permissionDecision.
 			"decision": "block",
 			"reason":   reason,
 			"hookSpecificOutput": map[string]any{
-				"hookEventName":     "PreToolUse",
-				"additionalContext": reason,
+				"hookEventName":            "PreToolUse",
+				"permissionDecision":       "deny",
+				"permissionDecisionReason": reason,
+				"additionalContext":        reason,
 			},
 		}
 		b, _ := json.Marshal(out)
@@ -136,17 +141,17 @@ var (
 
 // RunGuard reads PreToolUse JSON from stdin, evaluates against RULES.md
 // via DeepSeek, and outputs a GuardDecision on stdout.
-// Exit 2 for BLOCK, Exit 0 for SUGGEST/PASS.
+// Always exits 0: BLOCK is signaled via hookSpecificOutput.permissionDecision
+// ("deny"), SUGGEST via additionalContext, PASS via silence (no stdout).
+// An exit 2 would make Claude Code ignore the JSON entirely.
 func RunGuard(dataDir string) {
 	input, err := io.ReadAll(os.Stdin)
 	if err != nil {
-		fmt.Println(`{"decision":"PASS"}`)
 		return
 	}
 
 	var hook HookInput
 	if json.Unmarshal(input, &hook) != nil {
-		fmt.Println(`{"decision":"PASS"}`)
 		return
 	}
 
@@ -155,7 +160,6 @@ func RunGuard(dataDir string) {
 	case "Bash", "REPL", "Edit", "Write":
 		// continue
 	default:
-		fmt.Println(`{"decision":"PASS"}`)
 		return
 	}
 
@@ -165,7 +169,6 @@ func RunGuard(dataDir string) {
 	// Resolve guard config
 	cfg, err := resolveGuardConfig(dataDir)
 	if err != nil || cfg.APIKey == "" {
-		fmt.Println(`{"decision":"PASS"}`)
 		return
 	}
 
@@ -173,7 +176,6 @@ func RunGuard(dataDir string) {
 	rulesPath := filepath.Join(dataDir, "..", "..", "memory", "yesmem", "RULES.md")
 	rules := loadRulesFile(rulesPath, hook.CWD)
 	if rules == "" {
-		fmt.Println(`{"decision":"PASS"}`)
 		return
 	}
 
@@ -187,6 +189,8 @@ func RunGuard(dataDir string) {
 	// entirely and BLOCK before any model roundtrip. These patterns describe
 	// commands no plausible workflow needs (rm -rf /, force-push to main,
 	// DROP TABLE, etc.) so a false positive is cheaper than a missed block.
+	// Blocking happens via the deny JSON on exit 0 — an exit 2 would cause
+	// Claude Code to ignore the JSON entirely.
 	if hook.ToolName == "Bash" || hook.ToolName == "REPL" {
 		if patName := matchDestructivePattern(toolDesc); patName != "" {
 			decision := GuardDecision{
@@ -196,7 +200,7 @@ func RunGuard(dataDir string) {
 			if out := formatGuardOutput(decision); out != "" {
 				fmt.Println(out)
 			}
-			os.Exit(2)
+			return
 		}
 	}
 
@@ -223,10 +227,6 @@ func RunGuard(dataDir string) {
 
 	if hookOut := formatGuardOutput(decision); hookOut != "" {
 		fmt.Println(hookOut)
-	}
-
-	if decision.Decision == "BLOCK" {
-		os.Exit(2)
 	}
 }
 
@@ -353,7 +353,7 @@ func resolveOpenCodeConfig(dataDir string) (*guardConfig, error) {
 
 	if apiKey == "" && fallbackURL != "" {
 		apiURL = fallbackURL
-		// Note: RunGuard gates on apiKey == "" and returns PASS, so this
+		// Note: RunGuard gates on apiKey == "" and returns silently, so this
 		// fallback URL is not currently used. It's preserved for future
 		// scenarios where local/unauthenticated models are supported.
 	}
