@@ -480,3 +480,54 @@ func TestTranslateAnthropicUserMsg_ImageURLSource(t *testing.T) {
 		t.Errorf("url = %v, want https://example.com/logo.png", url["url"])
 	}
 }
+
+// Vision (full pipeline): a trailing user message with multimodal array content
+// (text + image blocks) must survive the FULL translateAnthropicToOpenAI, not
+// just translateAnthropicUserMsg. The trailing-empty-message cleanup loop used
+// a string type assertion on content — when content is an array (as for images)
+// the assertion fails, content is treated as "" , and the message is dropped.
+// This is the bug that deleted images even after the image-block translation
+// was fixed.
+func TestTranslateAnthropicToOpenAI_PreservesTrailingImageMessage(t *testing.T) {
+	req := map[string]any{
+		"model": "deepseek-v4-pro",
+		"messages": []any{
+			map[string]any{
+				"role": "user",
+				"content": []any{
+					map[string]any{"type": "text", "text": "was ist das?"},
+					map[string]any{
+						"type": "image",
+						"source": map[string]any{
+							"type":       "base64",
+							"media_type": "image/png",
+							"data":       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	out, err := translateAnthropicToOpenAI(req)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	msgs, _ := out["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("messages = %d, want 1 (trailing image message was dropped by cleanup)", len(msgs))
+	}
+	// The kept message must still carry the image_url part.
+	m0 := msgs[0].(map[string]any)
+	parts, ok := m0["content"].([]any)
+	if !ok {
+		t.Fatalf("content type = %T, want []any (image message dropped)", m0["content"])
+	}
+	for _, p := range parts {
+		if bm, ok := p.(map[string]any); ok && bm["type"] == "image_url" {
+			return // image survived
+		}
+	}
+	t.Errorf("no image_url part survived in %+v", parts)
+}
+

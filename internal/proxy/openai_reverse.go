@@ -80,12 +80,16 @@ func translateAnthropicToOpenAI(anthReq map[string]any) (map[string]any, error) 
 	oai["messages"] = result
 
 	// Drop trailing empty user messages (artifacts from tool_result container split).
+	// Only a literal empty string is droppable. Non-string content (e.g. multimodal
+	// text+image arrays) is never empty — a failed string assertion must not drop
+	// the user's images.
 	for len(result) > 0 {
 		last, ok := result[len(result)-1].(map[string]any)
 		if !ok || last["role"] != "user" {
 			break
 		}
-		if content, _ := last["content"].(string); content != "" {
+		content, isStr := last["content"].(string)
+		if !isStr || content != "" {
 			break
 		}
 		result = result[:len(result)-1]
