@@ -16,6 +16,47 @@ const fileAttempts = new Map<string, {count: number, firstSeen: number}>();
 const FILE_ATTEMPT_TTL_MS = 3600000; // 1h
 const MAX_DISMISS = 5;
 
+// Non-code basenames (no extension) that should never trigger code_nav blocking.
+const NON_CODE_BASENAMES = new Set([
+  "license", "license.txt", "license.md",
+  "copying", "copying.txt", "copying.less",
+  "notice", "notice.txt",
+  "readme", "readme.txt", "readme.md",
+  "changelog", "changelog.md", "changelog.txt",
+  "authors", "contributors", "contributors.txt",
+]);
+
+// Basename prefixes: Dockerfile, Makefile — accept variants like
+// Dockerfile.dev, Dockerfile.prod, GNUmakefile.
+const NON_CODE_BASENAME_PREFIXES = ["dockerfile", "makefile", "gnu"];
+
+// Non-code extensions that should never trigger code_nav blocking.
+const NON_CODE_EXTENSIONS = new Set([
+  ".txt", ".rst", ".md", ".log", ".lock", ".sum",
+  ".license", ".notice",
+]);
+
+// isNonCodeFile returns true for files that are documentation, licensing, or
+// build metadata — not source code. Exported for test coverage.
+export function isNonCodeFile(rel: string): boolean {
+  const lower = rel.toLowerCase();
+  const base = lower.split("/").pop() || lower;
+  // .git* metadata (existing whitelist)
+  if (base.match(/^\.git/)) return true;
+  // .md (existing whitelist — documentation)
+  if (base.endsWith(".md")) return true;
+  // Basename match: LICENSE, README, Dockerfile, Makefile, etc.
+  if (NON_CODE_BASENAMES.has(base)) return true;
+  // Prefix match: Dockerfile, Dockerfile.dev, Makefile, GNUmakefile
+  for (const p of NON_CODE_BASENAME_PREFIXES) {
+    if (base === p || base.startsWith(p + ".")) return true;
+  }
+  // Extension match: .txt, .rst, .log, .lock
+  const dot = base.lastIndexOf(".");
+  if (dot > 0 && NON_CODE_EXTENSIONS.has(base.slice(dot))) return true;
+  return false;
+}
+
 function extractFileArgs(command: string): string[] {
   const parts = command.split(/\s+/);
   const files: string[] = [];
@@ -54,13 +95,15 @@ function relativePath(f: string, projectDir: string): string {
       project: directory,
     });
     return !!(fr.ok && fr.result?.text && !fr.result.text.includes("No source files found"));
-  } else {
-    const fr = await rpc.call("get_file_symbols", {
-      file: file,
-      project: directory,
-    });
-    return !!(fr.ok && fr.result?.text?.includes("symbol"));
-  }
+    } else {
+      const fr = await rpc.call("get_file_symbols", {
+        file: file,
+        project: directory,
+      });
+      // Mirror the get_file_index pattern: error string is "No symbols found in X"
+      // which contains "symbol", so substring-include would false-positive.
+      return !!(fr.ok && fr.result?.text && !fr.result.text.includes("No symbols found"));
+    }
 }
 
 export function codeNavHook(rpc: YesMemRPC, pluginDirectory: string): Record<string, any> {
@@ -98,19 +141,18 @@ export function codeNavHook(rpc: YesMemRPC, pluginDirectory: string): Record<str
           const directory = (input.session as any)?.directory || pluginDirectory || process.env.PWD || "";
           if (!await ensureIndexed(directory)) { dbgLog("code_nav", `SKIP-NOT-INDEXED ${tool}`); return; }
 
-            let fileInGraph = false;
-            for (const f of files) {
-              const rel = relativePath(f, directory).replace(/\/+$/, "");
-              const isDir = f.endsWith("/") || !f.includes(".");
-                // .md files are documentation, not code — let them through
-                if (rel.endsWith(".md")) continue;
-                // .git* files are git metadata, not source code
-                if (rel.match(/(^|\/)(\.gitignore|\.gitattributes|\.gitmodules|\.gitconfig)$/)) continue;
-              if (await checkFileInGraph(rel, directory, isDir, rpc)) {
-              fileInGraph = true;
-              break;
+              let fileInGraph = false;
+              for (const f of files) {
+                const rel = relativePath(f, directory).replace(/\/+$/, "");
+                const isDir = f.endsWith("/") || !f.includes(".");
+                  // Non-code files (LICENSE, README, Dockerfile, .md, .txt, etc.)
+                  // never benefit from code-tools — skip them entirely.
+                  if (isNonCodeFile(rel)) continue;
+                if (await checkFileInGraph(rel, directory, isDir, rpc)) {
+                fileInGraph = true;
+                break;
+              }
             }
-          }
           if (!fileInGraph) return;
 
           // 2-strike with 1h TTL: first block, second allow
@@ -135,15 +177,14 @@ export function codeNavHook(rpc: YesMemRPC, pluginDirectory: string): Record<str
             const directory = (input.session as any)?.directory || pluginDirectory || process.env.PWD || "";
             if (!await ensureIndexed(directory)) { dbgLog("code_nav", `SKIP-NOT-INDEXED ${tool}`); return; }
 
-            const args = output.args || {};
-            const target = (args.filePath || args.file_path || "") as string;
-            if (!target) return;
-            const rel = relativePath(target, directory).replace(/\/+$/, "");
+              const args = output.args || {};
+              const target = (args.filePath || args.file_path || "") as string;
+              if (!target) return;
+              const rel = relativePath(target, directory).replace(/\/+$/, "");
 
-                // .md files are documentation, not code — let them through even if indexed
-                if (rel.endsWith(".md")) return;
-                // .git* files are git metadata, not source code
-                if (rel.match(/(^|\/)(\.gitignore|\.gitattributes|\.gitmodules|\.gitconfig)$/)) return;
+              // Non-code files (LICENSE, README, Dockerfile, .md, .txt, etc.)
+              // never benefit from code-tools — let them through.
+              if (isNonCodeFile(rel)) return;
 
             if (!await checkFileInGraph(rel, directory, false, rpc)) return;
 

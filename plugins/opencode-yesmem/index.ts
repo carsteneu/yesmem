@@ -20,7 +20,7 @@ import { YesMemRPC } from "./rpc";
 export const YesMemPlugin = async (ctx: any) => {
   const rpc = new YesMemRPC();
   const directory = ctx.directory || process.env.PWD || "";
-          const V = 16; // bump to bust Bun module cache
+          const V = 17; // bump to bust Bun module cache
 
           // v16: keep helper exports out of the plugin entrypoint for legacy OpenCode loaders
           // v15: inject authoritative per-call OpenCode session and cwd context into yesmem tools
