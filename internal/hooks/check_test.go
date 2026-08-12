@@ -829,17 +829,22 @@ func TestRunCheckScopesGotchasToProjectCWD(t *testing.T) {
 // so the hook must derive the canonical project (not the basename) from cwd.
 func TestRunCheckWorktreeCWDSeesCanonicalProject(t *testing.T) {
 	dir := t.TempDir()
+	// Synthetic worktree path under a temp parent. CanonicalProject derives
+	// the parent directory's basename from any path containing "/.worktrees/".
+	parent := filepath.Join(dir, "testproj")
+	worktreeCwd := filepath.Join(parent, ".worktrees", "fix-hook-check-cwd")
+
 	store, err := storage.Open(filepath.Join(dir, "yesmem.db"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	insertProjectGotcha(t, store, "embedding worktree gotcha", "/home/chief/memory/yesmem/.worktrees/fix-hook-check-cwd", "yesmem")
+	insertProjectGotcha(t, store, "embedding worktree gotcha", worktreeCwd, "testproj")
 	insertNullProjectRow(t, store)
 	store.Close()
 
 	out := runCheckWithHook(t, dir, HookInput{
 		ToolName:  "Bash",
-		CWD:       "/home/chief/memory/yesmem/.worktrees/fix-hook-check-cwd",
+		CWD:       worktreeCwd,
 		ToolInput: json.RawMessage(`{"command":"go test ./embedding"}`),
 	})
 
