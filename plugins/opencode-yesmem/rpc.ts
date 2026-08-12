@@ -13,7 +13,12 @@ export class YesMemRPC {
   async call(method: string, params?: Record<string, any>): Promise<RPCResponse> {
     const payload = JSON.stringify({ method, params: params || {} });
     try {
-      const cmd = `echo ${$.escape(payload)} | nc -U -w 20 ${$.escape(this.socketPath)}`;
+      // -N: half-close after stdin EOF → daemon's decoder.Decode returns EOF →
+      // handleConn returns → conn.Close() → nc exits immediately.
+      // -w 5: bounded fallback for pathological daemon hangs.
+      // Without -N, nc waits the full -w timeout on every call because the
+      // daemon keeps the connection open for multiple request/response cycles.
+      const cmd = `echo ${$.escape(payload)} | nc -U -N -w 5 ${$.escape(this.socketPath)}`;
       const result = await $`sh -c ${cmd}`.quiet();
       if (result.exitCode !== 0) {
         return { ok: false, error: `nc exit ${result.exitCode}: ${result.stderr}` };
