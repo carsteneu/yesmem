@@ -168,6 +168,29 @@ func TestFormatRememberOmitsEmptyModel(t *testing.T) {
 	}
 }
 
+func TestFormatRememberSurfacesDedupMessage(t *testing.T) {
+	// A dedup response carries only id + message (no category/content).
+	// It must NOT be rendered as a fake "saved" box with empty fields
+	// (regression for the misleading success report, match #85112).
+	raw := []byte(`{
+		"id": 51530,
+		"message": "Already known (similarity 0.75). Bumped match_count for #51530.",
+		"deduplicated": true
+	}`)
+
+	got := formatRemember(raw)
+
+	if strings.Contains(got, "saved") {
+		t.Fatalf("formatRemember() must not claim a save for a dedup response, got:\n%s", got)
+	}
+	if !strings.Contains(got, "Already known (similarity 0.75)") {
+		t.Fatalf("formatRemember() should surface the dedup message, got:\n%s", got)
+	}
+	if !strings.Contains(got, "Bumped match_count for #51530") {
+		t.Fatalf("formatRemember() should surface the bumped match_count, got:\n%s", got)
+	}
+}
+
 func TestFormatPersonaGroupsByDimension(t *testing.T) {
 	input := json.RawMessage(`{
 		"traits": [

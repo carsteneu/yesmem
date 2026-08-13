@@ -305,9 +305,18 @@ func formatRemember(raw json.RawMessage) string {
 		SupersedesID int64  `json:"supersedes_id"`
 		Message      string `json:"message"`
 		Attribution  string `json:"attribution"`
+		Deduplicated bool   `json:"deduplicated"`
 	}
 	if err := json.Unmarshal(raw, &data); err != nil {
 		return string(raw)
+	}
+	if data.Deduplicated {
+		// Soft-dedup response carries only id + message — render the real
+		// reason instead of a misleading "saved" box (match #85112).
+		if data.Message != "" {
+			return data.Message
+		}
+		return fmt.Sprintf("Already known: learning #%d already covers this (%s).", data.ID, data.Category)
 	}
 	if data.ID == 0 {
 		// Error or unexpected format — fallback

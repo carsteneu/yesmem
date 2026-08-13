@@ -306,6 +306,54 @@ func TestHandleRememberDeduplicatesExactContent(t *testing.T) {
 	}
 }
 
+func TestHandleRememberDoesNotDedupSubsumedShortLearning(t *testing.T) {
+	h, s := mustHandler(t)
+
+	// Short learning whose tokens are fully contained in the longer text below.
+	// Regression for the containment-metric false positive: a long new text
+	// subsumes a short, topically-overlapping old learning's vocabulary and
+	// would be wrongly soft-deduplicated (match #85112, Aug 2026).
+	shortParams := map[string]any{
+		"text":     "daemon make deploy binary version proof signal killed",
+		"category": "gotcha",
+		"project":  "yesmem",
+	}
+	shortResp := h.Handle(Request{Method: "remember", Params: shortParams})
+	if shortResp.Error != "" {
+		t.Fatalf("short insert error: %s", shortResp.Error)
+	}
+	var shortResult map[string]any
+	json.Unmarshal(shortResp.Result, &shortResult)
+	shortID := shortResult["id"].(float64)
+
+	longText := "Deploy state only verifiable through the binary version string: make deploy can exit cleanly even when the deployed binary predates the target commit, and the daemon process then still runs the old code so the timeout symptom such as signal killed remains live. The correct proof that a fix is live is checking yesmem version output, confirming the daemon and proxy restarted, and verifying the proc exe inode is not stale."
+	longResp := h.Handle(Request{Method: "remember", Params: map[string]any{
+		"text":     longText,
+		"category": "gotcha",
+		"project":  "yesmem",
+	}})
+	if longResp.Error != "" {
+		t.Fatalf("long insert error: %s", longResp.Error)
+	}
+	var longResult map[string]any
+	json.Unmarshal(longResp.Result, &longResult)
+
+	if longResult["deduplicated"] == true {
+		t.Fatalf("long text wrongly deduplicated against shorter learning #%v", shortID)
+	}
+	longID, ok := longResult["id"].(float64)
+	if !ok || longID == shortID {
+		t.Fatalf("expected a new, distinct learning id, got %v (short was %v)", longResult["id"], shortID)
+	}
+	learning, err := s.GetLearning(int64(longID))
+	if err != nil {
+		t.Fatalf("get long learning: %v", err)
+	}
+	if learning.Content != longText {
+		t.Fatalf("long learning content not stored verbatim:\ngot  %q\nwant %q", learning.Content, longText)
+	}
+}
+
 func TestHandleRememberStoresEntitiesAndActions(t *testing.T) {
 	h, s := mustHandler(t)
 

@@ -133,12 +133,24 @@ func (h *Handler) handleRemember(params map[string]any) Response {
 		})
 	}
 
-	// Phase 1: fuzzy dedup via token similarity (Jaccard ≥ 0.5)
+	// Phase 1: fuzzy dedup via token similarity (Jaccard ≥ 0.5). TokenSimilarity
+	// is a containment metric (fraction of the SHORTER text's tokens found in the
+	// longer): for texts of very different length it wrongly reports "similar"
+	// when a long text merely subsumes a short one's vocabulary. Only compare
+	// against existing learnings of comparable size (match #85112).
 	if supersedesID == 0 {
 		existing, _ := h.store.GetActiveLearnings(category, project, "", "", 0)
 		newTokens := textutil.Tokenize(text)
 		for _, e := range existing {
-			sim := textutil.TokenSimilarity(newTokens, textutil.Tokenize(e.Content))
+			eTokens := textutil.Tokenize(e.Content)
+			if len(eTokens) == 0 || len(newTokens) == 0 {
+				continue
+			}
+			ratio := float64(len(eTokens)) / float64(len(newTokens))
+			if ratio < 0.5 || ratio > 2.0 {
+				continue
+			}
+			sim := textutil.TokenSimilarity(newTokens, eTokens)
 			if sim >= 0.5 {
 				h.store.IncrementMatchCounts([]int64{e.ID})
 				return jsonResponse(map[string]any{
