@@ -15,6 +15,7 @@ type ScriptMeta struct {
 	Body    string `json:"body"`
 	Schema  string `json:"schema,omitempty"`  // JSON schema (tool kind only)
 	Sandbox string `json:"sandbox,omitempty"` // "" | "none" | "standard" | "strict"
+	Timeout int64  `json:"timeout,omitempty"` // seconds; 0 = auto (default/llm heuristic)
 }
 
 // CapMeta holds structured metadata for a cap learning.

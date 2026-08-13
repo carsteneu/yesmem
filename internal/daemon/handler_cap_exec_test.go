@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/carsteneu/yesmem/internal/models"
 )
 
 func TestHandleExecuteCap_RequiresName(t *testing.T) {
@@ -147,5 +150,55 @@ func TestHandleExecuteCap_OutputTruncated(t *testing.T) {
 	}
 	if !strings.Contains(output, "truncated") {
 		t.Fatalf("output missing truncation notice: %.100s", output)
+	}
+}
+
+// insertCapWithTimeout seeds a cap learning directly so ScriptMeta.Timeout is
+// exercised (handleSaveCap's legacy handler_bash path has no timeout field).
+func insertCapWithTimeout(t *testing.T, h *Handler, name, body string, timeoutSec int64) {
+	t.Helper()
+	meta := CapMeta{Name: name, Scripts: []ScriptMeta{{
+		Name:    "run",
+		Kind:    "handler",
+		Runtime: "bash",
+		Body:    body,
+		Timeout: timeoutSec,
+	}}, Version: 1, Tested: true}
+	ctx, err := meta.ToJSON()
+	if err != nil {
+		t.Fatalf("cap meta json: %v", err)
+	}
+	if _, err := h.store.InsertLearning(&models.Learning{
+		Category:   "cap",
+		Content:    "timeout-test",
+		Context:    ctx,
+		Confidence: 1,
+		CreatedAt:  time.Now(),
+		ModelUsed:  "test",
+	}); err != nil {
+		t.Fatalf("insert cap: %v", err)
+	}
+}
+
+// A cap with explicit timeout=<N> must be killed after N seconds and report
+// "timed out", not the misleading "signal: killed". Regression for the bug where
+// the exec.ExitError branch ran before the context-deadline check and masked a
+// real timeout as a raw signal failure.
+func TestExecuteCapExplicitTimeoutReportsTimedOut(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs bash on PATH")
+	}
+	h, _ := mustHandler(t)
+	insertCapWithTimeout(t, h, "slowcap", "sleep 5", 1)
+
+	resp := h.handleExecuteCap(map[string]any{"name": "slowcap", "fn": "run", "args": "{}"})
+	if resp.Error == "" {
+		t.Fatalf("expected error for timeout, got %+v", resp)
+	}
+	if !strings.Contains(resp.Error, "timed out") {
+		t.Errorf("error should mention timeout, got: %s", resp.Error)
+	}
+	if strings.Contains(resp.Error, "signal: killed") {
+		t.Errorf("error should not leak raw signal: killed, got: %s", resp.Error)
 	}
 }
