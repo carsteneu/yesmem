@@ -34,6 +34,7 @@ type Script struct {
 	Body    string
 	Schema  string // JSON schema (tool kind only)
 	Sandbox string // "none" | "standard" | "strict" | "" (inherit)
+	Timeout int64  // seconds; 0 = auto (default/llm heuristic)
 }
 
 type frontmatter struct {
@@ -59,6 +60,7 @@ var knownMetadataKey = map[string]bool{
 	"runtime": true,
 	"schema":  true,
 	"sandbox": true,
+	"timeout": true,
 }
 
 func Parse(data []byte) (*CapFile, error) {
@@ -256,7 +258,7 @@ func parseScriptSubsection(name, content string) (Script, error) {
 		key := strings.TrimSpace(kv[0])
 		val := strings.TrimSpace(kv[1])
 		if !knownMetadataKey[key] {
-			return Script{}, fmt.Errorf("unknown metadata key %q (allowed: kind, runtime, schema, sandbox)", key)
+			return Script{}, fmt.Errorf("unknown metadata key %q (allowed: kind, runtime, schema, sandbox, timeout)", key)
 		}
 		metadata[key] = val
 		metaEnd = i + 1
@@ -326,6 +328,14 @@ func parseScriptSubsection(name, content string) (Script, error) {
 		// ok
 	default:
 		return Script{}, fmt.Errorf("invalid sandbox %q (allowed: none, standard, strict)", sc.Sandbox)
+	}
+
+	if to := strings.TrimSpace(metadata["timeout"]); to != "" {
+		secs, err := strconv.ParseInt(to, 10, 64)
+		if err != nil || secs <= 0 {
+			return Script{}, fmt.Errorf("invalid timeout %q (must be a positive integer number of seconds)", metadata["timeout"])
+		}
+		sc.Timeout = secs
 	}
 
 	return sc, nil

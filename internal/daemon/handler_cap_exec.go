@@ -215,9 +215,14 @@ if (_result && typeof _result.then === 'function') {
 		}
 	}
 
-	// Timeout: longer for scripts that call llm()/haiku()
+	// Timeout: explicit script timeout wins; else longer for scripts that call
+	// llm()/haiku() (network-bound), else the 30s default. A bare string check for
+	// "llm(" is fragile — e.g. a cap that hits an LLM via raw curl against
+	// llm.ccm19.app contains "llm." but not "llm(", so it would wrongly get 30s.
 	capTimeout := 30 * time.Second
-	if strings.Contains(handlerCode, "llm(") || strings.Contains(handlerCode, "haiku(") {
+	if sc.Timeout > 0 {
+		capTimeout = time.Duration(sc.Timeout) * time.Second
+	} else if strings.Contains(handlerCode, "llm(") || strings.Contains(handlerCode, "haiku(") {
 		capTimeout = 120 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), capTimeout)
@@ -228,14 +233,17 @@ if (_result && typeof _result.then === 'function') {
 	output, err := timeoutCmd.CombinedOutput()
 	if err != nil {
 		errDetail := string(output)
+		// Check context deadline FIRST: an expired timeout surfaces as an
+		// *exec.ExitError (process killed via SIGKILL), which otherwise masks
+		// the real cause as "signal: killed" instead of a clear timeout message.
+		if ctx.Err() != nil {
+			return errorResponse(fmt.Sprintf("cap execution timed out after %v (ctx: %v)\n%s", capTimeout, ctx.Err(), errDetail))
+		}
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			if len(exitErr.Stderr) > 0 {
 				errDetail = string(exitErr.Stderr)
 			}
 			return errorResponse(fmt.Sprintf("cap execution failed: %v\n%s", err, errDetail))
-		}
-		if ctx.Err() != nil {
-			return errorResponse(fmt.Sprintf("cap execution timed out after %v (ctx: %v)", capTimeout, ctx.Err()))
 		}
 		return errorResponse(fmt.Sprintf("cap execution failed: %v\n%s", err, errDetail))
 	}

@@ -166,6 +166,62 @@ func TestParse_RuntimeDerivedFromCodeFence(t *testing.T) {
 	}
 }
 
+// Explicit per-script timeout: seconds must be parsed into Script.Timeout so the
+// daemon grant the script its own execution budget (instead of the 30s default
+// that kills slow first-time image generations).
+func TestParse_InlineMetadata_Timeout(t *testing.T) {
+	src := `---
+name: x
+description: "x"
+---
+
+## Purpose
+x
+
+## Scripts
+
+### gen
+kind: tool
+timeout: 180
+schema: {"type":"object"}
+` + "```bash\ncurl --max-time 180 ...\n```" + `
+`
+	cf, err := Parse([]byte(src))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cf.Scripts[0].Timeout != 180 {
+		t.Errorf("Timeout = %d, want 180", cf.Scripts[0].Timeout)
+	}
+}
+
+// A non-numeric timeout must be rejected, not silently ignored.
+func TestParse_InlineMetadata_InvalidTimeout(t *testing.T) {
+	src := `---
+name: x
+description: "x"
+---
+
+## Purpose
+x
+
+## Scripts
+
+### gen
+kind: tool
+timeout: high
+schema: {"type":"object"}
+` + "```bash\necho hi\n```" + `
+`
+	_, err := Parse([]byte(src))
+	if err == nil {
+		t.Fatalf("expected error for invalid timeout, got nil")
+	}
+	if !strings.Contains(err.Error(), "timeout") {
+		t.Errorf("error should mention timeout, got: %v", err)
+	}
+}
+
 func TestParse_DerivedSchemaFromJSSignature(t *testing.T) {
 	src := `---
 name: x

@@ -97,6 +97,13 @@ func renderScript(b *strings.Builder, sc Script) {
 		}
 	}
 
+	if sc.Sandbox != "" {
+		b.WriteString(fmt.Sprintf("sandbox: %s\n", sc.Sandbox))
+	}
+	if sc.Timeout > 0 {
+		b.WriteString(fmt.Sprintf("timeout: %d\n", sc.Timeout))
+	}
+
 	b.WriteString("\n")
 
 	lang := sc.Lang

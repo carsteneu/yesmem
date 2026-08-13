@@ -23,14 +23,15 @@ func CapFileToParams(cf capfile.CapFile) map[string]any {
 	if len(cf.Scripts) > 0 {
 		scriptMetas := make([]ScriptMeta, len(cf.Scripts))
 		for i, sc := range cf.Scripts {
-			scriptMetas[i] = ScriptMeta{
-				Name:    sc.Name,
-				Kind:    sc.Kind,
-				Runtime: sc.Runtime,
-				Lang:    sc.Lang,
-				Body:    sc.Body,
-				Schema:  sc.Schema,
-			}
+		scriptMetas[i] = ScriptMeta{
+			Name:    sc.Name,
+			Kind:    sc.Kind,
+			Runtime: sc.Runtime,
+			Lang:    sc.Lang,
+			Body:    sc.Body,
+			Schema:  sc.Schema,
+			Timeout: sc.Timeout,
+		}
 		}
 		scriptsJSON, _ := json.Marshal(scriptMetas)
 		params["scripts"] = string(scriptsJSON)
@@ -84,6 +85,8 @@ func CapMetaToCapFile(meta CapMeta, project string) capfile.CapFile {
 			Lang:    lang,
 			Body:    sm.Body,
 			Schema:  sm.Schema,
+			Sandbox: sm.Sandbox,
+			Timeout: sm.Timeout,
 		}
 	}
 
