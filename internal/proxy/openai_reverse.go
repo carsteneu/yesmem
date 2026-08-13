@@ -80,12 +80,16 @@ func translateAnthropicToOpenAI(anthReq map[string]any) (map[string]any, error) 
 	oai["messages"] = result
 
 	// Drop trailing empty user messages (artifacts from tool_result container split).
+	// Only a literal empty string is droppable. Non-string content (e.g. multimodal
+	// text+image arrays) is never empty — a failed string assertion must not drop
+	// the user's images.
 	for len(result) > 0 {
 		last, ok := result[len(result)-1].(map[string]any)
 		if !ok || last["role"] != "user" {
 			break
 		}
-		if content, _ := last["content"].(string); content != "" {
+		content, isStr := last["content"].(string)
+		if !isStr || content != "" {
 			break
 		}
 		result = result[:len(result)-1]
@@ -126,7 +130,7 @@ func translateAnthropicUserMsg(m map[string]any) []any {
 		return []any{map[string]any{"role": "user", "content": text}}
 	}
 
-	// Array content — may contain text blocks and/or tool_result blocks
+	// Array content — may contain text blocks, image blocks, and/or tool_result blocks
 	blocks, ok := content.([]any)
 	if !ok {
 		return []any{m}
@@ -134,6 +138,7 @@ func translateAnthropicUserMsg(m map[string]any) []any {
 
 	var textParts []string
 	var toolResults []any
+	var imageParts []any
 	var cacheControl any
 
 	for _, block := range blocks {
@@ -158,6 +163,10 @@ func translateAnthropicUserMsg(m map[string]any) []any {
 			if text != "" {
 				textParts = append(textParts, text)
 			}
+		case "image":
+			if img := translateAnthropicImageToOpenAI(bm); img != nil {
+				imageParts = append(imageParts, img)
+			}
 		}
 		// Preserve cache_control from the last content block that has it.
 		if cc, ok := bm["cache_control"]; ok {
@@ -175,6 +184,26 @@ func translateAnthropicUserMsg(m map[string]any) []any {
 		if tm, ok := toolResults[0].(map[string]any); ok {
 			tm["content"] = joined + "\n" + fmt.Sprintf("%v", tm["content"])
 		}
+	}
+
+	// Multimodal path: when image blocks are present, emit content as an array
+	// of text + image_url parts (OpenAI multimodal format). Tool results stay
+	// separate so they remain role:tool messages — and go first to preserve
+	// DeepSeek's tool_call→tool adjacency requirement.
+	if len(imageParts) > 0 {
+		var contentArr []any
+		if len(textParts) > 0 {
+			contentArr = append(contentArr, map[string]any{"type": "text", "text": strings.Join(textParts, "")})
+		}
+		contentArr = append(contentArr, imageParts...)
+		umsg := map[string]any{"role": "user", "content": contentArr}
+		if cacheControl != nil {
+			umsg["cache_control"] = cacheControl
+		}
+		var result []any
+		result = append(result, toolResults...)
+		result = append(result, umsg)
+		return result
 	}
 
 	var result []any
@@ -200,6 +229,40 @@ func translateAnthropicUserMsg(m map[string]any) []any {
 		return []any{map[string]any{"role": "user", "content": ""}}
 	}
 	return result
+}
+
+// translateAnthropicImageToOpenAI converts an Anthropic image block
+// ({"type":"image","source":{...}}) to an OpenAI image_url content part.
+// Source may be base64-encoded ({type:"base64",media_type,data}) or a
+// direct URL ({type:"url",url}). Returns nil for malformed sources so
+// callers can skip silently without dropping the rest of the message.
+func translateAnthropicImageToOpenAI(block map[string]any) map[string]any {
+	src, ok := block["source"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	var url string
+	switch src["type"] {
+	case "base64":
+		mediaType, _ := src["media_type"].(string)
+		data, _ := src["data"].(string)
+		if data == "" {
+			return nil
+		}
+		url = fmt.Sprintf("data:%s;base64,%s", mediaType, data)
+	case "url":
+		u, _ := src["url"].(string)
+		if u == "" {
+			return nil
+		}
+		url = u
+	default:
+		return nil
+	}
+	return map[string]any{
+		"type":      "image_url",
+		"image_url": map[string]any{"url": url},
+	}
 }
 
 // translateAnthropicAssistantMsg converts assistant content blocks to OpenAI format.

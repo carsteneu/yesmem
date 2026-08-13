@@ -211,3 +211,137 @@ func TestTranslateOpenAIToAnthropic_JSONRoundTrip(t *testing.T) {
 		t.Fatalf("json.Marshal: %v", err)
 	}
 }
+
+// Vision: OpenAI image_url content parts must survive translation to Anthropic
+// format. opencode (@ai-sdk/openai-compatible) sends images as
+// {type:"image_url", image_url:{url:"data:..."}} — the proxy must translate
+// these to Anthropic {type:"image", source:{type:"base64",...}} blocks.
+func TestTranslateOpenAIToAnthropic_ImageURLPreserved(t *testing.T) {
+	oaiReq := OpenAIChatRequest{
+		Model: "deepseek-v4-pro",
+		Messages: []OpenAIMessage{
+			{
+				Role: "user",
+				Content: []any{
+					map[string]any{"type": "text", "text": "was ist das?"},
+					map[string]any{
+						"type":      "image_url",
+						"image_url": map[string]any{"url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"},
+					},
+				},
+			},
+		},
+	}
+
+	req, err := translateOpenAIToAnthropic(oaiReq)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+
+	messages, _ := req["messages"].([]any)
+	if len(messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(messages))
+	}
+	msg, _ := messages[0].(map[string]any)
+	if msg["role"] != "user" {
+		t.Fatalf("role = %v, want user", msg["role"])
+	}
+	// Content must be an array with text + image blocks, not a flattened string.
+	blocks, ok := msg["content"].([]any)
+	if !ok {
+		t.Fatalf("content type = %T, want []any (image was stripped)", msg["content"])
+	}
+	if len(blocks) != 2 {
+		t.Fatalf("blocks = %d, want 2 (text + image)", len(blocks))
+	}
+	// Block 0: text
+	b0, _ := blocks[0].(map[string]any)
+	if b0["type"] != "text" || b0["text"] != "was ist das?" {
+		t.Errorf("block[0] = %+v, want type:text text:%q", b0, "was ist das?")
+	}
+	// Block 1: image with base64 source
+	b1, _ := blocks[1].(map[string]any)
+	if b1["type"] != "image" {
+		t.Fatalf("block[1].type = %v, want image", b1["type"])
+	}
+	src, _ := b1["source"].(map[string]any)
+	if src["type"] != "base64" {
+		t.Errorf("source.type = %v, want base64", src["type"])
+	}
+	if src["media_type"] != "image/png" {
+		t.Errorf("source.media_type = %v, want image/png", src["media_type"])
+	}
+	if src["data"] != "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" {
+		t.Errorf("source.data mismatch")
+	}
+}
+
+// Vision: image-only message (no text block) — must still produce an image block.
+func TestTranslateOpenAIToAnthropic_ImageOnly(t *testing.T) {
+	oaiReq := OpenAIChatRequest{
+		Model: "deepseek-v4-pro",
+		Messages: []OpenAIMessage{
+			{
+				Role: "user",
+				Content: []any{
+					map[string]any{
+						"type":      "image_url",
+						"image_url": map[string]any{"url": "data:image/jpeg;base64,/9j/4AAQ"},
+					},
+				},
+			},
+		},
+	}
+
+	req, err := translateOpenAIToAnthropic(oaiReq)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	messages, _ := req["messages"].([]any)
+	msg := messages[0].(map[string]any)
+	blocks, ok := msg["content"].([]any)
+	if !ok {
+		t.Fatalf("content type = %T, want []any", msg["content"])
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("blocks = %d, want 1", len(blocks))
+	}
+	b0 := blocks[0].(map[string]any)
+	if b0["type"] != "image" {
+		t.Errorf("type = %v, want image", b0["type"])
+	}
+}
+
+// Vision: image_url with a real URL (not base64 data URI) — pass through as-is.
+func TestTranslateOpenAIToAnthropic_ImageURLExternal(t *testing.T) {
+	oaiReq := OpenAIChatRequest{
+		Model: "deepseek-v4-pro",
+		Messages: []OpenAIMessage{
+			{
+				Role: "user",
+				Content: []any{
+					map[string]any{
+						"type":      "image_url",
+						"image_url": map[string]any{"url": "https://example.com/logo.png"},
+					},
+				},
+			},
+		},
+	}
+
+	req, err := translateOpenAIToAnthropic(oaiReq)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	messages, _ := req["messages"].([]any)
+	msg := messages[0].(map[string]any)
+	blocks := msg["content"].([]any)
+	b0 := blocks[0].(map[string]any)
+	src := b0["source"].(map[string]any)
+	if src["type"] != "url" {
+		t.Errorf("source.type = %v, want url", src["type"])
+	}
+	if src["url"] != "https://example.com/logo.png" {
+		t.Errorf("source.url = %v, want https://example.com/logo.png", src["url"])
+	}
+}

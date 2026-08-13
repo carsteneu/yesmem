@@ -356,3 +356,178 @@ func TestTranslateAnthropicUserMsg_TextOnlyArrayPreserved(t *testing.T) {
 		}
 	}
 }
+
+// Vision: an Anthropic image block (type:"image" with source.{media_type,data})
+// must survive reverse translation as an OpenAI image_url part. Without this,
+// opencode → yesmem-proxy → DeepSeek silently strips images and DeepSeek
+// responds "I can't see an image" even though the user attached one.
+func TestTranslateAnthropicUserMsg_PreservesImageBlock(t *testing.T) {
+	m := map[string]any{
+		"role": "user",
+		"content": []any{
+			map[string]any{"type": "text", "text": "was ist das?"},
+			map[string]any{
+				"type": "image",
+				"source": map[string]any{
+					"type":       "base64",
+					"media_type": "image/png",
+					"data":       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
+				},
+			},
+		},
+	}
+
+	out := translateAnthropicUserMsg(m)
+	if len(out) != 1 {
+		t.Fatalf("expected 1 message, got %d: %+v", len(out), out)
+	}
+	got, ok := out[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected map message, got %T", out[0])
+	}
+	if got["role"] != "user" {
+		t.Fatalf("role = %v, want user", got["role"])
+	}
+	parts, ok := got["content"].([]any)
+	if !ok {
+		t.Fatalf("content type = %T, want []any (multimodal array)", got["content"])
+	}
+	if len(parts) != 2 {
+		t.Fatalf("expected 2 content parts (text + image_url), got %d: %+v", len(parts), parts)
+	}
+	// Part 0: text
+	tp, ok := parts[0].(map[string]any)
+	if !ok || tp["type"] != "text" {
+		t.Errorf("part[0] = %+v, want type:text", parts[0])
+	}
+	if tp["text"] != "was ist das?" {
+		t.Errorf("part[0].text = %q, want %q", tp["text"], "was ist das?")
+	}
+	// Part 1: image_url with data URL
+	ip, ok := parts[1].(map[string]any)
+	if !ok || ip["type"] != "image_url" {
+		t.Errorf("part[1] = %+v, want type:image_url", parts[1])
+	}
+	url, _ := ip["image_url"].(map[string]any)
+	wantURL := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"
+	if url["url"] != wantURL {
+		t.Errorf("image_url.url = %q, want %q", url["url"], wantURL)
+	}
+}
+
+// Vision: image-only message (no text block) must still produce a valid
+// multimodal array with just the image_url part.
+func TestTranslateAnthropicUserMsg_ImageOnly(t *testing.T) {
+	m := map[string]any{
+		"role": "user",
+		"content": []any{
+			map[string]any{
+				"type": "image",
+				"source": map[string]any{
+					"type":       "base64",
+					"media_type": "image/jpeg",
+					"data":       "/9j/4AAQ",
+				},
+			},
+		},
+	}
+
+	out := translateAnthropicUserMsg(m)
+	if len(out) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(out))
+	}
+	got := out[0].(map[string]any)
+	parts, ok := got["content"].([]any)
+	if !ok {
+		t.Fatalf("content type = %T, want []any", got["content"])
+	}
+	if len(parts) != 1 {
+		t.Fatalf("expected 1 content part, got %d: %+v", len(parts), parts)
+	}
+	ip := parts[0].(map[string]any)
+	if ip["type"] != "image_url" {
+		t.Errorf("part type = %v, want image_url", ip["type"])
+	}
+	url := ip["image_url"].(map[string]any)
+	wantURL := "data:image/jpeg;base64,/9j/4AAQ"
+	if url["url"] != wantURL {
+		t.Errorf("url = %q, want %q", url["url"], wantURL)
+	}
+}
+
+// Vision: image with a URL source (not base64) must pass the URL through
+// unchanged — already a URL, just rewrap as image_url.
+func TestTranslateAnthropicUserMsg_ImageURLSource(t *testing.T) {
+	m := map[string]any{
+		"role": "user",
+		"content": []any{
+			map[string]any{
+				"type": "image",
+				"source": map[string]any{
+					"type": "url",
+					"url":  "https://example.com/logo.png",
+				},
+			},
+		},
+	}
+
+	out := translateAnthropicUserMsg(m)
+	got := out[0].(map[string]any)
+	parts := got["content"].([]any)
+	ip := parts[0].(map[string]any)
+	url := ip["image_url"].(map[string]any)
+	if url["url"] != "https://example.com/logo.png" {
+		t.Errorf("url = %v, want https://example.com/logo.png", url["url"])
+	}
+}
+
+// Vision (full pipeline): a trailing user message with multimodal array content
+// (text + image blocks) must survive the FULL translateAnthropicToOpenAI, not
+// just translateAnthropicUserMsg. The trailing-empty-message cleanup loop used
+// a string type assertion on content — when content is an array (as for images)
+// the assertion fails, content is treated as "" , and the message is dropped.
+// This is the bug that deleted images even after the image-block translation
+// was fixed.
+func TestTranslateAnthropicToOpenAI_PreservesTrailingImageMessage(t *testing.T) {
+	req := map[string]any{
+		"model": "deepseek-v4-pro",
+		"messages": []any{
+			map[string]any{
+				"role": "user",
+				"content": []any{
+					map[string]any{"type": "text", "text": "was ist das?"},
+					map[string]any{
+						"type": "image",
+						"source": map[string]any{
+							"type":       "base64",
+							"media_type": "image/png",
+							"data":       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	out, err := translateAnthropicToOpenAI(req)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	msgs, _ := out["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("messages = %d, want 1 (trailing image message was dropped by cleanup)", len(msgs))
+	}
+	// The kept message must still carry the image_url part.
+	m0 := msgs[0].(map[string]any)
+	parts, ok := m0["content"].([]any)
+	if !ok {
+		t.Fatalf("content type = %T, want []any (image message dropped)", m0["content"])
+	}
+	for _, p := range parts {
+		if bm, ok := p.(map[string]any); ok && bm["type"] == "image_url" {
+			return // image survived
+		}
+	}
+	t.Errorf("no image_url part survived in %+v", parts)
+}
+
