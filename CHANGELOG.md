@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Exclude opencode sidebar template from public mirror
+- Move opencode sidebar template out of contrib into plugins/
+
+## [2.3.9] - 2026-08-14
+
 ### Fixed
 
 - Restrict changelog generator to semver tags
@@ -6822,7 +6829,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add comprehensive tests for generator and storage
 
 
-[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.3.8...HEAD
+[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.3.9...HEAD
+[2.3.9]: https://github.com/carsteneu/yesmem/compare/v2.3.8...v2.3.9
 [2.3.8]: https://github.com/carsteneu/yesmem/compare/v2.3.7...v2.3.8
 [2.3.7]: https://github.com/carsteneu/yesmem/compare/v2.3.6...v2.3.7
 [2.3.6]: https://github.com/carsteneu/yesmem/compare/v2.3.5...v2.3.6
