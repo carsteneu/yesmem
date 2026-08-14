@@ -47,12 +47,12 @@ Setup steps (user's interactive session):
 1. **Create worktree:** `git worktree add -b yesresearch/<topic-slug> <repo>/.worktrees/yesresearch-<topic-slug>` (fresh-create) OR `git worktree add -b yesresearch/<topic-slug>-update-N <repo>/.worktrees/yesresearch-<topic-slug>-update-N` (update mode, branching from previous wiki commit)
 2. Write master plan to `<worktree>/yesdocs/<topic>/PLAN.md` (or pass existing path)
 3. **Detect model & backend:** Read `~/.config/opencode/opencode.json` → extract `model` key (e.g. `deepseek/deepseek-reasoner`). If absent, detect from opencode's default (first entry in models.json). Backend defaults to `"opencode"` — override via scratchpad briefing `backend: claude|codex|opencode` or master plan frontmatter. Both model and backend are passed to ALL spawns (Orchestrator + Bereichs-Agents).
-4. Write Orchestrator briefing to scratchpad section `yesresearch-<topic-slug>-orchestrator`: worktree path, master plan path, output target, hard constraints, **resolved model**, **mode (fresh-create or update)**
+4. Write Orchestrator briefing to scratchpad section `yesresearch-<topic-slug>-orchestrator`: worktree path, master plan path, output target, hard constraints, **resolved model**, **mode (fresh-create or update)**. The briefing MUST start with the skill-read mandate: `YOU ARE A YESRESEARCH-ORCHESTRATOR. MANDATORY - YOU MUST READ THE YESRESEARCH SKILL AND YOU MUST FOLLOW THE INSTRUCTIONS IN THIS SKILL.` The spawned Orchestrator has NOT auto-loaded this skill — the mandate prefix is mandatory.
 5. Spawn Orchestrator: `yesmem_spawn_agent(project="<project>", section="yesresearch-<topic-slug>-orchestrator", backend="<resolved-backend>", work_dir="<worktree-path>", model="<resolved-model>")`
-6. Wait 15s, then relay kick: `yesmem_relay_agent(to="<orchestrator-id>", content="Read scratchpad section yesresearch-<topic-slug>-orchestrator. Begin Orchestrator Phase 1 READ.")`
+6. Wait 15s, then relay kick: `yesmem_relay_agent(to="<orchestrator-id>", content="Read scratchpad section yesresearch-<topic-slug>-orchestrator AND load the yesresearch skill (skill tool or ~/.claude/skills/yesresearch/SKILL.md). MANDATORY - YOU MUST READ THE YESRESEARCH SKILL AND YOU MUST FOLLOW THE INSTRUCTIONS IN THIS SKILL. Begin Orchestrator Phase 1 READ.")` — backup if PTY is slow
 7. User's session polls `list_agents` + `scratchpad_read` until Orchestrator reports DONE.
 
-**Only run inline if:** user explicitly says `--inline` or task is < 5 min trivial (single-file research, no cluster decomposition needed).
+**Only run inline if:** the user EXPLICITLY says `--inline`. There is NO trivial-task exception — "< 5 min" is not a license to skip the worktree and orchestrator pipeline.
 
 ## Model & Backend Configuration
 
@@ -125,6 +125,7 @@ Default `2h` pro Bereichs-Agent. Override via master plan frontmatter or `yesmem
 **The Orchestrator is itself a spawned agent** — invoked via `/yesresearch <topic>`, it spawns itself as a TUI agent via yesmem_spawn_agent and that agent runs the 6-phase pipeline below. The user's interactive session only creates the worktree + scratchpad + spawns the Orchestrator agent. From there the Orchestrator owns all downstream work.
 
 **Prescribe (orchestrator's job):**
+- **Skill-Read-Mandate** — The Orchestrator briefing AND every Bereichs-Agent section MUST start with the skill-read mandate: `YOU ARE A YESRESEARCH-... MANDATORY - YOU MUST READ THE YESRESEARCH SKILL AND YOU MUST FOLLOW THE INSTRUCTIONS IN THIS SKILL.` Spawned agents have NOT auto-loaded this skill; without the mandate they work without pipeline context. Path fallbacks: platform skill tool, `~/.claude/skills/yesresearch/SKILL.md`, or `<repo-root>/skills/bundled-skills/yesresearch/SKILL.md`.
 - **Topic + success criteria** — what good output looks like, not what to search
 - **Master plan** — `##` cluster headings, file targets as bullet points
 - **Output target** — `yesdocs/<topic>/wiki/<cluster>/<file>.md`
@@ -340,7 +341,7 @@ When a check fails:
 1. Orchestrator marks affected file/section as `partial` in INDEX.md
 2. Dispatches fix task to Bereichs-Agent: `task(general, "Fix failing check <ID> on <file>: <details>")`
 3. Re-runs check after fix
-4. Max 3 fix cycles per check — after that, file stays `partial` and user is notified via send_to
+4. Max 5 fix cycles per check — after that, file stays `partial` and user is notified via send_to
 
 ### Validation Snippet (Bash, used by Orchestrator)
 
@@ -471,7 +472,7 @@ update_agent_status(phase="Phase 3/6 DISPATCH")
 - Per batch: `yesmem_spawn_agent` × N. Backend: `<resolved-backend>` (from scratchpad briefing). work_dir: shared worktree.
 - **Model:** use resolved model from Phase 2 (scratchpad briefing carries it).
 - Wait 15s after each spawn for TUI load.
-- **Relay kick** within 30s: `yesmem_relay_agent(to="<agent-id>", content="Read scratchpad section <section>. Mode: FRESH|UPDATE. Begin Phase 1 CONTEXT.")`
+- **Relay kick** within 30s: `yesmem_relay_agent(to="<agent-id>", content="Read scratchpad section <section> AND load the yesresearch skill (skill tool or ~/.claude/skills/yesresearch/SKILL.md). MANDATORY - YOU MUST READ THE YESRESEARCH SKILL AND YOU MUST FOLLOW THE INSTRUCTIONS IN THIS SKILL. Mode: FRESH|UPDATE. Begin Phase 1 CONTEXT.")` — backup if PTY is slow
 - Log agent IDs in orchestrator scratchpad.
 
 ### Phase 4/6: MONITOR
@@ -651,7 +652,7 @@ update_agent_status(phase="Phase 4/6 VERIFY")
 **Visual assets captured:** <count> screenshots/PDFs in assets/, linked from MD
 **Persona Review:** yes — <persona set used>, gaps found: <count>
 **Partial files:** none | <list with reason>
-**VERIFY cycles used:** N/3
+**VERIFY cycles used:** N/5
 ```
 
 **Two-layer VERIFY (MANDATORY — both layers required for COMPLETE status):**
@@ -681,9 +682,9 @@ Suggested persona sets (agent picks 2-3 most relevant per file):
 - **End User**: "Practitioner, will Tool im Alltag nutzen"
 - **Journalist**: "Redakteur, will Thema für Artikel verstehen"
 
-If Persona Review returns gaps → add content addressing the gap (re-dispatch task(general) for that section) and re-run both Citation Check and Persona Review. **Max 3 VERIFY cycles total (combined for both layers)** — if still gaps after 3 cycles, mark file `partial` with `persona_review.gaps_fixed < gaps_found` in frontmatter and proceed. Don't loop endlessly.
+If Persona Review returns gaps → add content addressing the gap (re-dispatch task(general) for that section) and re-run both Citation Check and Persona Review. **Max 5 VERIFY cycles total (combined for both layers)** — if still gaps after 5 cycles, mark file `partial` with `persona_review.gaps_fixed < gaps_found` in frontmatter and proceed. Don't loop endlessly.
 
-If verify fails on citation layer only → fix and re-verify (also counts against the 3-cycle budget).
+If verify fails on citation layer only → fix and re-verify (also counts against the 5-cycle budget).
 
 ### Phase 5/6: COMMIT
 ```
@@ -1067,9 +1068,10 @@ Each violation triggers DONE-Gate failure: Orchestrator rejects DONE-claim, disp
    - File covers material outside cluster scope → split or move to correct cluster
    - Sources are off-topic → restart source discovery
    - Word count explosion (>3x target) → split file
-4. Major drift → `scratchpad_write("⚠️ DRIFT: <description>") + send_to orchestrator: "DRIFT in <file>. <details>"`. Wait.
+4. **Minor drift → MANDATORY fix immediately** — correct course NOW, document what drifted and how you corrected it in scratchpad, then continue.
+5. Major drift → `scratchpad_write("⚠️ DRIFT: <description>") + send_to orchestrator: "DRIFT in <file>. <details>"`. Wait.
 
-## BEWEISLAST bei Scratchpad-Claims
+## PROOF BURDEN (BEWEISLAST) for scratchpad claims
 
 Before writing "DONE", "complete", "verified" to scratchpad, confirm the artifact matches the claim.
 
@@ -1117,7 +1119,7 @@ Orchestrator updates this after every phase transition + every batch completion.
 
 - **Orchestrator mode (this skill invoked):** progress updates between phases, DONE at end
 - **Bereichs-Agent mode (spawned):** scratchpad_write for state, send_to for completion
-- Never ask "soll ich weitermachen?" — continue unless blocked
+- Never ask "should I continue?" — continue unless blocked
 
 ## Mini Example (filled Phase 3, others stubbed)
 
@@ -1172,7 +1174,7 @@ Orchestrator updates this after every phase transition + every batch completion.
 **Conflicts dual-position:** yes — 1 conflict (Trilog-Frist)
 **PDFs handled:** 1 (EUR-Lex PDF via curl+pdftotext)
 **Partial files:** none
-**VERIFY cycles used:** 1/3
+**VERIFY cycles used:** 1/5
 
 ### Phase 5: COMMIT
 **Status:** COMPLETE
@@ -1199,10 +1201,10 @@ Orchestrator updates this after every phase transition + every batch completion.
 |---|---|
 | Source easy to find | Fetch directly via webfetch |
 | 2-3 source candidates, unclear best | Pick most authoritative (official > law firm > media), document rationale |
-| Need to expand scope within file | Document, proceed if minor (e.g. related regulation); escalate if major |
+| Need to expand scope within file | MANDATORY fix immediately — stop the drift, correct course NOW, document it. Escalate only if the correction itself is impossible or blocking |
 | Source unverifiable (404, paywall) | Try Wayback/Google cache; if all fail, mark `*[unkenntlich]*`, proceed |
 | 3 consecutive saturation hits | Stop searching for this file, document, proceed with what's gathered |
-| Citation check fails | Fix missing citations, re-run explore review, max 3 cycles |
+| Citation check fails | Fix missing citations, re-run explore review, max 5 cycles |
 | Irreversible action (delete, overwrite existing wiki) | Pause, `send_to orchestrator: "IRREVERSIBLE: <description>"`, wait |
 
 ## Decision Gates (Orchestrator)

@@ -747,6 +747,9 @@ func stripProviderPrefixFromBody(body []byte) []byte {
 }
 
 func (s *Server) forwardOpenAIWithTracking(w http.ResponseWriter, origReq *http.Request, body []byte, reqIdx int, toolUseIDs []string, project string, threadID string, estimatedTokens, msgCount int, parser openAIUsageParser) {
+	// Debug: dump request body to file for inspection (enable with YESMEM_PROXY_DEBUG=1)
+	maybeDumpRequestBody(s.cfg.DataDir, reqIdx, body)
+
 	model := extractModelFromBody(body)
 	targetURL := s.resolveOpenAITarget(model)
 	if targetURL == "" {

@@ -1,6 +1,6 @@
 ---
 name: yesloop
-description: Autonomous task loop — analyze, plan, execute, verify, review, finish. Runs as visible TUI agent in git worktree. Use when user says "yesloop", "loop", "mach das autonom". Supports --merge for auto-merge, --inline for current session.
+description: Autonomous task loop — analyze, plan, execute, verify, review, finish. Runs as visible TUI agent in git worktree. Use when user says "yesloop", "loop", "run it autonomously".
 user-invocable: true
 disable-model-invocation: false
 allowed-tools: Bash(git *) Bash(go *) Bash(make *) Bash(npm *) Bash(docker *) Bash(python3 *) Bash(sqlite3 *) Bash(curl *) Bash(find *) Bash(ls *) Bash(cat *) Bash(rg *) Bash(mv *) Bash(cp *) Bash(rm *) Bash(mkdir *) Bash(test *) Grep Glob Read Write Edit todowrite Task
@@ -19,14 +19,14 @@ When invoked from an interactive session, **do NOT execute the pipeline yourself
    - Multiple agents can run in parallel without conflicts
    - Easy cleanup: delete worktree + branch if abandoned
 2. Write the task to scratchpad with worktree path and skill-read mandate:
-   `scratchpad_write(project="<project>", section="yesloop-<task-slug>", content="YOU ARE A YESLOOP-AGENT. Load the yesloop skill: use your platform's skill tool, or read ~/.claude/skills/yesloop/SKILL.md, or <repo-root>/skills/bundled-skills/yesloop/SKILL.md. Follow the 6-phase pipeline (ANALYZE → PLAN → EXECUTE → VERIFY → REVIEW → FINISH).\n\nWorktree: <path>\nTask: <description>\n\nReport to scratchpad.")`
+   `scratchpad_write(project="<project>", section="yesloop-<task-slug>", content="YOU ARE A YESLOOP-AGENT. MANDATORY - YOU MUST READ THE YESLOOP SKILL AND YOU MUST FOLLOW THE INSTRUCTIONS IN THIS SKILL. Load the yesloop skill: use your platform's skill tool, or read ~/.claude/skills/yesloop/SKILL.md, or <repo-root>/skills/bundled-skills/yesloop/SKILL.md. Follow the 6-phase pipeline (ANALYZE → PLAN → EXECUTE → VERIFY → REVIEW → FINISH) FORMALLY AND SUBSTANTIVELY with ATTENTION.\n\nWorktree: <path>\nTask: <description>\n\nReport to scratchpad.")`
    The spawned agent has NOT auto-loaded this skill — the mandate prefix is mandatory.
 3. Spawn TUI agent: `yesmem_spawn_agent(project="<project>", section="yesloop-<task-slug>", backend="opencode", work_dir="<worktree-path>")`
 4. Wait 15s for opencode TUI to load + PTY injection to deliver the startup prompt
-5. **Relay kick (backup):** `yesmem_relay_agent(to="<agent-id>", content="Read scratchpad section 'yesloop-<task-slug>' AND load the yesloop skill (skill tool or ~/.claude/skills/yesloop/SKILL.md). Begin 6-phase pipeline.\n")` — backup if PTY is slow
-6. Confirm: "Agent spawned in worktree — sichtbar im Terminal."
+5. **Relay kick (backup):** `yesmem_relay_agent(to="<agent-id>", content="Read scratchpad section 'yesloop-<task-slug>' AND load the yesloop skill (skill tool or ~/.claude/skills/yesloop/SKILL.md). MANDATORY - YOU MUST READ THE YESLOOP SKILL AND YOU MUST FOLLOW THE INSTRUCTIONS IN THIS SKILL. Begin the 6-phase pipeline FORMALLY AND SUBSTANTIVELY with ATTENTION.\n")` — backup if PTY is slow
+6. Confirm: "Agent spawned in worktree — visible in terminal."
 
-**Only run inline if:** user explicitly says `--inline` or task is < 2 min trivial.
+**Only run inline if:** the user EXPLICITLY says `--inline`. There is NO trivial-task exception — "< 2 min" is not a license to skip the worktree. If you'd commit it, it runs in the worktree. Create the worktree BEFORE the first edit.
 
 **"Pipeline" includes exploratory work.** Writing tests, spiking an approach, "just quickly trying the fix on main to see if it works" — if you'd commit it, it belongs in the worktree. Create the worktree BEFORE the first edit, not after you've verified the fix works.
 
@@ -34,7 +34,7 @@ When invoked from an interactive session, **do NOT execute the pipeline yourself
 
 `yesmem_spawn_agent(model=...)` accepts three forms, resolved by `resolveSpawnModel` in `internal/daemon/spawn_model.go`:
 
-- **Empty** → falls back to `zai/deepseek-v4-pro` (the yesloop default, per learning #76240).
+- **Empty** → returns "" — lets the opencode CLI pick its default from its own configuration. No model is hardcoded in the daemon.
 - **Slash-qualified** (e.g. `zai/glm-5.2`, `zai-coding-plan/glm-5.2`) → passed through verbatim.
 - **Bare model name** (e.g. `glm-5.2`, `deepseek-v4-pro`) → resolved against the auto-discovered provider map (built from `~/.cache/opencode/models.json` + `~/.config/opencode/opencode.json`). The daemon prepends the matching providerID, e.g. `glm-5.2` becomes `zai/glm-5.2`.
 
@@ -47,7 +47,7 @@ Unknown bare names log a warning and pass through unchanged (best-effort, no err
 When you spawn a yesloop agent, the scratchpad task defines the working relationship. Over-prescribing takes ANALYZE+PLAN away from the agent; under-prescribing sends it into orientation loops. Get the level right.
 
 **Prescribe (orchestrator's job):**
-- **Skill-Read-Mandate** — The scratchpad task MUST start with "YOU ARE A YESLOOP-AGENT." and instruct the agent to load the yesloop skill. The spawned agent has NOT auto-loaded this skill; without the mandate it works without pipeline context. Path fallbacks: platform skill tool, `~/.claude/skills/yesloop/SKILL.md`, or `<repo-root>/skills/bundled-skills/yesloop/SKILL.md`.
+- **Skill-Read-Mandate** — The scratchpad task MUST start with 'YOU ARE A YESLOOP-AGENT.' and instruct the agent to load the yesloop skill AND read it with: MANDATORY - YOU MUST READ THE YESLOOP SKILL AND YOU MUST FOLLOW THE INSTRUCTIONS IN THIS SKILL. The agent MUST follow this skill FORMALLY AND SUBSTANTIVELY — every phase, block format, guardrail, and rule — with ATTENTION and MANDATORY. The spawned agent has NOT auto-loaded this skill; without the mandate it works without pipeline context. Path fallbacks: platform skill tool, `~/.claude/skills/yesloop/SKILL.md`, or `<repo-root>/skills/bundled-skills/yesloop/SKILL.md`.
 - **Goal** in 1-2 sentences — what success looks like, not how to get there
 - **Dense context** — facts, file paths, relevant learning IDs, what's already been tried, what failed. The agent starts cold; you don't.
 - **Hard constraints** — schema-breaking changes, backfills, new dependencies, destructive ops, files off-limits
@@ -59,6 +59,33 @@ When you spawn a yesloop agent, the scratchpad task defines the working relation
 - **EXECUTE/VERIFY/REVIEW** — the full 6-phase pipeline on the agent's plan, not yours
 
 **Calibration test:** Before writing the scratchpad, ask: "If the agent came back with a plan, would I be surprised?" If yes for the right reasons (better approach), you prescribed right. If yes for wrong reasons (misunderstood goal), add context. If bored (matches what you'd write), over-prescribed — shorten.
+
+## Relay-to-Resume Timing (paused agents)
+
+Relay delivery to a `paused` agent is **asynchronous**: the daemon heartbeats the inject socket at ~1s intervals, the opencode TUI may be mid-turn, and the PTY bridge buffers. A relay is NOT reflected in agent status or scratchpad within seconds.
+
+**Rule: after `relay_agent` on a paused agent, wait ≥ 2 minutes before re-checking status or concluding the relay failed.** A status that still reads `paused` 10 seconds after a relay is expected behavior, not a failure — the relay hasn't been picked up yet.
+
+Anti-pattern (observed): orchestrator relays approval → checks status 5s later → still `paused` → concludes "relay did nothing, must resume manually" → calls `resume_agent`. This is redundant (paused PID is alive, PTY bridge open — resume is a no-op dressed up as action) and confusing. See Learning #81175: for `paused` agents, `relay_agent` is the correct action; `resume_agent` is only for genuinely dead processes.
+
+Correct sequence after relaying to a paused agent:
+1. `relay_agent(to=<id>, content="...")` — approval/instruction delivered
+2. **Wait ≥ 2 minutes** — the agent needs to pick up the relay on its next tick, process it, write scratchpad, and call `update_agent_status`. Shorter windows produce false negatives.
+3. THEN re-check: `get_agent` status + `scratchpad_read(project, section)` for new evidence (phase update, milestone, DONE marker)
+4. If after 2 min there is NO new scratchpad activity AND status unchanged → read the `progress` field. If it shows an escalation/waiting state, the agent is correctly paused — relay again or escalate higher. Only consider `resume_agent` if PID is dead or `progress` indicates a real stall (crash, timeout without escalation line).
+
+## Monitoring discipline (running agents)
+
+Intervention requires stale **activity signals**, not just a stale status label. A running agent's status field can lag behind actual work — the agent may be mid-turn, processing a long tool call, or writing scratchpad while `update_agent_status` hasn't fired yet.
+
+**Rule: only intervene when ALL of these are stale for several minutes:**
+- `last_activity_at` — no new activity timestamp
+- `turns_used` — turn count not advancing
+- `stream_bytes` — SSE stream not producing output
+
+A status label alone is not a trigger. If activity signals are advancing, the agent is working — let it run. The monitoring job (heartbeat) is the next check, not a manual poke.
+
+Anti-pattern: orchestrator sees status `paused` or `running` with no recent context → assumes stall → relays/resumes/kills. This disrupts agents that are mid-work. Check the activity signals first. See Learning #82126.
 
 ## Temp file discipline
 
@@ -88,7 +115,7 @@ update_agent_status(phase="Phase N/6 NAME (milestone M/K)")   # EXECUTE with mil
 update_agent_status(phase="Phase N/6 NAME (blocked: <why>)")
 ```
 
-Free-form string, kanonical format. Single source of truth for live progress.
+Free-form string, canonical format. Single source of truth for live progress.
 
 **Orchestrator validates DONE:**
 - DONE-guard (auto, every 30s) checks phase block compliance via regex
@@ -132,6 +159,7 @@ These patterns cause the guard to reject the DONE claim:
 | Partial fields in Phase 5 | No issue breakdown, no Subagent ID | Self-Review must be structured |
 | No deploy evidence in Phase 6 | No `Deploy executed:` or `Deploy required:` | Must document deployment outcome |
 | Missing status line | Phase block exists but no `**Status:**` | Every phase needs a status |
+| Missing session id note | Phase 1 has no `**Session id:**` field and no "session id missing" note | `whoami()` must be called at Phase 1 start; backend session id (or retry-failure note) must appear in Phase 1 block |
 
 ### Findings-Table
 
@@ -148,9 +176,24 @@ When the DONE-guard rejects a claim, its findings are structured as:
 
 Each phase writes ONE structured block to scratchpad. Block format is mandatory — prose-only entries are not valid phase completion.
 
-### CRITICAL — scratchpad project string
+### CRITICAL — scratchpad project string + session id
 
-All `scratchpad_write` and `scratchpad_read` calls MUST use the `project` value returned by `whoami()`. Call `whoami()` once at Phase 1 start and use its `project` field verbatim for every scratchpad call afterwards. Do NOT guess, do NOT use the worktree basename, do NOT hardcode a short name. The orchestrator and the idle/done-verify state machines read from `agent.Project` (set by `yesmem_spawn_agent`); using a different string means your writes and reads land in a different scope and the orchestrator never sees your progress.
+All `scratchpad_write` and `scratchpad_read` calls MUST use the `project` value returned by `whoami()`. Call `whoami()` as the FIRST action at Phase 1 start and use its `project` field verbatim for every scratchpad call afterwards. Do NOT guess, do NOT use the worktree basename, do NOT hardcode a short name. The orchestrator and the idle/done-verify state machines read from `agent.Project` (set by `yesmem_spawn_agent`); using a different string means your writes and reads land in a different scope and the orchestrator never sees your progress.
+
+`whoami()` also returns the backend session id (`opencode_session_id` for opencode, `codex_session_id` for codex). This id is required for `resume_agent` after crashes. The daemon polls it asynchronously after spawn, so the first `whoami()` call may return it empty. Retry up to 3 times with 5 seconds sleep between calls. If still empty after 3 retries, note "session id missing — resume may fail" in Phase 1 scratchpad and proceed. Do not block beyond 15 seconds.
+
+**SCRATCHPAD DISCIPLINE (MANDATORY — prevents briefing clobber):**
+
+`scratchpad_write` is an UPSERT — it REPLACES the entire section. **The FIRST action after spawn MUST be `scratchpad_read`.** Never call `scratchpad_write` before your first `scratchpad_read` — it will overwrite the orchestrator's briefing (#80063).
+
+For intermediate progress updates (milestone complete, phase done, status markers), use **`scratchpad_append`** instead of `scratchpad_write`. `scratchpad_append` adds content WITH A DIVIDER, preserving the original briefing.
+
+|| Action | Tool |
+|---|---|---|
+|| First thing after spawn | `scratchpad_read` |
+|| Progress update (milestone/phase done) | `scratchpad_append` |
+|| Full DONE report (all 6 phases) | `scratchpad_write` |
+|| DRIFT alert / STUCK notice | `scratchpad_append` (preserves briefing) |
 
 ### Phase 1: ANALYZE
 ```
@@ -159,6 +202,7 @@ update_agent_status(phase="Phase 1/6 ANALYZE")
 ### Phase 1: ANALYZE
 **Status:** COMPLETE
 **Goal understood:** <1 sentence>
+**Session id:** <opencode_session_id or codex_session_id from whoami(), or "missing after 3 retries">
 **Codebase explored:** <files/packages inspected>
 **Constraints identified:** <list>
 **Dense context from memory:** <learning IDs relevant, or "none">
@@ -166,7 +210,7 @@ update_agent_status(phase="Phase 1/6 ANALYZE")
 **Open questions:** none (must be inferrable, no user questions)
 ```
 
-Information gathering is automatic — never ask the user. Code questions → search_code_index, grep, graph_traverse. API/docs → docs_search, hybrid_search. Errors → deep_search. Unknown concepts → WebFetch or infer.
+Information gathering is automatic — never ask the user. Code questions → search_code_index, grep, graph_traverse. API/docs → docs_search, hybrid_search. Errors → deep_search. Unknown concepts → WebFetch. NEVER guess — if you don't know, look it up (WebFetch or the indexed docs); infer only from code/context already in your turn.
 
 ### Phase 2: PLAN
 ```
@@ -189,13 +233,13 @@ update_agent_status(phase="Phase 2/6 PLAN")
 ```
 
 **Milestone criteria (agent decides):**
-- ≤5 steps: single milestone, no sub-structure needed
-- 6-15 steps: 2-3 milestones à 3-6 steps recommended
-- 16+ steps: 4-6 milestones à 3-5 steps (max ~6 per milestone for reset granularity)
+- ≤5 steps: single milestone
+- 6-15 steps: MUST split into 2-3 milestones à 3-6 steps
+- 16+ steps: MUST split into 4-6 milestones à 3-5 steps
 
-Milestones are a recovery aid for context-collapse, not a bureaucracy. If the plan is small, skip them.
+Milestones are a recovery aid for context-collapse, not a bureaucracy. Small plan (≤5 steps) → one milestone suffices; this is a granularity choice, NOT a license to skip the phase structure or the milestone blocks.
 
-**KEIN OVERENGINEERING.** If a step looks complicated, ask: "Can I solve this with a boolean flag and 10 lines?" Usually yes. Resist: per-agent configuration, persistence layers, abstract Strategy interfaces, retry mechanisms with backoff. Prefer: global constants, single struct + map, simple if/return.
+**NO OVERENGINEERING.** If a step looks complicated, ask: "Can I solve this with a boolean flag and 10 lines?" Usually yes. Resist: per-agent configuration, persistence layers, abstract Strategy interfaces, retry mechanisms with backoff. Prefer: global constants, single struct + map, simple if/return.
 
 ### Phase 3: EXECUTE
 ```
@@ -241,10 +285,10 @@ update_agent_status(phase="Phase 4/6 VERIFY")
 **Lint/type-check:** <command> → <result>
 **Build:** <command> → <binary mtime if applicable>
 **Coverage gaps:** none | <list>
-**VERIFY cycles used:** N/3
+**VERIFY cycles used:** N/5
 ```
 
-If issues found → fix and re-verify (max 3 cycles, see CONVERGENCE GATE).
+If issues found → fix and re-verify (max 5 cycles, see CONVERGENCE GATE).
 
 ### Phase 5: REVIEW (Two-Stage: Self + Cold)
 ```
@@ -267,7 +311,7 @@ update_agent_status(phase="Phase 5/6 REVIEW")
 
 **Security:** <findings list with NEW/MODIFIED distinction per security-review skill, OR "none — diff reviewed, no findings", OR "skipped — diff is docs-only">
 
-**REVIEW→VERIFY cycles used:** N/3
+**REVIEW→VERIFY cycles used:** N/5
 ```
 
 **Stage 1 — Self-Review** (catches mechanical issues): Get full delta `git diff origin/main` + `git log origin/main..HEAD --oneline`. Checklist: Plan alignment, Code quality, Architecture, Testing, Production readiness, **Security (item 6 — MANDATORY)**, Second-order effects ("if this ships, what happens next? trace 2+ levels"), Assumption surfacing ("what must be TRUE for this to work?").
@@ -282,12 +326,12 @@ update_agent_status(phase="Phase 5/6 REVIEW")
 
 **Merging & Resolution:**
 - Merge findings from both stages (deduplicate, preserve highest severity)
-- **ALL findings must be fixed autonomously** — no user feedback, no escalation for fixable issues
-- Critical + Important → fix immediately, max 3 cycles per issue
-- Minor → fix if <2 min each, otherwise document and proceed
-- After fixes → loop back to Phase 4 VERIFY, then re-review (max 3 REVIEW→VERIFY cycles total)
+- **ALL findings MUST be fixed autonomously** -- no user feedback, no escalation for fixable issues
+- Critical, Important, medium, mittel → MUST fix immediately
+- Minor also MUST fix immediately
+- After fixes → loop back to Phase 4 VERIFY, then re-review (max 5 REVIEW→VERIFY cycles total)
 - Assessment "No" (unfixable) → STOP, escalate via send_to: "REVIEW BLOCKED: <reasons>"
-- **Never leave fixable issues for the user** — review is a work phase, not advisory
+- **Never leave fixable issues for the user** -- review is a work phase, not advisory
 - After `git show`/`git diff` always `Read` the current file — diffs show what changed, not what's there NOW
 
 ### Phase 6: FINISH
@@ -299,8 +343,10 @@ update_agent_status(phase="Phase 6/6 FINISH")
 **Deploy required:** yes (binary/skill/cap/code change) | no (docs/config only)
 **Deploy executed:** yes — <evidence: make build output, md5sum diff>
   | no — <REASON. Default: BLOCKED, escalate to orchestrator>
-**PR created:** yes — <url> | no — <reason>
-**Worktree:** kept (pending merge confirmation) | deleted
+**Branch pushed:** yes — <git log origin/<branch> -1 output> | no — <reason>
+**PR created:** yes — <url> | no — left for orchestrator
+**Merged to main:** NO — agents do not merge (merge is orchestrator-only)
+**Worktree:** kept (pending merge confirmation)
 **send_to orchestrator:** yes — <timestamp>
 **send_to payload:** `[DONE] [DEPLOY: yes|no|skipped|failed] [COMMIT: <hash>] [BRANCH: <name>] [MERGE: no|pending-PR|blocked-PR] <summary>`
 **set_plan complete:** yes
@@ -310,19 +356,22 @@ update_agent_status(phase="Phase 6/6 FINISH")
   - `DEPLOY`: `yes` (deployed), `no` (docs-only, not required), `skipped` (required but skipped per instruction/contract), `failed` (attempted, failed — escalate)
   - `MERGE`: `no` (default — agents never merge), `pending-PR` (PR created, awaits orchestrator), `blocked-PR` (PR has blockers)
 
-- **Default: Create PR** from worktree branch to main
-- **`--merge` flag:** merge PR after all checks pass (only if user requested)
-- Without `--merge`: send_to caller_session: "[DONE] [DEPLOY: <status>] [COMMIT: <hash>] [BRANCH: <name>] [MERGE: pending-PR] <summary>. PR: <url>"
-- **Do NOT delete worktree** — keep until user confirms merge
+- **Merge policy: Agents NEVER merge to main themselves.**
+  - Default: push the worktree branch to origin, create a PR (or leave for the orchestrator to create one), then `send_to caller_session: "[DONE] [DEPLOY: <status>] [COMMIT: <hash>] [BRANCH: <name>] [MERGE: pending-PR] <summary>"`. Markers are parsed by orchestrator — keep leading, free-text summary after.
+  - `--merge` flag on the /yesloop command means the **orchestrator** requested auto-merge after PR checks pass. Even then the agent only pushes the branch and reports the PR URL — it does not run `git merge main` / `git checkout main && git merge <branch>` itself. The orchestrator handles the merge.
+  - Running `git checkout main` + `git merge <branch>` inside the agent's Phase 6 is ALWAYS wrong, regardless of flag, confidence, or test results. The agent's git scope is its worktree branch. Main is the orchestrator's scope.
+  - Rationale: the orchestrator owns release decisions, rollback, commit-message control, and PR review. A self-merge bypasses all four.
+- **Do NOT delete worktree** — keep until the orchestrator confirms the merge is done.
 
-## Mini Example (filled Phase 3, others stubbed)
+## Mini Example (abbreviated — field names and headers are guard-compliant, copy them EXACTLY)
 
 ```
 ### Phase 1: ANALYZE
 **Status:** COMPLETE
 **Goal understood:** Add config.yaml read/write to set_config/get_config
+**Session id:** ses_abc123 (from whoami())
 **Codebase explored:** internal/daemon/handler_state.go, internal/config/config.go
-**Constraints:** no breaking MCP API, proxy_state overrides must still work
+**Constraints identified:** no breaking MCP API, proxy_state overrides must still work
 **Risks:** concurrent writes, type coercion
 **Open questions:** none
 
@@ -363,18 +412,21 @@ update_agent_status(phase="Phase 6/6 FINISH")
 **Status:** COMPLETE
 **Tests run:** go test ./internal/config/... ./internal/daemon/... → exit 0
 **Build:** go build ./... → success
-**VERIFY cycles used:** 1/3
+**VERIFY cycles used:** 1/5
 
 ### Phase 5: REVIEW
 **Status:** COMPLETE
-**Stage 1:** Strengths: clean API, good test coverage
-  Issues: Important (1) type coercion, Important (1) proxy_state dual-write
-  Assessment: With fixes
-**Stage 2:** task() dispatched: yes, Subagent ID: agent-234
-  Findings: same 2 Important + 4 Minor
-  Merged assessment: With fixes — fix both IMPORTANTs before merge
-  Fix commits: cd2ba04 fix(config): proxy_state dual-write + type coercion
-  **Security:** none — diff reviewed, no HIGH/MEDIUM/LOW findings
+**Stage 1: Self-Review**
+- Strengths: clean API, good test coverage
+- Issues: Important (2) / Minor (4), with file:line
+- Assessment: With fixes
+**Stage 2: Cold Review via task()**
+**task() dispatched:** yes
+**Subagent ID:** agent-234
+**Findings:** same 2 Important + 4 Minor
+**Merged assessment:** With fixes — ALL 6 findings (2 Important + 4 Minor) fixed before merge
+**Fix commits:** cd2ba04 fix(config): proxy_state dual-write, type coercion + all 4 minors
+**Security:** none — diff reviewed, no HIGH/MEDIUM/LOW findings
 
 ### Phase 6: FINISH
 **Status:** COMPLETE
@@ -393,7 +445,7 @@ update_agent_status(phase="Phase 6/6 FINISH")
 1. Re-read the original goal from `scratchpad_read(project, section)` or `get_plan()`
 2. Compare current state against original scope:
    - **Still on track?** → proceed
-   - **Minor drift?** → document in scratchpad, correct course, proceed
+   - **Minor drift?** → MANDATORY fix immediately — correct course NOW, document what drifted and how you corrected it in scratchpad, then continue
    - **Major divergence?** → **STOP.** scratchpad_write("⚠️ DRIFT: <what changed>") + send_to orchestrator: "DRIFT: <details>. Continue or abort?"
 
 What counts as drift:
@@ -413,7 +465,7 @@ What counts as drift:
 
 **Hard limit:** No forward progress (no completed steps in todowrite) for 5 turns → escalate and stop.
 
-### BEWEISLAST BEI SCRATCHPAD-CLAIMS
+### PROOF BURDEN (BEWEISLAST) for scratchpad claims
 
 Before writing "DONE", "completed", "verified" to scratchpad, confirm the artifact matches the claim — not just that the command exited 0.
 
@@ -476,7 +528,7 @@ On startup, before ANY other action:
 |---|---|
 | Simple fix, clear solution | Execute directly |
 | 2-3 approaches, unclear best | Pick one, document rationale, proceed |
-| Need to change scope | Document, proceed if minor; escalate if major |
+| Need to change scope | MANDATORY fix immediately — stop the drift, correct course NOW, document it. Escalate only if the correction itself is impossible or blocking |
 | Tests fail repeatedly | Debug max 3 cycles → CONVERGENCE GATE |
 | Irreversible action (force-push, drop table) | Pause, request confirmation |
 | 3 consecutive ticks with nothing to do | End the loop, report idle |
@@ -488,7 +540,7 @@ On startup, before ANY other action:
 - **inline mode:** short progress updates to user between phases
 - **TUI agent mode:** scratchpad_write for detailed state, send_to for completion
 - **scheduled mode:** scratchpad_write for state, broadcast on completion
-- Never ask "soll ich weitermachen?" — just continue unless blocked
+- Never ask "should I continue?" — just continue unless blocked
 
 ## Automated Idle-Trigger
 
