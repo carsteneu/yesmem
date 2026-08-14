@@ -14,7 +14,10 @@ import (
 	"time"
 )
 
-const maxDownloadSize = 100 << 20 // 100 MB safety limit
+// Release archives ship ~120 MiB compressed (goreleaser embeds the full
+// binary), so the download limit must exceed that. 100 MiB truncated real
+// releases (checksum mismatch), hence 200 MiB safety headroom.
+const maxDownloadSize = 200 << 20 // 200 MB safety limit
 
 // DownloadAndReplace downloads a binary archive, verifies its checksum,
 // extracts the binary, and atomically replaces the destination file.

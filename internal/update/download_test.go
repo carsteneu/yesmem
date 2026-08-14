@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
+	"math/rand"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -23,6 +24,47 @@ func createTarGz(t *testing.T, name string, content []byte) []byte {
 	tw.Close()
 	gw.Close()
 	return buf.Bytes()
+}
+
+func TestDownloadAndReplace_LargeArchive(t *testing.T) {
+	// Real goreleaser archives are ~120 MiB; the old 100 MiB download cap
+	// truncated them, producing a checksum mismatch on every update.
+	const payloadSize = 110 << 20 // above old 100 MiB cap, below new 200 MiB
+	// Incompressible payload so the gzip archive stays >100 MiB and actually
+	// exercises the download cap (a repetitive pattern would compress tiny).
+	rng := rand.New(rand.NewSource(1))
+	payload := make([]byte, payloadSize)
+	rng.Read(payload)
+	binaryContent := append([]byte("fake-yesmem-binary-"), payload...)
+	archive := createTarGz(t, "yesmem", binaryContent)
+	hash := sha256.Sum256(archive)
+	checksumLine := fmt.Sprintf("%x  yesmem_large.tar.gz\n", hash)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/binary":
+			w.Write(archive)
+		case "/checksums":
+			w.Write([]byte(checksumLine))
+		}
+	}))
+	defer srv.Close()
+
+	tmpDir := t.TempDir()
+	dest := filepath.Join(tmpDir, "yesmem")
+
+	err := DownloadAndReplace(srv.URL+"/binary", srv.URL+"/checksums", "yesmem_large.tar.gz", dest)
+	if err != nil {
+		t.Fatalf("DownloadAndReplace for %d-byte archive failed: %v", len(archive), err)
+	}
+
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("read dest: %v", err)
+	}
+	if !bytes.Equal(got, binaryContent) {
+		t.Error("binary content mismatch for large archive")
+	}
 }
 
 func TestDownloadAndReplace_Success(t *testing.T) {
