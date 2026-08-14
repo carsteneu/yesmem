@@ -7,10 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Raise download cap 100 MiB -> 200 MiB (checksum mismatch)
+
+## [2.3.10] - 2026-08-14
+
 ### Changed
 
 - Exclude opencode sidebar template from public mirror
 - Move opencode sidebar template out of contrib into plugins/
+
+### Documentation
+
+- Regen with v2.3.9 + sidebar move/exclude entries
 
 ## [2.3.9] - 2026-08-14
 
@@ -6829,7 +6839,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add comprehensive tests for generator and storage
 
 
-[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.3.9...HEAD
+[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.3.10...HEAD
+[2.3.10]: https://github.com/carsteneu/yesmem/compare/v2.3.9...v2.3.10
 [2.3.9]: https://github.com/carsteneu/yesmem/compare/v2.3.8...v2.3.9
 [2.3.8]: https://github.com/carsteneu/yesmem/compare/v2.3.7...v2.3.8
 [2.3.7]: https://github.com/carsteneu/yesmem/compare/v2.3.6...v2.3.7
