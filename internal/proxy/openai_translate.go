@@ -107,17 +107,23 @@ func translateMessages(msgs []OpenAIMessage) ([]any, error) {
 
 		switch m.Role {
 		case "user":
-			// Check for image_url blocks in content array — must be preserved
-			// as Anthropic image blocks, not flattened to string by openAIContentText.
+			// Check for image_url / file blocks in content array — must be preserved
+			// as structured blocks, not flattened to string by openAIContentText.
+			// file blocks (PDF & Co. from opencode/AI-SDK) ride along untouched;
+			// the LiteLLM gateway's docling_hook converts them to Markdown.
 			if contentArr, ok := m.Content.([]any); ok {
-				hasImage := false
+				hasImage, hasFile := false, false
 				for _, block := range contentArr {
-					if bm, ok := block.(map[string]any); ok && bm["type"] == "image_url" {
-						hasImage = true
-						break
+					if bm, ok := block.(map[string]any); ok {
+						if bm["type"] == "image_url" {
+							hasImage = true
+						}
+						if bm["type"] == "file" {
+							hasFile = true
+						}
 					}
 				}
-				if hasImage {
+				if hasImage || hasFile {
 					var blocks []any
 					for _, block := range contentArr {
 						bm, ok := block.(map[string]any)
@@ -133,6 +139,8 @@ func translateMessages(msgs []OpenAIMessage) ([]any, error) {
 							if img := translateOpenAIImageToAnthropic(bm); img != nil {
 								blocks = append(blocks, img)
 							}
+						case "file":
+							blocks = append(blocks, map[string]any{"type": "file", "file": bm["file"]})
 						}
 					}
 					if len(blocks) == 0 {

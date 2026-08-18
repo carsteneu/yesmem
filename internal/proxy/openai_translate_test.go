@@ -216,6 +216,85 @@ func TestTranslateOpenAIToAnthropic_JSONRoundTrip(t *testing.T) {
 // format. opencode (@ai-sdk/openai-compatible) sends images as
 // {type:"image_url", image_url:{url:"data:..."}} — the proxy must translate
 // these to Anthropic {type:"image", source:{type:"base64",...}} blocks.
+// Dokument-Attachments (OpenAI file-Part): muss den OpenAI→Anthropic→OpenAI
+// Round-Trip überleben — der Gateway docling_hook konvertiert sie zu Markdown.
+func TestTranslateFilePartRoundTrip(t *testing.T) {
+	oaiReq := OpenAIChatRequest{
+		Model: "privateBob",
+		Messages: []OpenAIMessage{
+			{
+				Role: "user",
+				Content: []any{
+					map[string]any{"type": "text", "text": "was steht drin?"},
+					map[string]any{
+						"type": "file",
+						"file": map[string]any{
+							"filename":  "doc.pdf",
+							"file_data": "data:application/pdf;base64,JVBERi0=",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	anthReq, err := translateOpenAIToAnthropic(oaiReq)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	msgs, _ := anthReq["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("messages = %d, want 1", len(msgs))
+	}
+	m, _ := msgs[0].(map[string]any)
+	blocks, ok := m["content"].([]any)
+	if !ok {
+		t.Fatalf("content = %T, want []any (file part was flattened)", m["content"])
+	}
+	var sawFile bool
+	for _, b := range blocks {
+		bm, _ := b.(map[string]any)
+		if bm["type"] == "file" {
+			sawFile = true
+			f, _ := bm["file"].(map[string]any)
+			if f["filename"] != "doc.pdf" {
+				t.Errorf("file.filename = %v, want doc.pdf", f["filename"])
+			}
+		}
+	}
+	if !sawFile {
+		t.Fatalf("no file block survived forward translation: %+v", blocks)
+	}
+
+	outReq, err := translateAnthropicToOpenAI(anthReq)
+	if err != nil {
+		t.Fatalf("reverse: %v", err)
+	}
+	outMsgs, _ := outReq["messages"].([]any)
+	if len(outMsgs) != 1 {
+		t.Fatalf("out messages = %d, want 1", len(outMsgs))
+	}
+	om, _ := outMsgs[0].(map[string]any)
+	arr, ok := om["content"].([]any)
+	if !ok {
+		t.Fatalf("out content = %T, want []any (file part was dropped in reverse)", om["content"])
+	}
+	sawFile = false
+	for _, b := range arr {
+		bm, _ := b.(map[string]any)
+		if bm["type"] == "file" {
+			sawFile = true
+			f, _ := bm["file"].(map[string]any)
+			if f["file_data"] != "data:application/pdf;base64,JVBERi0=" {
+				t.Errorf("file_data mismatch: %v", f["file_data"])
+			}
+		}
+	}
+	if !sawFile {
+		t.Fatalf("no file part in reverse output: %+v", arr)
+	}
+}
+
 func TestTranslateOpenAIToAnthropic_ImageURLPreserved(t *testing.T) {
 	oaiReq := OpenAIChatRequest{
 		Model: "deepseek-v4-pro",
