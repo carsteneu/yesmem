@@ -241,6 +241,19 @@ Milestones are a recovery aid for context-collapse, not a bureaucracy. Small pla
 
 **NO OVERENGINEERING.** If a step looks complicated, ask: "Can I solve this with a boolean flag and 10 lines?" Usually yes. Resist: per-agent configuration, persistence layers, abstract Strategy interfaces, retry mechanisms with backoff. Prefer: global constants, single struct + map, simple if/return.
 
+### Ledger Plan-Schema (set_plan convention — feeds the Live-Ledger)
+Shape the stored plan (set_plan) so the live-ledger subscriber (`ledger_nudge`) can render it as a compact, immediately readable system-state block. A plan following this schema gives the orchestrator and the next self a shared proof-ledger, not a wish-list.
+
+**Schema keys (Goal/Core/Verified/Open/Next):**
+- **Goal:** the one aim of this session, 1-2 lines
+- **Core:** fixed decisions / constraints that are NO LONGER up for debate
+- **Verified:** what is already proven — every item carries a proof line:
+  - `<claim>` — `proof: <command> → <result>` (e.g. `proof: go test ./internal/... → exit 0, 18/18`)
+- **Open:** open questions / alternatives still to be decided
+- **Next:** the immediate next step
+
+**Proof-line requirement:** only an item with a `proof:` line counts as Verified. A claim without a proof pointer belongs in **Open**, not **Verified**. The ledger is an evidence ledger — claims must cite the command and its result.
+
 ### Phase 3: EXECUTE
 ```
 update_agent_status(phase="Phase 3/6 EXECUTE")
@@ -333,6 +346,15 @@ update_agent_status(phase="Phase 5/6 REVIEW")
 - Assessment "No" (unfixable) → STOP, escalate via send_to: "REVIEW BLOCKED: <reasons>"
 - **Never leave fixable issues for the user** -- review is a work phase, not advisory
 - After `git show`/`git diff` always `Read` the current file — diffs show what changed, not what's there NOW
+
+### Behauptungs-Inventar (proof-poverty check for the DONE-Report)
+Every coverage / success claim in the DONE-Report must carry a proof pointer (command + result) on the same line; a claim without one is marked UNVERIFIED explicitly. This complements the Phase 4 `**Tests run:**` line — that records the overall run, here each individual claim is bound to its own evidence.
+
+**Format per claim:**
+- `<claim>` → `proof: <command> → <result>` (e.g. `proof: bun test plugins/opencode-yesmem → exit 0, 24/24`)
+- not verifiable now → `<claim>` → `UNVERIFIED: <why not verified>`
+
+Corollary from the ledgere schema: don't claim success you cannot back. Move unproven items to **Open** in the plan instead of asserting them in **Verified**.
 
 ### Phase 6: FINISH
 ```

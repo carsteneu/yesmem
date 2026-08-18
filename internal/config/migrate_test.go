@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestMigrateConfig_AddsSkillEvalInject(t *testing.T) {
@@ -683,5 +685,105 @@ func TestMigrateConfig_TopLevelHeaderWithComment(t *testing.T) {
 	}
 	if n == 0 {
 		t.Errorf("expected migration to add keys under inline-comment top-level header, got n=%d", n)
+	}
+}
+
+// TestMigrateConfig_ProducesValidYAML is a regression test for the update-flow
+// config corruption: all injected snippets must keep the YAML structurally
+// valid (correct indentation, no glued lines / no "10embedding:"-style merges).
+func TestMigrateConfig_ProducesValidYAML(t *testing.T) {
+	input := `proxy:
+  enabled: true
+  usage_deflation_factor: 0.7
+
+embedding:
+  provider: sse
+
+extraction:
+  model: sonnet
+
+pricing:
+  haiku: { input: 1.0, output: 5.0 }
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	os.WriteFile(path, []byte(input), 0644)
+
+	if _, err := MigrateConfig(path); err != nil {
+		t.Fatalf("MigrateConfig: %v", err)
+	}
+
+	data, _ := os.ReadFile(path)
+	content := string(data)
+
+	// Glued lines: two keys on one physical line must never happen.
+	for _, glue := range []string{
+		"true  openai_target:",     // timestamps: true + openai_target joined
+		"10embedding:",             // cache_keepalive_min_messages glued to embedding:
+		"true  auto_configure",     // any future glue of that shape
+	} {
+		if strings.Contains(content, glue) {
+			t.Errorf("migrated config contains glued tokens %q — invalid YAML: %s", glue, content)
+		}
+	}
+
+	// Full parse — must be structurally valid YAML with intended shape.
+	var parsed map[string]any
+	if err := yaml.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("migrated config is not valid YAML: %v\n---\n%s", err, content)
+	}
+
+	if parsed["embedding"] == nil {
+		t.Error("embedding section lost during migration")
+	}
+	if parsed["pricing"] == nil {
+		t.Error("pricing section lost during migration")
+	}
+
+	proxy := parsed["proxy"].(map[string]any)
+	for _, wantKey := range []string{
+		"skill_eval_inject", "auto_configure_providers",
+		"model_features", "feature_defaults", "openai_target", "reset_cache",
+		"cache_keepalive_min_messages",
+	} {
+		if _, ok := proxy[wantKey]; !ok {
+			t.Errorf("proxy.%s missing after migration", wantKey)
+		}
+	}
+	// effort_floor is intentionally an example (commented out), not an active key.
+	if _, ok := proxy["effort_floor"]; ok {
+		t.Error("effort_floor should stay commented (example), not be an active key")
+	}
+
+	fd := proxy["feature_defaults"].(map[string]any)
+	if fd["timestamps"] != true {
+		t.Errorf("feature_defaults.timestamps = %v, want true", fd["timestamps"])
+	}
+	if mf, ok := proxy["model_features"].(map[string]any); !ok {
+		t.Error("model_features is not a mapping")
+	} else if _, ok := mf["claude"]; !ok {
+		t.Error("model_features.claude missing")
+	}
+}
+
+// TestMigrateConfig_PricingDeepseekIndent guards the deepseek pricing snippet
+// indentation: entries must sit as children of pricing (2-space), not nested
+// one level too deep (4-space) which makes them a sub-block of gpt-5.4.
+func TestMigrateConfig_PricingDeepseekIndent(t *testing.T) {
+	input := "pricing:\n  haiku: { input: 1.0, output: 5.0 }\n"
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	os.WriteFile(path, []byte(input), 0644)
+
+	MigrateConfig(path)
+
+	data, _ := os.ReadFile(path)
+	var parsed map[string]any
+	if err := yaml.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("migrated config not valid YAML: %v\n---\n%s", err, data)
+	}
+	pricing := parsed["pricing"].(map[string]any)
+	if _, ok := pricing["deepseek-v4-flash"]; !ok {
+		t.Error("deepseek-v4-flash not a child of pricing (wrong indent)")
 	}
 }

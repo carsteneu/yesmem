@@ -33,8 +33,8 @@ var proxyMigrations = []configMigration{
 	{
 		key: "auto_configure_providers",
 		snippet: `
-    # Automatically discover and configure provider routing from opencode config.
-    auto_configure_providers: true
+  # Automatically discover and configure provider routing from opencode config.
+  auto_configure_providers: true
 `,
 	},
 }
@@ -130,8 +130,8 @@ const modelFeaturesBlock = `
 `
 
 const deepseekPricingSnippet = `
-    deepseek-v4-flash: { input: 0.14, output: 0.56 }
-    deepseek-v4-pro:   { input: 0.28, output: 1.12 }
+  deepseek-v4-flash: { input: 0.14, output: 0.56 }
+  deepseek-v4-pro:   { input: 0.28, output: 1.12 }
 `
 
 // MigrateConfig reads an existing config.yaml and inserts any missing
@@ -339,6 +339,9 @@ http:
 }
 
 // insertAtEndOfSection inserts snippet at the end of a YAML section (before the next top-level key).
+// Newline-safe: snippet boundaries are normalized so injected content never glues
+// onto the preceding or following line (previously caused "10embedding:"-style
+// corruption when snippets lacked leading/trailing newlines).
 func insertAtEndOfSection(content, sectionKey, snippet string) string {
 	lines := strings.Split(content, "\n")
 	insertIdx := -1
@@ -354,12 +357,13 @@ func insertAtEndOfSection(content, sectionKey, snippet string) string {
 		}
 	}
 
+	snippet = strings.Trim(snippet, "\n")
 	if insertIdx >= 0 {
 		before := strings.Join(lines[:insertIdx], "\n")
 		after := strings.Join(lines[insertIdx:], "\n")
-		return before + snippet + after
+		return before + "\n" + snippet + "\n" + after
 	}
-	return content + snippet
+	return strings.TrimRight(content, "\n") + "\n" + snippet
 }
 
 // appendToEnd appends snippet to the end of the content.

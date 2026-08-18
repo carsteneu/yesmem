@@ -7,9 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add ledger_nudge subscriber — append active plan as live ledger (PATCH-ONCE, never-block)
+
+### Fixed
+
+- Key ledger PATCH-ONCE on message identity, not content hash — distinct identical turns get a fresh ledger; dedup no-active-plan RPC within a turn
+- Stop MigrateConfig from corrupting config.yaml (glued lines + bad indent)
+
+### Performance
+
+- Skill_nudge never-block stage-2 (LRU result cache, background precompute) + guard-config cache + pid-tagged plugin log
+
+### Documentation
+
+- Add ledger plan-schema (Phase 2) + Behauptungs-Inventar (Phase 5)
+
+## [2.3.11] - 2026-08-14
+
 ### Fixed
 
 - Raise download cap 100 MiB -> 200 MiB (checksum mismatch)
+
+### Documentation
+
+- Regen with update cap fix + v2.3.10 entries
 
 ## [2.3.10] - 2026-08-14
 
@@ -6839,7 +6862,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add comprehensive tests for generator and storage
 
 
-[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.3.10...HEAD
+[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.3.12...HEAD
+[2.3.12]: https://github.com/carsteneu/yesmem/compare/v2.3.11...v2.3.12
+[2.3.11]: https://github.com/carsteneu/yesmem/compare/v2.3.10...v2.3.11
 [2.3.10]: https://github.com/carsteneu/yesmem/compare/v2.3.9...v2.3.10
 [2.3.9]: https://github.com/carsteneu/yesmem/compare/v2.3.8...v2.3.9
 [2.3.8]: https://github.com/carsteneu/yesmem/compare/v2.3.7...v2.3.8
