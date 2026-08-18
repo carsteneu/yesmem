@@ -65,14 +65,16 @@ const FIRST_PARTY_DEFAULTS: Record<string, string> = {
   }
 
   async function resolveGuardConfig(): Promise<{ model: string; apiUrl: string; apiKey: string; npm: string }> {
-    // 1. Read extraction.model from config.yaml (fallback: deepseek-v4-flash)
-    let model = "deepseek-v4-flash";
-    try {
-      const configPath = `${process.env.HOME}/.claude/yesmem/config.yaml`;
-      const yaml = await import("yaml");
-      const config = yaml.parse(await Bun.file(configPath).text());
-      if (config?.extraction?.model) model = config.extraction.model;
-    } catch {}
+      // 1. Read extraction.model from config.yaml (fallback: deepseek-v4-flash)
+      let model = "deepseek-v4-flash";
+      let providerTargets: Record<string, string> = {};
+      try {
+        const configPath = `${process.env.HOME}/.claude/yesmem/config.yaml`;
+        const yaml = await import("yaml");
+        const config = yaml.parse(await Bun.file(configPath).text());
+        if (config?.extraction?.model) model = config.extraction.model;
+        if (config?.proxy?.provider_targets) providerTargets = config.proxy.provider_targets || {};
+      } catch {}
 
     // 2. Find provider in models.json that owns this model WITH a key
     const models = await loadModelsJSON();
@@ -101,13 +103,29 @@ const FIRST_PARTY_DEFAULTS: Record<string, string> = {
       }
     }
 
-    // Fallback: use keyless provider if no keyed provider found
-    if (!apiKey && fallbackApiUrl) {
-      apiUrl = fallbackApiUrl;
-      apiKey = fallbackApiKey;
-    }
+      // Fallback: use keyless provider if no keyed provider found
+      if (!apiKey && fallbackApiUrl) {
+        apiUrl = fallbackApiUrl;
+        apiKey = fallbackApiKey;
+      }
 
-    return { model, apiUrl, apiKey, npm };
+      // Private/gateway models (e.g. privateTom) are usually NOT in models.json — they are
+      // served by a custom upstream (config.yaml proxy.provider_targets) and authenticated
+      // with the opencode "gateway" auth key. Resolve those directly.
+      if (!apiKey) {
+        let target = providerTargets[model] || "";
+        if (!target) {
+          const flat = Object.keys(providerTargets).find(k => k.toLowerCase() === model.toLowerCase());
+          target = flat ? providerTargets[flat] : "";
+        }
+        if (target) {
+          apiUrl = target.replace(/\/+$/, "");
+          apiKey = (auth.gateway && auth.gateway.key) || "";
+          npm = "@ai-sdk/openai-compatible";
+        }
+      }
+
+      return { model, apiUrl, apiKey, npm };
   }
 
   export { resolveGuardConfig };

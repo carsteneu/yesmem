@@ -14,14 +14,16 @@ import { failureLearnHook } from "./failure_learn";
 import { autoResolveHook } from "./auto_resolve";
 import { idleReminderHook } from "./idle_reminder";
 import { skillNudgeHook } from "./skill_nudge";
+import { ledgerNudgeHook } from "./ledger_nudge";
 import { ruleGuardHook } from "./rule_guard";
 import { YesMemRPC } from "./rpc";
 
 export const YesMemPlugin = async (ctx: any) => {
   const rpc = new YesMemRPC();
   const directory = ctx.directory || process.env.PWD || "";
-          const V = 17; // bump to bust Bun module cache
+          const V = 19; // bump to bust Bun module cache
 
+          // v18: ledger_nudge subscriber — append active plan as ledger suffix (PATCH-ONCE, plan-version-freeze, never-block)
           // v16: keep helper exports out of the plugin entrypoint for legacy OpenCode loaders
           // v15: inject authoritative per-call OpenCode session and cwd context into yesmem tools
           // v14: hs_nudge removed — non-idempotent per-request mutation busted prefix cache; frozen [think-reminder] carries the same message cache-safe
@@ -41,6 +43,7 @@ export const YesMemPlugin = async (ctx: any) => {
   const ar = autoResolveHook(rpc);
     const ir = idleReminderHook(rpc);
     const sn = skillNudgeHook();
+    const ln = ledgerNudgeHook(rpc, () => (currentSessionID ? `opencode:${currentSessionID}` : ""));
 
   // Compose: both need tool.execute.before — code_nav blocks first, then rule_guard
   async function composedBefore(input: any, output: any) {
@@ -56,11 +59,12 @@ export const YesMemPlugin = async (ctx: any) => {
     try { await ar["tool.execute.after"]?.(input, output); } catch {}
   }
 
-    // Compose: experimental.chat.messages.transform — rule_guard conversation capture + skill_nudge
-    async function composedMessagesTransform(input: any, output: any) {
-      try { await grd["experimental.chat.messages.transform"]?.(input, output); } catch {}
-      try { await sn["experimental.chat.messages.transform"]?.(input, output); } catch {}
-    }
+      // Compose: experimental.chat.messages.transform — rule_guard conversation capture + skill_nudge + ledger_nudge
+      async function composedMessagesTransform(input: any, output: any) {
+        try { await grd["experimental.chat.messages.transform"]?.(input, output); } catch {}
+        try { await sn["experimental.chat.messages.transform"]?.(input, output); } catch {}
+        try { await ln["experimental.chat.messages.transform"]?.(input, output); } catch {}
+      }
 
     // Compose: message.updated — idle_reminder
     async function composedMessageUpdated(input: any) {
