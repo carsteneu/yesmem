@@ -279,7 +279,10 @@ func Run(cfg Config) error {
 				MaxIdleConns:          10,
 				IdleConnTimeout:       90 * time.Second,
 				DisableCompression:    true,
-				ResponseHeaderTimeout: 60 * time.Second,
+				// Muss über dem Gateway-Request-Timeout (300s) liegen dürfen:
+			// PDF-Kaltkonvertierung (docling OCR) läuft im Pre-Call-Hook,
+			// bevor der erste Response-Header kommt — beobachtet bis ~96s.
+			ResponseHeaderTimeout: 5 * time.Minute,
 			},
 		},
 		logger:                createLogger(cfg.DataDir),

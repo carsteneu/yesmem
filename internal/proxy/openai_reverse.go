@@ -139,6 +139,7 @@ func translateAnthropicUserMsg(m map[string]any) []any {
 	var textParts []string
 	var toolResults []any
 	var imageParts []any
+	var fileParts []any
 	var cacheControl any
 
 	for _, block := range blocks {
@@ -167,6 +168,13 @@ func translateAnthropicUserMsg(m map[string]any) []any {
 			if img := translateAnthropicImageToOpenAI(bm); img != nil {
 				imageParts = append(imageParts, img)
 			}
+		case "file":
+			// Dokument-Attachments (OpenAI file-Part, z.B. PDF via AI-SDK):
+			// unverändert zurück — der Gateway docling_hook übernimmt die
+			// Konvertierung zu Markdown.
+			if f, ok := bm["file"].(map[string]any); ok {
+				fileParts = append(fileParts, map[string]any{"type": "file", "file": f})
+			}
 		}
 		// Preserve cache_control from the last content block that has it.
 		if cc, ok := bm["cache_control"]; ok {
@@ -190,12 +198,13 @@ func translateAnthropicUserMsg(m map[string]any) []any {
 	// of text + image_url parts (OpenAI multimodal format). Tool results stay
 	// separate so they remain role:tool messages — and go first to preserve
 	// DeepSeek's tool_call→tool adjacency requirement.
-	if len(imageParts) > 0 {
+	if len(imageParts) > 0 || len(fileParts) > 0 {
 		var contentArr []any
 		if len(textParts) > 0 {
 			contentArr = append(contentArr, map[string]any{"type": "text", "text": strings.Join(textParts, "")})
 		}
 		contentArr = append(contentArr, imageParts...)
+		contentArr = append(contentArr, fileParts...)
 		umsg := map[string]any{"role": "user", "content": contentArr}
 		if cacheControl != nil {
 			umsg["cache_control"] = cacheControl
