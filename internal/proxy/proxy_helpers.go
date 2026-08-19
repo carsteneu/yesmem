@@ -705,22 +705,30 @@ func stripMetaPrefixText(text string) string {
 	}
 
 	// Strip known inject lines from the start
-	known := []string{"[think-reminder] ", "[skill-eval] ", "[rules] ", "[ts-hint] "}
-	for len(lines) > 0 {
-		stripped := false
-		for _, k := range known {
-			if strings.HasPrefix(lines[0], k) {
-				lines = lines[1:]
-				stripped = true
-				break
-			}
-		}
-		if !stripped {
-			break
-		}
+	for len(lines) > 0 && isKnownInjectLine(lines[0]) {
+		lines = lines[1:]
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// knownInjectLinePrefixes are the injected meta-marker line prefixes the proxy
+// prepends on requests and that models may mirror at the start of a reply.
+// Shared by the request-side strip (stripMetaPrefixText) and the response-side
+// echo scrubber (echo_scrub.go) so both operate on the same marker catalog.
+var knownInjectLinePrefixes = []string{
+	"[think-reminder] ", "[skill-eval] ", "[rules] ", "[ts-hint] ",
+}
+
+// isKnownInjectLine reports whether line starts with a known injected
+// meta-marker prefix.
+func isKnownInjectLine(line string) bool {
+	for _, p := range knownInjectLinePrefixes {
+		if strings.HasPrefix(line, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // stripMetaPrefix removes any [timestamp] [msg:N] [+delta] prefix from a message's text content.
