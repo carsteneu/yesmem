@@ -861,6 +861,10 @@ func (s *Server) forwardOpenAIWithTracking(w http.ResponseWriter, origReq *http.
 	var streamStarted bool
 	var totalClientBytes int64
 
+	// Echo scrubber: strips a leading run of mirrored meta markers from the
+	// first text deltas of a reply before they reach the client.
+	var echoScrub *echoScrubber
+
 	for {
 		line, readErr := reader.ReadBytes('\n')
 		if len(line) > 0 {
@@ -877,6 +881,27 @@ func (s *Server) forwardOpenAIWithTracking(w http.ResponseWriter, origReq *http.
 					parser.ParseUsage(usage, data)
 					parser.ParseAnnotation(data, &textAccum, &textDone, 120)
 				}
+
+				// Scrub a leading run of mirrored meta markers from the first content
+				// deltas before they reach the client (OpenAI chat-completion format).
+				var chunk OpenAIStreamChunk
+				if bytes.Contains(data, []byte(`"content"`)) && json.Unmarshal(data, &chunk) == nil && len(chunk.Choices) > 0 {
+					if content := chunk.Choices[0].Delta.Content; content != "" {
+						if echoScrub == nil {
+							echoScrub = newEchoScrubber()
+						}
+						scrubbed := echoScrub.Write([]byte(content))
+						if scrubbed == nil {
+							// Leading marker fragment: emit nothing for this delta.
+							goto skipEchoLine
+						} else if !bytes.Equal(scrubbed, []byte(content)) {
+							chunk.Choices[0].Delta.Content = string(scrubbed)
+							if b, err := json.Marshal(chunk); err == nil {
+								line = append(append([]byte("data: "), b...), '\n')
+							}
+						}
+					}
+				}
 			}
 			if _, writeErr := w.Write(line); writeErr != nil {
 				if threadID != "" {
@@ -888,6 +913,7 @@ func (s *Server) forwardOpenAIWithTracking(w http.ResponseWriter, origReq *http.
 			if canFlush {
 				flusher.Flush()
 			}
+		skipEchoLine:
 		}
 		if readErr != nil {
 			break

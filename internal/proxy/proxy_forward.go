@@ -213,9 +213,15 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 	var totalClientBytes int64
 	isSub := isSubagentFromBody(body)
 
+	// Echo scrubber: strips a leading run of mirrored meta markers (injected
+	// timestamps, think-reminder/skill-eval/rules/ts-hint lines, and
+	// <system-reminder> blocks) from the first text deltas of a reply.
+	var echoScrub *echoScrubber
+
 	for {
 		line, readErr := reader.ReadBytes('\n')
 		if len(line) > 0 {
+			suppressDelta := false
 			trimmedLine := bytes.TrimSpace(line)
 
 			if bytes.HasPrefix(trimmedLine, []byte("data: ")) {
@@ -231,15 +237,32 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 					s.parseSSEForAnnotation(data, &textAccum, &firstTextCollected, maxAnnotationLen)
 				}
 
-				// Accumulate response text for reflection call
+				// Accumulate response text for reflection call + scrub reflected markers
 				if bytes.Contains(data, []byte(`"text_delta"`)) {
 					var delta struct {
+						Type  string `json:"type"`
+						Index int    `json:"index"`
 						Delta struct {
+							Type string `json:"type"`
 							Text string `json:"text"`
 						} `json:"delta"`
 					}
 					if json.Unmarshal(data, &delta) == nil && delta.Delta.Text != "" {
 						fullResponseText.WriteString(delta.Delta.Text)
+						if echoScrub == nil {
+							echoScrub = newEchoScrubber()
+						}
+						scrubbed := echoScrub.Write([]byte(delta.Delta.Text))
+						if scrubbed == nil {
+							// Leading marker fragment: emit nothing for this delta until
+							// real content is confirmed, so the client never sees it.
+							suppressDelta = true
+						} else if !bytes.Equal(scrubbed, []byte(delta.Delta.Text)) {
+							delta.Delta.Text = string(scrubbed)
+							if b, err := json.Marshal(delta); err == nil {
+								line = append(append([]byte("data: "), b...), '\n')
+							}
+						}
 					}
 				}
 
@@ -270,16 +293,18 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 				}
 			}
 
-			if _, writeErr := w.Write(line); writeErr != nil {
-				s.logger.Printf("[req %d] write error: %v", reqIdx, writeErr)
-				if threadID != "" {
-					go s.trackStreamState(threadID, false, totalClientBytes, isSub, projDir)
+			if !suppressDelta {
+				if _, writeErr := w.Write(line); writeErr != nil {
+					s.logger.Printf("[req %d] write error: %v", reqIdx, writeErr)
+					if threadID != "" {
+						go s.trackStreamState(threadID, false, totalClientBytes, isSub, projDir)
+					}
+					return
 				}
-				return
-			}
-			totalClientBytes += int64(len(line))
-			if canFlush {
-				flusher.Flush()
+				totalClientBytes += int64(len(line))
+				if canFlush {
+					flusher.Flush()
+				}
 			}
 		skipWrite:
 		}
