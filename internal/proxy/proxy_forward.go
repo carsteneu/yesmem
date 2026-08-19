@@ -248,7 +248,6 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 						} `json:"delta"`
 					}
 					if json.Unmarshal(data, &delta) == nil && delta.Delta.Text != "" {
-						fullResponseText.WriteString(delta.Delta.Text)
 						if echoScrub == nil {
 							echoScrub = newEchoScrubber()
 						}
@@ -257,10 +256,15 @@ func (s *Server) forwardWithAnnotation(w http.ResponseWriter, origReq *http.Requ
 							// Leading marker fragment: emit nothing for this delta until
 							// real content is confirmed, so the client never sees it.
 							suppressDelta = true
-						} else if !bytes.Equal(scrubbed, []byte(delta.Delta.Text)) {
-							delta.Delta.Text = string(scrubbed)
-							if b, err := json.Marshal(delta); err == nil {
-								line = append(append([]byte("data: "), b...), '\n')
+						} else {
+							// Accumulate the scrubbed text (not the raw marker) so the
+							// reflection call never sees mirrored metadata either.
+							fullResponseText.WriteString(string(scrubbed))
+							if !bytes.Equal(scrubbed, []byte(delta.Delta.Text)) {
+								delta.Delta.Text = string(scrubbed)
+								if b, err := json.Marshal(delta); err == nil {
+									line = append(append([]byte("data: "), b...), '\n')
+								}
 							}
 						}
 					}

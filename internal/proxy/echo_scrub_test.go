@@ -77,6 +77,26 @@ func TestEchoScrubber_ContentStartsWithBracketSplitThenNotStripped(t *testing.T)
 	}
 }
 
+func TestEchoScrubber_NoFalsePositive_MsgBracketInContent(t *testing.T) {
+	e := newEchoScrubber()
+	in := "[1] See [msg:2] for details\nmore"
+	if got := e.Write([]byte(in)); string(got) != in {
+		t.Errorf("content with a later [msg: must pass through untouched: got %q, want %q", got, in)
+	}
+}
+
+func TestEchoScrubber_NoFalsePositive_MsgBracketSplitInContent(t *testing.T) {
+	e := newEchoScrubber()
+	if got := e.Write([]byte("[Not")); got != nil {
+		t.Fatalf("'[..' should hold, got %q", got)
+	}
+	in := "e] check [msg:10] later\nmore"
+	want := "[Note] check [msg:10] later\nmore"
+	if got := e.Write([]byte(in)); string(got) != want {
+		t.Errorf("split content with a later [msg: mangled: got %q, want %q", got, want)
+	}
+}
+
 func TestEchoScrubber_SystemReminderBlock(t *testing.T) {
 	e := newEchoScrubber()
 	if got := e.Write([]byte("<system-reminder>\n")); got != nil {

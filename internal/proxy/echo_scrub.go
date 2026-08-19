@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"regexp"
 	"strings"
 )
 
@@ -28,6 +29,14 @@ type echoScrubber struct {
 const (
 	sysReminderOpen  = "<system-reminder>"
 	sysReminderClose = "</system-reminder>"
+)
+
+// metaAnnotationRe matches the exact BuildMeta annotation prefix (timestamp
+// path "[<wd> YYYY-MM-DD HH:MM:SS] [msg:N] [+delta]" or bare "[msg:N]"). Strict
+// by construction: it only fires on the injected annotation shape, so content
+// that merely contains a "[msg:..." fragment later in the line is never eaten.
+var metaAnnotationRe = regexp.MustCompile(
+	`^\[[A-Za-z]+ \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] \[msg:\d+\](?: \[\+[0-9A-Za-z.]+])?|^\[msg:\d+\](?: \[\+[0-9A-Za-z.]+])?`,
 )
 
 func newEchoScrubber() *echoScrubber {
@@ -57,8 +66,12 @@ func (e *echoScrubber) consume() []byte {
 		if len(e.pending) == 0 {
 			return nil
 		}
-		// Safety valve: never buffer unboundedly. Flush everything as content.
+		// Safety valve: never buffer unboundedly. Strip any verified leading
+		// marker run first, then flush the remainder as content.
 		if len(e.pending) > e.cap {
+			if n := leadingMarkerLen(e.pending); n > 0 {
+				e.pending = e.pending[n:]
+			}
 			return e.flushContent()
 		}
 
@@ -87,18 +100,16 @@ func (e *echoScrubber) consume() []byte {
 			// Single partial line. Hold only while it could still grow into a
 			// fully formed marker; otherwise flush as content.
 			ls := string(e.pending)
+			if m := metaAnnotationRe.FindStringIndex(ls); m != nil {
+				if m[1] < len(ls) {
+					// Fully formed annotation glued to content on the same line.
+					e.pending = e.pending[m[1]:]
+					return e.flushContent()
+				}
+				return nil // pure annotation so far — await newline or more bytes
+			}
 			if knownInjectPrefixCandidate(ls) {
 				return nil
-			}
-			if hasMetaPrefix(ls) {
-				rest := stripMetaPrefixText(ls)
-				if rest == "" || rest == ls {
-					return nil // pure marker so far, or still incomplete
-				}
-				// Fully formed marker glued to content on the same line:
-				// drop the marker bytes, flush the remainder as content.
-				e.pending = e.pending[len(ls)-len(rest):]
-				return e.flushContent()
 			}
 			if strings.HasPrefix(ls, sysReminderOpen) {
 				// Block opener split across chunks: hold until this line completes.
@@ -125,22 +136,59 @@ func (e *echoScrubber) consume() []byte {
 			e.pending = e.pending[nl+1:]
 			continue
 		}
-		if hasMetaPrefix(line) {
-			rest := stripMetaPrefixText(line)
-			if rest == "" {
+		if m := metaAnnotationRe.FindStringIndex(line); m != nil {
+			if m[1] == len(line) {
 				// Pure annotation line ([<ts>] [msg:N] [+delta]).
 				e.pending = e.pending[nl+1:]
 				continue
 			}
-			if rest != line {
-				// Marker glued to content on the same line.
-				e.pending = e.pending[len(line)-len(rest):]
-				return e.flushContent()
-			}
+			// Annotation glued to content on the same line.
+			e.pending = e.pending[m[1]:]
+			return e.flushContent()
 		}
 		// Real content line — flush everything, then pass through forever.
 		return e.flushContent()
 	}
+}
+
+// leadingMarkerLen returns the byte length of a verified leading marker run at
+// the start of buf (annotation lines, known inject lines, and complete
+// <system-reminder>…</system-reminder> blocks), or 0 if buf does not begin with
+// one. Used so the cap flush still strips confirmed markers before emitting.
+func leadingMarkerLen(buf []byte) int {
+	n := 0
+	for {
+		rest := buf[n:]
+		if len(rest) == 0 {
+			return n
+		}
+		if nl := bytes.IndexByte(rest, '\n'); nl >= 0 {
+			if isKnownInjectLine(string(rest[:nl])) {
+				n += nl + 1
+				continue
+			}
+		}
+		if m := metaAnnotationRe.FindIndex(rest); m != nil && m[0] == 0 {
+			n += m[1]
+			if len(rest) > m[1] && rest[m[1]] == '\n' {
+				n++
+			}
+			continue
+		}
+		if strings.HasPrefix(string(rest), sysReminderOpen) {
+			if closeIdx := bytes.Index(rest, []byte(sysReminderClose)); closeIdx >= 0 {
+				after := closeIdx + len(sysReminderClose)
+				if after < len(rest) && rest[after] == '\n' {
+					after++
+				}
+				n += after
+				continue
+			}
+			break // unclosed block — leave it to the content flush
+		}
+		break
+	}
+	return n
 }
 
 // knownInjectPrefixCandidate reports whether s (no trailing newline) could still

@@ -895,8 +895,7 @@ func (s *Server) forwardOpenAIWithTracking(w http.ResponseWriter, origReq *http.
 							// Leading marker fragment: emit nothing for this delta.
 							goto skipEchoLine
 						} else if !bytes.Equal(scrubbed, []byte(content)) {
-							chunk.Choices[0].Delta.Content = string(scrubbed)
-							if b, err := json.Marshal(chunk); err == nil {
+							if b := rewriteOpenAIContentDelta(data, string(scrubbed)); b != nil {
 								line = append(append([]byte("data: "), b...), '\n')
 							}
 						}
@@ -979,6 +978,36 @@ func (s *Server) forwardOpenAIWithTracking(w http.ResponseWriter, origReq *http.
 		}
 		s.mu.Unlock()
 	}
+}
+
+// rewriteOpenAIContentDelta returns a re-marshalled copy of a
+// chat.completion.chunk SSE payload with choices[0].delta.content replaced,
+// preserving every other field — including ones OpenAIStreamChunk does not
+// model (e.g. reasoning_content / logprobs). Returns nil if the payload can't
+// be navigated.
+func rewriteOpenAIContentDelta(data []byte, content string) []byte {
+	var ev map[string]any
+	if json.Unmarshal(data, &ev) != nil {
+		return nil
+	}
+	choices, ok := ev["choices"].([]any)
+	if !ok || len(choices) == 0 {
+		return nil
+	}
+	ch0, ok := choices[0].(map[string]any)
+	if !ok {
+		return nil
+	}
+	delta, ok := ch0["delta"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	delta["content"] = content
+	b, err := json.Marshal(ev)
+	if err != nil {
+		return nil
+	}
+	return b
 }
 
 func (s *Server) trackOpenAINonStreamingUsage(reqIdx int, body []byte, threadID string, project string, estimatedTokens, msgCount int) {
