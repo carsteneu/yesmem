@@ -202,6 +202,7 @@ update_agent_status(phase="Phase 1/6 ANALYZE")
 ### Phase 1: ANALYZE
 **Status:** COMPLETE
 **Goal understood:** <1 sentence>
+**Task type:** <debug|feature|chore|docs>
 **Session id:** <opencode_session_id or codex_session_id from whoami(), or "missing after 3 retries">
 **Codebase explored:** <files/packages inspected>
 **Constraints identified:** <list>
@@ -231,6 +232,13 @@ update_agent_status(phase="Phase 2/6 PLAN")
 **Test strategy:** <approach>
 **Verification gates between milestones:** <compile/test/deploy checks>
 ```
+
+**When `**Task type:** debug` — Depth-lock-Disziplin (Pflichtfeld, vom DONE-Guard erzwungen):**
+Phase 2 braucht zusätzlich diese Zeile:
+`**Depth-lock:** D1 home=<file::function>; D3 deepest=<file::function>; D4 repro=<RED am unpatched Stand VOR Implementierung>`
+- **D3 bestimmt die Fix-Ebene:** der Fix muss genau auf der D3-Ebene liegen. Ein Fix auf einer höheren/niederen Ebene als D3 ist ein depth-miss → zurück zum Plan, D1/D3 überarbeiten.
+- **D4 muss echt gelaufen sein**, nicht geplant: der RED-Output stammt vom unpatched Stand VOR der Implementierung. Ohne realen RED-Lauf ist der Depth-Lock nicht erfüllt.
+- Kompakt halten — Single-Agent-Format, keine Multi-Agent-Overheads (der Autoprompt darf 5 Agenten spannen, yesloop nicht, #73504).
 
 **Milestone criteria (agent decides):**
 - ≤5 steps: single milestone
@@ -295,6 +303,7 @@ update_agent_status(phase="Phase 4/6 VERIFY")
 ### Phase 4: VERIFY
 **Status:** COMPLETE
 **Tests run:** <command> → exit <code>, last 5 lines: <output>
+**RED proof:** <neuer Test RED vor Fix, GREEN nach Fix> | none — docs-only
 **Lint/type-check:** <command> → <result>
 **Build:** <command> → <binary mtime if applicable>
 **Coverage gaps:** none | <list>
@@ -501,6 +510,7 @@ Before writing "DONE", "completed", "verified" to scratchpad, confirm the artifa
 | "PR created" | `gh pr view <url>` exit 0 |
 | "cold review ran" | task()-subagent ID present in scratchpad |
 | "file edited" | `Read` the file (not just `git show`) |
+| "new test tests something" | **RED proof:** RED-Output am unpatched Stand (vor dem Fix), nicht nur geplant — bei docs-only explizit `none — docs-only` |
 | "DONE-guard passed" | `ValidatePhaseBlocks(content).Compliant == true` (auto-checked every 30s) |
 
 **Rule:** if verification was skipped, say so explicitly: `<claim> (not independently verified)`. If run, paste observable evidence (one line is enough).
@@ -529,11 +539,14 @@ On startup, before ANY other action:
 2. git rev-parse --show-toplevel → must be the worktree, NOT main repo
 3. git branch --show-current     → must be yesloop/<task-slug>, NOT main
 4. git status --short            → must be clean
+5. Write-Probe                   → mkdir -p .yesmem/tmp && printf probe > .yesmem/tmp/write-probe, dann read-back verifizieren (Inhalt == "probe")
 ```
 
 **IF ANY CHECK FAILS:** STOP. Do not touch files. `scratchpad_write + send_to orchestrator: "⛔ WORKTREE GUARD FAILED: pwd=<actual>, branch=<actual>. Expected <expected>."` Wait for orchestrator.
 
 **IF ALL PASS:** Identify via `whoami`, `scratchpad_read(project, section)`, `get_plan()`, `update_agent_status(phase="Phase 1/6 ANALYZE")`, then begin pipeline.
+
+Write-Probe-Regel: die Probe-Datei wird NICHT gelöscht (kein rm) — sie bleibt im Worktree liegen und wird mit dem Worktree-Cleanup entfernt.
 
 ### Completion — MUST do all three:
 1. `scratchpad_write(content="✅ DONE: <summary>. PR: <url>")` — final write with all 6 phase blocks COMPLETE
@@ -656,6 +669,36 @@ The done-verify checker reads the agent's scratchpad section to detect progress:
 
 - **Idle Detection (Layer 2)** triggers on stream inactivity; Done-Verify (Layer 3) triggers on DONE-claims. They are complementary and can both fire for the same agent.
 - **DONE-Guard (Layer 3 regex validator)** freezes agents that claim DONE with malformed phase blocks. Done-Verify catches the case where phase blocks look valid but Phase 5 Cold Review was silently skipped — the agent must actively BEWEISEN it ran Stage 2.
+
+## Automated Skill-Reload Check (Layer 4)
+
+Layer 4 of the yesloop guarantee: **Context-Compaction-Re-Read** gegen Skill-Verlust. Lange yesloop-Läufe können den Skill-Text verlieren, wenn der Kontext kompaktiert wird — der Agent würde dann ohne Pipeline-Vorgaben weitermachen. Der Daemon (`checkYesloopSkillCheck` in `internal/daemon/yesloop_skillcheck.go`, 30s-Heartbeat) beobachtet das kumulierte Arbeitsvolumen je Agent (OutputTokens-Delta seit Reset-Basis ≥ 100.000, Fallback TurnsUsed-Delta ≥ 50) und erinnert per Relay daran, den Skill neu zu laden.
+
+### State Machine
+
+| State | Condition | Action |
+|---|---|---|
+| 0 TRACKING | Arbeitsvolumen unter Schwelle seit Baseline | No action |
+| 1 REMIND | OutputTokens-Delta ≥ 100k ODER Turns-Delta ≥ 50 seit Baseline | Relay: Skill-Ladezustand prüfen, bei Bedarf neu laden, per Marker bestätigen |
+| 2 CONFIRMED | **SKILL-RELOAD-<N>:** yes mit aktueller Runden-Nummer im Scratchpad | Baseline auf aktuellen Stand zurücksetzen → zurück zu TRACKING |
+| 3 DEAD_AGENT_ESCALATION | 3 Re-Fires ohne Marker | Freeze + notifyOrchestrator |
+
+### Context-Compaction-Re-Read (Agentenseite — MANDATORY)
+
+- Erhält der Agent einen Relay, der auf Context-Compaction / Skill-Verlust hinweist (Absender `yesloop-skillcheck`): DEN SKILL SOFORT NEU LADEN (`skill`-Tool oder `~/.claude/skills/yesloop/SKILL.md` / Bundle-Pfad lesen).
+- Danach als Beweis per `scratchpad_append` die EXAKTE Bestätigungszeile aus dem Relay schreiben, inklusive der aktuellen Runden-Nummer: `SKILL-RELOAD-<N>: yes` (z.B. `**SKILL-RELOAD-3:** yes`).
+- Der Daemon erkennt den Marker nur, wenn die Runden-Nummer zum aktuellen Fenster passt (case-insensitive, tolerant gegenüber `**`) und setzt dann seine Tracking-Basis zurück — der nächste Reminder feuert erst nach der nächsten akkumulierten Schwelle.
+- Die Runden-Nummer ändert sich pro Fenster: ein alter Marker aus einem früheren Fenster bestätigt ein neues Fenster NICHT. Nur eine echte, aktuelle Bestätigung verdient den Reload.
+- Ohne echten Reload KEINEN Marker setzen — der Zustand wird nur durch eine tatsächlich geladene Skill-Instanz verdient.
+
+### Re-fire and Escalation
+
+- Re-fires alle 5 Minuten ohne Marker-Progress für das aktuelle Runden-Fenster.
+- Nach dem 3. Re-Fire-Intervall ohne Fortschritt (initialer Relay + max 2 weitere gesendete Re-Fires) wird der Agent als DEAD_AGENT gepaust und der Orchester via send_to benachrichtigt.
+
+### Boundary with other layers
+
+- **Compaction-Check (Layer 4)** feuert auf akkumuliertes Arbeitsvolumen eines LAUFENDEN Agents — orthogonal zu Idle (Stream-Inaktivität) und Done-Verify (DONE-Claims). Alle drei können für denselben Agent feuern.
 
 ## Anti-Patterns
 

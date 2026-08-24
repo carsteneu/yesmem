@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Layer-4 skillcheck — context-compaction guard for yesloop agents
+- Task-type + conditional depth-lock + RED proof disciplines
+
+### Fixed
+
+- Drop network-online.target wait — services start with user session
+- Round-scoped reload marker + lock discipline (Cold Review)
+- Persist reply errors in DB reply_errors table (v11)
+- Isolate rc_send chunk loop stdin from yesmem json (v10)
+- Chunk rc_send at 4800 UTF-16 units + log server error body
+- Close if-expression in /sessions filter (missing 'end')
+- Pass set/order/returning through parseStoreArgs (claim_and_read via CLI)
+
+### Documentation
+
+- Autoprompt-Haertungs-Disziplinen A1-A5
+
+## [2.3.13] - 2026-08-18
+
+### Added
+
 - Add ledger_nudge subscriber — append active plan as live ledger (PATCH-ONCE, never-block)
 
 ### Fixed
@@ -22,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Regen with v2.3.13 entries (jspace ledger, proxy file-parts, plugin perf, migrate fix)
 - Add ledger plan-schema (Phase 2) + Behauptungs-Inventar (Phase 5)
 
 ## [2.3.11] - 2026-08-14
@@ -6862,7 +6884,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add comprehensive tests for generator and storage
 
 
-[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.3.12...HEAD
+[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.3.13...HEAD
+[2.3.13]: https://github.com/carsteneu/yesmem/compare/v2.3.12...v2.3.13
 [2.3.12]: https://github.com/carsteneu/yesmem/compare/v2.3.11...v2.3.12
 [2.3.11]: https://github.com/carsteneu/yesmem/compare/v2.3.10...v2.3.11
 [2.3.10]: https://github.com/carsteneu/yesmem/compare/v2.3.9...v2.3.10

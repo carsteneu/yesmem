@@ -1,7 +1,7 @@
 ---
 name: reddit
-description: "Reddit fetch + search + research bundle — fetch single posts (with comments + links), search across subreddits with LLM classification, multi-subreddit topic research with synthesis."
-version: 5
+description: "Reddit fetch + search + research bundle — fetch single posts (with comments + links), search across subreddits via RSS (www.reddit.com .rss, da old.reddit.com + .json fuer anonyme Requests seit 2026 gesperrt sind), multi-subreddit topic research with synthesis."
+version: 10
 tags: [reddit, fetch, search, research]
 requires: [store]
 scope: user
@@ -10,7 +10,7 @@ auto_active: true
 
 ## Purpose
 
-Reddit fetch + search + research bundle — fetch single posts (with comments + links), search across subreddits with LLM classification, multi-subreddit topic research with synthesis.
+Reddit fetch + search + research bundle. Sources sind die anonym erreichbaren RSS-Feeds auf www.reddit.com (/.rss): per-Post-Feed (Post + Kommentare), search-Feed und Listing-Feed. old.reddit.com steht seit ~Aug 2026 hinter einem Login-Gate (reason=lor2), www.reddit.com-HTML hinter JS-Challenge + hCaptcha, .json-API blockiert seit Mai 2026. Gegenueber HTML-Scraping fehlen Score und Kommentar-Tiefe (RSS liefert beides nicht). Wichtig: KEIN "Accept: application/atom+xml"-Header setzen (triggert bei reddit eine 429); Retry-Loop (3 Versuche) wegen aggressivem Rate-Limit.
 
 ## Scripts
 
@@ -20,130 +20,78 @@ kind: tool
 ```js
 async ({url, max_comments}) => {
   if (!url || typeof url !== 'string') return {error: 'url required (string)'};
-  url = url.replace(/^reddit:/i, '').trim().replace(/\/$/, '');
+  url = url.replace(/^reddit:/i, '').trim().replace(/\/+$/, '');
   if (!/^https?:\/\/(www\.|old\.)?reddit\.com\//i.test(url)) return {error: 'not a reddit URL', given: url};
-  
-  const oldUrl = url.replace(/^https?:\/\/(www\.)?reddit\.com/, 'https://old.reddit.com');
+
+  const path = url.replace(/^https?:\/\/(www\.|old\.)?reddit\.com/i, '');
+  const rssUrl = 'https://www.reddit.com' + (path.endsWith('/.rss') ? path : path + '/.rss');
   const key = 'url:' + url;
-  
-  const curlCmd = `curl -sL -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36" -H "Accept: text/html,application/xhtml+xml" -H "Accept-Language: en-US,en;q=0.9" --max-time 20 ${JSON.stringify(oldUrl)} | yesmem cap-blob-put --cap reddit --key ${JSON.stringify(key)}`;
-  
-  const putRes = await sh(curlCmd, 25000);
-  if (!putRes || !putRes.includes('"status":"ok"')) return {error: 'cap-blob-put failed', detail: String(putRes).slice(0,400)};
-  
-  let rows = [];
-  for (let i = 0; i < 50; i++) {
-    const r = await mcp__yesmem__cap_store({capability: 'reddit', action: 'query', table: 'blobs', where: 'key=? AND chunk_idx=?', args: JSON.stringify([key, i]), limit: 1});
-    const parsed = typeof r === 'string' ? JSON.parse(r) : r;
-    const arr = Array.isArray(parsed) ? parsed : (parsed.rows || []);
-    if (!arr.length) break;
-    rows.push(arr[0]);
-  }
-  if (!rows.length) return {error: 'blob empty after put', key};
-  const html = rows.map(r => r.data || '').join('');
-  
-  // Helper: extract data-* attribute value
-  const getAttr = (str, name) => {
-    const m = str.match(new RegExp('data-' + name + '="([^"]*)"'));
-    return m ? m[1] : '';
-  };
-  
-  // Helper: clean HTML entities and Reddit markdown escapes
-  const cleanText = (text) => {
-    return text
-      .replace(/<[^>]+>/g, '')
-      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&#x27;/g, "'")
-      .replace(/&nbsp;/g, ' ')
-      .replace(/\\([()_*\[\]#])/g, '$1')  // Reddit markdown escapes: \( \) \_ \* etc.
-      .replace(/\\n/g, '\n').trim();
-  };
-  
-  // === PARSE POST ===
-  const t3Match = html.match(/<div class="[^"]*thing id-t3_(\w+)[^"]*"([^>]*)>/);
-  if (!t3Match) return {error: 'could not find post (t3_ thing) in HTML'};
-  const postId = t3Match[1];
-  const postFullname = 't3_' + postId;
-  const t3Attrs = t3Match[2];
-  
-  const postAuthor = getAttr(t3Attrs, 'author') || '[deleted]';
-  const postScore = parseInt(getAttr(t3Attrs, 'score')) || 0;
-  const postNumComments = parseInt(getAttr(t3Attrs, 'comments-count')) || 0;
-  const postTimestamp = parseInt(getAttr(t3Attrs, 'timestamp')) || 0;
-  const postSubreddit = (getAttr(t3Attrs, 'subreddit-prefixed') || '').replace('r/', '');
-  const postPermalinkRaw = getAttr(t3Attrs, 'permalink');
-  const postPermalink = 'https://reddit.com' + (postPermalinkRaw || '/r/' + postSubreddit + '/comments/' + postId + '/');
-  
-  const titleMatch = html.match(/<a class="title may-blank[^"]*"[^>]*>([^<]+)<\/a>/);
-  const postTitle = titleMatch ? cleanText(titleMatch[1]) : (html.match(/<title>([^<]+)/) || ['',''])[1].replace(' : ' + postSubreddit, '').trim();
-  
-  const bodyRe = new RegExp('id="form-' + postFullname + '[^"]*"[^>]*>.*?<div class="md">([\\s\\S]*?)<\\/div>\\s*<\\/div>\\s*<\\/form>');
-  const bodyMatch = html.match(bodyRe);
-  let postBody = bodyMatch ? cleanText(bodyMatch[1]) : '';
-  
-  let finalScore = postScore;
-  if (!finalScore) {
-    const sf = html.match(/<span class="number">(\d+)<\/span>/);
-    if (sf) finalScore = parseInt(sf[1]);
-  }
-  
-  const fetchedAt = Math.floor(Date.now()/1000);
-  
-  // === PARSE COMMENTS ===
-  const commentRegex = /<div class="[^"]*thing id-(t1_\w+)[^"]*"([^>]*)>/g;
-  const commentData = [];
-  let cm;
-  while ((cm = commentRegex.exec(html)) !== null) {
-    const fullname = cm[1];
-    const cattrs = cm[2];
-    const author = getAttr(cattrs, 'author') || '[deleted]';
-    const pos = cm.index;
-    
-    const chunk = html.slice(pos, pos + 3000);
-    const parentMatch = chunk.match(/<a href="#(\w+)"[^>]*data-event-action="parent"/);
-    let parentShortId = parentMatch ? parentMatch[1] : '';
-    
-    const scoreMatch = chunk.match(/<span class="score likes" title="(-?\d+)"/);
-    const score = scoreMatch ? parseInt(scoreMatch[1]) : 0;
-    
-    const timeMatch = chunk.match(/<time[^>]*datetime="([^"]+)"/);
-    let createdUtc = timeMatch ? Math.floor(new Date(timeMatch[1]).getTime() / 1000) : 0;
-    
-    const mdMatch = chunk.match(/<div class="md">([\s\S]*?)<\/div>\s*<\/div>\s*<\/form>/);
-    let body = mdMatch ? cleanText(mdMatch[1]) : '';
-    
-    commentData.push({fullname, author, score, body, created_utc: createdUtc, parentShortId});
-  }
-  
-  // Build short_id → fullname map for depth calculation
-  const shortToFull = new Map();
-  for (const c of commentData) shortToFull.set(c.fullname.replace('t1_', ''), c.fullname);
-  shortToFull.set(postId, postFullname);
-  
-  for (const c of commentData) {
-    c.parent_id = (c.parentShortId && shortToFull.has(c.parentShortId)) ? shortToFull.get(c.parentShortId) : postFullname;
-    let depth = 0, current = c.parentShortId;
-    const visited = new Set();
-    while (current && current !== postId && shortToFull.has(current) && !visited.has(current)) {
-      visited.add(current);
-      depth++;
-      const pc = commentData.find(x => x.fullname === shortToFull.get(current));
-      current = pc ? pc.parentShortId : null;
+  const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+  const fetchHtml = async () => {
+    const curlCmd = `curl -sL -A ${JSON.stringify(UA)} -H "Accept-Language: en-US,en;q=0.9" --max-time 20 ${JSON.stringify(rssUrl)} | yesmem cap-blob-put --cap reddit --key ${JSON.stringify(key)}`;
+    const putRes = await sh(curlCmd, 25000);
+    if (!putRes || !putRes.includes('"status":"ok"')) return null;
+    let rows = [];
+    for (let i = 0; i < 50; i++) {
+      const r = await mcp__yesmem__cap_store({capability: 'reddit', action: 'query', table: 'blobs', where: 'key=? AND chunk_idx=?', args: JSON.stringify([key, i]), limit: 1});
+      const parsed = typeof r === 'string' ? JSON.parse(r) : r;
+      const arr = Array.isArray(parsed) ? parsed : (parsed.rows || []);
+      if (!arr.length) break;
+      rows.push(arr[0]);
     }
-    c.depth = depth;
+    if (!rows.length) return '';
+    return rows.map(x => x.data || '').join('');
+  };
+
+  let html = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    html = await fetchHtml();
+    if (html === null) return {error: 'cap-blob-put failed', detail: 'curl or blob pipe failed', url: rssUrl};
+    if (html) break;
+    if (attempt < 2) await sh('sleep 6', 8000);
   }
-  
-  // === CAP_STORE PERSISTENCE ===
-  await mcp__yesmem__cap_store({capability:'reddit',action:'create_table',table:'posts',columns:JSON.stringify([{name:'permalink',type:'TEXT'},{name:'subreddit',type:'TEXT'},{name:'author',type:'TEXT'},{name:'title',type:'TEXT'},{name:'body',type:'TEXT'},{name:'score',type:'INTEGER'},{name:'num_comments',type:'INTEGER'},{name:'created_utc',type:'INTEGER'},{name:'external_url',type:'TEXT'},{name:'fetched_at',type:'INTEGER'}])});
-  await mcp__yesmem__cap_store({capability:'reddit',action:'create_table',table:'comments',columns:JSON.stringify([{name:'post_permalink',type:'TEXT'},{name:'comment_id',type:'TEXT'},{name:'depth',type:'INTEGER'},{name:'author',type:'TEXT'},{name:'score',type:'INTEGER'},{name:'body',type:'TEXT'},{name:'created_utc',type:'INTEGER'},{name:'parent_id',type:'TEXT'},{name:'fetched_at',type:'INTEGER'}])});
-  await mcp__yesmem__cap_store({capability:'reddit',action:'create_table',table:'links',columns:JSON.stringify([{name:'post_permalink',type:'TEXT'},{name:'target_url',type:'TEXT'},{name:'kind',type:'TEXT'},{name:'source_kind',type:'TEXT'},{name:'source_author',type:'TEXT'},{name:'source_comment_id',type:'TEXT'},{name:'fetched_at',type:'INTEGER'}])});
-  await mcp__yesmem__cap_store({capability:'reddit',action:'delete',table:'posts',where:'permalink=?',args:JSON.stringify([postPermalink])});
-  await mcp__yesmem__cap_store({capability:'reddit',action:'delete',table:'comments',where:'post_permalink=?',args:JSON.stringify([postPermalink])});
-  await mcp__yesmem__cap_store({capability:'reddit',action:'delete',table:'links',where:'post_permalink=?',args:JSON.stringify([postPermalink])});
-  
-  const postCreatedUtc = Math.floor(postTimestamp / 1000);
-  await mcp__yesmem__cap_store({capability:'reddit',action:'upsert',table:'posts',data:JSON.stringify({permalink:postPermalink,subreddit:postSubreddit,author:postAuthor,title:postTitle,body:postBody,score:finalScore,num_comments:postNumComments,created_utc:postCreatedUtc,external_url:'',fetched_at:fetchedAt})});
-  
+  if (html === '' || html.length < 500) return {error: 'empty feed (rate-limited or blocked?)', url: rssUrl, len: (html || '').length, hint: 'try again in ~60s'};
+
+  // === PARSE ATOM ENTRIES (www.reddit.com per-post RSS) ===
+  const cleanText = (text) => { for (let i = 0; i < 3; i++) text = text.replace(/<!\[CDATA\[|\]\]>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&#x27;/g, "'").replace(/&#32;/g, ' ').replace(/&nbsp;/g, ' '); return text; };
+  const stripTags = (text) => text.replace(/<!--\s*SC_(OFF|ON)\s*-->/g, '\n').replace(/<table>/g, ' ').replace(/<\/table>/g, ' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+  const entries = [];
+  const er = /<entry>([\s\S]*?)<\/entry>/g;
+  let em;
+  while ((em = er.exec(html)) !== null) {
+    const e = em[1];
+    const g = (name) => { const mm = e.match(new RegExp('<' + name + '[^>]*>([\\s\\S]*?)</' + name + '>')); return mm ? mm[1] : ''; };
+    const linkM = e.match(/<link href="([^"]*)"/);
+    const catM = e.match(/<category [^>]*label="([^"]*)"/);
+    const authorM = e.match(/<author><name>([^<]*)<\/name>/);
+    entries.push({ id: g('id'), title: g('title'), link: linkM ? linkM[1] : '', subreddit: catM ? catM[1] : '', author: authorM ? authorM[1].replace(/^\/u\//, '') : '[deleted]', updated: g('updated'), content: g('content') });
+  }
+  if (!entries.length) return {error: 'could not parse any feed entries', url: rssUrl};
+
+  const postE = entries.find(x => x.id.startsWith('t3_')) || entries[0];
+  const postId = postE.id.replace(/^t3_/, '');
+  const postFullname = 't3_' + postId;
+  const permalink = postE.link || ('https://reddit.com/r/' + postE.subreddit.replace(/^r\//, '') + '/comments/' + postId + '/');
+  const postBody = stripTags(cleanText(postE.content)).replace(/\s*submitted by\s+\/u\/[^]*$/i, '');
+  const finalScore = 0;
+  const postNumComments = entries.filter(x => x.id.startsWith('t1_')).length;
+  const created_utc = Math.floor(new Date(postE.updated).getTime() / 1000) || 0;
+  const fetchedAt = Math.floor(Date.now() / 1000);
+
+  const cap = typeof max_comments === 'number' && max_comments > 0 ? max_comments : 0;
+  const outputComments = [];
+  const commentRows = [];
+  for (const c of entries) {
+    if (!c.id.startsWith('t1_')) continue;
+    if (cap && outputComments.length >= cap) break;
+    const body = stripTags(cleanText(c.content));
+    if (!body) continue;
+    outputComments.push({author: c.author, score: 0, depth: 0, body});
+    commentRows.push({post_permalink: permalink, comment_id: c.id, depth: 0, author: c.author, score: 0, body, created_utc: Math.floor(new Date(c.updated).getTime() / 1000) || 0, parent_id: postFullname, fetched_at: fetchedAt});
+  }
+
   // === LINK EXTRACTION ===
   const categorize = (u) => {
     const m = u.match(/^https?:\/\/([^\/?#:]+)/i);
@@ -155,44 +103,40 @@ async ({url, max_comments}) => {
   };
   const linkSet = new Set();
   const linkRows = [];
-  const urlRe = /https?:\/\/[^\s\)\]\>"'<]+/g;
+  const urlRe = /https?:\/\/[^\s\)\]\>"'\<]+/g;
   const collect = (text, sourceKind, author, cid) => {
     if (!text) return;
     const m = text.match(urlRe);
     if (!m) return;
     for (const u of m) {
-      const cleaned = u.replace(/[.,;:!?'")\]>]*$/, '').replace(/\\([()_*\[\]#])/g, '$1');
+      const cleaned = u.replace(/[.,;:!?'")\]>]*$/, '');
       if (linkSet.has(cleaned)) continue;
       linkSet.add(cleaned);
-      linkRows.push({post_permalink:postPermalink,target_url:cleaned,kind:categorize(cleaned),source_kind:sourceKind,source_author:author||'',source_comment_id:cid||'',fetched_at:fetchedAt});
+      linkRows.push({post_permalink: permalink, target_url: cleaned, kind: categorize(cleaned), source_kind: sourceKind, source_author: author || '', source_comment_id: cid || '', fetched_at: fetchedAt});
     }
   };
-  collect(postBody, 'post_body', postAuthor, '');
-  
-  const cap = typeof max_comments === 'number' && max_comments > 0 ? max_comments : 0;
-  const outputComments = [];
-  const commentRows = [];
-  for (const c of commentData) {
-    if (cap && outputComments.length >= cap) break;
-    if (!c.body) continue;
-    outputComments.push({author:c.author,score:c.score,depth:c.depth,body:c.body});
-    commentRows.push({post_permalink:postPermalink,comment_id:c.fullname,depth:c.depth,author:c.author,score:c.score,body:c.body,created_utc:c.created_utc,parent_id:c.parent_id,fetched_at:fetchedAt});
-    collect(c.body, 'comment', c.author, c.fullname);
-  }
-  
-  for (const row of commentRows) {
-    await mcp__yesmem__cap_store({capability:'reddit',action:'upsert',table:'comments',data:JSON.stringify(row)});
-  }
-  for (const row of linkRows) {
-    await mcp__yesmem__cap_store({capability:'reddit',action:'upsert',table:'links',data:JSON.stringify(row)});
-  }
-  
+  collect(postBody, 'post_body', postE.author, '');
+
+  // === CAP_STORE PERSISTENCE ===
+  await mcp__yesmem__cap_store({capability: 'reddit', action: 'create_table', table: 'posts', columns: JSON.stringify([{name: 'permalink', type: 'TEXT'}, {name: 'subreddit', type: 'TEXT'}, {name: 'author', type: 'TEXT'}, {name: 'title', type: 'TEXT'}, {name: 'body', type: 'TEXT'}, {name: 'score', type: 'INTEGER'}, {name: 'num_comments', type: 'INTEGER'}, {name: 'created_utc', type: 'INTEGER'}, {name: 'external_url', type: 'TEXT'}, {name: 'fetched_at', type: 'INTEGER'}])});
+  await mcp__yesmem__cap_store({capability: 'reddit', action: 'create_table', table: 'comments', columns: JSON.stringify([{name: 'post_permalink', type: 'TEXT'}, {name: 'comment_id', type: 'TEXT'}, {name: 'depth', type: 'INTEGER'}, {name: 'author', type: 'TEXT'}, {name: 'score', type: 'INTEGER'}, {name: 'body', type: 'TEXT'}, {name: 'created_utc', type: 'INTEGER'}, {name: 'parent_id', type: 'TEXT'}, {name: 'fetched_at', type: 'INTEGER'}])});
+  await mcp__yesmem__cap_store({capability: 'reddit', action: 'create_table', table: 'links', columns: JSON.stringify([{name: 'post_permalink', type: 'TEXT'}, {name: 'target_url', type: 'TEXT'}, {name: 'kind', type: 'TEXT'}, {name: 'source_kind', type: 'TEXT'}, {name: 'source_author', type: 'TEXT'}, {name: 'source_comment_id', type: 'TEXT'}, {name: 'fetched_at', type: 'INTEGER'}])});
+  await mcp__yesmem__cap_store({capability: 'reddit', action: 'delete', table: 'posts', where: 'permalink=?', args: JSON.stringify([permalink])});
+  await mcp__yesmem__cap_store({capability: 'reddit', action: 'delete', table: 'comments', where: 'post_permalink=?', args: JSON.stringify([permalink])});
+  await mcp__yesmem__cap_store({capability: 'reddit', action: 'delete', table: 'links', where: 'post_permalink=?', args: JSON.stringify([permalink])});
+
+  await mcp__yesmem__cap_store({capability: 'reddit', action: 'upsert', table: 'posts', data: JSON.stringify({permalink, subreddit: postE.subreddit.replace(/^r\//, ''), author: postE.author, title: cleanText(postE.title), body: postBody, score: finalScore, num_comments: postNumComments, created_utc, external_url: '', fetched_at: fetchedAt})});
+
+  for (const row of commentRows) await mcp__yesmem__cap_store({capability: 'reddit', action: 'upsert', table: 'comments', data: JSON.stringify(row)});
+  for (const row of linkRows) await mcp__yesmem__cap_store({capability: 'reddit', action: 'upsert', table: 'links', data: JSON.stringify(row)});
+
   return {
-    post: {title:postTitle,author:postAuthor,score:finalScore,subreddit:postSubreddit,permalink:postPermalink,body:postBody},
+    post: {title: cleanText(postE.title), author: postE.author, score: 0, subreddit: postE.subreddit.replace(/^r\//, ''), permalink, body: postBody},
     comments: outputComments,
     links: Array.from(linkSet),
-    stats: {comment_count:outputComments.length,link_count:linkSet.size,reported_comments:postNumComments},
-    stored: {posts:1, comments:commentRows.length, links:linkRows.length}
+    stats: {comment_count: outputComments.length, link_count: linkSet.size, reported_comments: postNumComments},
+    stored: {posts: 1, comments: commentRows.length, links: linkRows.length},
+    source: 'www.reddit.com/.rss'
   };
 }
 ```
@@ -211,10 +155,6 @@ async ({ query, limit = 25, sort = "relevance", t = "week", subreddit, after = "
 - product_spam: cheap subscription sales, discount codes, referral spam, dropshipping
 - other: doesn't clearly fit any of the above`;
   if (!query || typeof query !== "string") return { error: "query required (string)" };
-  const VALID_SORT = ["relevance","top","new","comments","hot"];
-  const VALID_T = ["hour","day","week","month","year","all"];
-  if (!VALID_SORT.includes(sort)) return { error: `invalid sort '${sort}'` };
-  if (!VALID_T.includes(t)) return { error: `invalid t '${t}'` };
   limit = Math.max(1, Math.min(100, (limit|0) || 25));
   const q = query.trim();
   const mListing = q.match(/^r\/([A-Za-z0-9_]+)\/(hot|top|new|rising|best|controversial)$/i);
@@ -225,148 +165,79 @@ async ({ query, limit = 25, sort = "relevance", t = "week", subreddit, after = "
   else if (sub) { mode = "subreddit_search"; }
   else { mode = "global_search"; }
 
-  let url;
   const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
-
+  let url;
   if (mListing) {
     const type = mListing[2].toLowerCase();
-    const tParam = (type==="top"||type==="controversial") ? `&t=${t}` : "";
-    const afterParam = after ? `&after=${encodeURIComponent(after)}` : "";
-    url = `https://old.reddit.com/r/${encodeURIComponent(sub)}/${type}/?limit=${limit}${tParam}${afterParam}`;
+    const tParam = (type === "top" || type === "controversial") ? `&t=${t}` : "";
+    url = `https://www.reddit.com/r/${encodeURIComponent(sub)}/${type}/.rss?limit=${limit}${tParam}`;
   } else if (mSubSearch) {
     const term = mSubSearch[2].trim();
-    const afterParam = after ? `&after=${encodeURIComponent(after)}` : "";
-    url = `https://old.reddit.com/r/${encodeURIComponent(sub)}/search?q=${encodeURIComponent(term)}&restrict_sr=1&limit=${limit}&sort=${sort}&t=${t}${afterParam}`;
+    url = `https://www.reddit.com/r/${encodeURIComponent(sub)}/search/.rss?q=${encodeURIComponent(term)}&restrict_sr=1&limit=${limit}&sort=${sort}&t=${t}`;
   } else if (sub) {
-    const afterParam = after ? `&after=${encodeURIComponent(after)}` : "";
-    url = `https://old.reddit.com/r/${encodeURIComponent(sub)}/search?q=${encodeURIComponent(q)}&restrict_sr=1&limit=${limit}&sort=${sort}&t=${t}${afterParam}`;
+    url = `https://www.reddit.com/r/${encodeURIComponent(sub)}/search/.rss?q=${encodeURIComponent(q)}&restrict_sr=1&limit=${limit}&sort=${sort}&t=${t}`;
   } else {
-    const afterParam = after ? `&after=${encodeURIComponent(after)}` : "";
-    url = `https://old.reddit.com/search?q=${encodeURIComponent(q)}&limit=${limit}&sort=${sort}&t=${t}${afterParam}`;
+    url = `https://www.reddit.com/search/.rss?q=${encodeURIComponent(q)}&limit=${limit}&sort=${sort}&t=${t}`;
   }
 
   const fetchedAt = Math.floor(Date.now()/1000);
-  const blobKey = `search:${fetchedAt}_${Math.random().toString(36).slice(2,8)}`;
 
-  const curlCmd = `curl -sL -A ${JSON.stringify(UA)} -H "Accept: text/html,application/xhtml+xml" -H "Accept-Language: en-US,en;q=0.9" --max-time 20 ${JSON.stringify(url)} | yesmem cap-blob-put --cap reddit --key ${JSON.stringify(blobKey)}`;
-  const putRes = await sh(curlCmd, 25000);
-  if (!putRes || !putRes.includes('"status":"ok"')) return {error:"cap-blob-put failed", detail:String(putRes).slice(0,200), url};
-
-  let rows = [];
-  for (let i = 0; i < 50; i++) {
-    const r = await mcp__yesmem__cap_store({capability:"reddit", action:"query", table:"blobs", where:"key=? AND chunk_idx=?", args: JSON.stringify([blobKey, i]), limit: 1});
-    if (typeof r === "string" && /^Error/i.test(r)) return {error:"cap_store chunk read error", detail:r.slice(0,200), chunk:i};
-    const parsed = typeof r === "string" ? JSON.parse(r) : r;
-    const arr = Array.isArray(parsed) ? parsed : (parsed.rows || []);
-    if (!arr.length) break;
-    rows.push(arr[0]);
+  let html = "";
+  let putFail = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const blobKey = `search:${fetchedAt}_${attempt}_${Math.random().toString(36).slice(2,8)}`;
+    const curlCmd = `curl -sL -A ${JSON.stringify(UA)} -H "Accept-Language: en-US,en;q=0.9" --max-time 20 ${JSON.stringify(url)} | yesmem cap-blob-put --cap reddit --key ${JSON.stringify(blobKey)}`;
+    const putRes = await sh(curlCmd, 25000);
+    if (!putRes || !putRes.includes('"status":"ok"')) { putFail = String(putRes).slice(0,200); continue; }
+    let rows = [];
+    for (let i = 0; i < 50; i++) {
+      const r = await mcp__yesmem__cap_store({capability: "reddit", action: "query", table: "blobs", where: "key=? AND chunk_idx=?", args: JSON.stringify([blobKey, i]), limit: 1});
+      if (typeof r === "string" && /^Error/i.test(r)) { putFail = r.slice(0,200); break; }
+      const parsed = typeof r === "string" ? JSON.parse(r) : r;
+      const arr = Array.isArray(parsed) ? parsed : (parsed.rows || []);
+      if (!arr.length) break;
+      rows.push(arr[0]);
+    }
+    await mcp__yesmem__cap_store({capability: "reddit", action: "delete", table: "blobs", where: "key=?", args: JSON.stringify([blobKey])});
+    if (rows.length) { html = rows.map(r => r.data || "").join(""); break; }
+    if (attempt < 2) await sh('sleep 6', 8000);
   }
-  await mcp__yesmem__cap_store({capability:"reddit", action:"delete", table:"blobs", where:"key=?", args: JSON.stringify([blobKey])});
-  if (!rows.length) return {error:"blob empty"};
+  if (putFail && !html) return { error: "cap-blob-put failed", detail: putFail, url };
+  if (!html) return { error: "empty feed (rate-limited or blocked?)", url, hint: "try again in ~60s" };
 
-  const html = rows.map(r => r.data || "").join("");
-
-  const cleanText = (text) => {
-    return text
-      .replace(/<[^>]+>/g, '')
-      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&#x27;/g, "'")
-      .replace(/&nbsp;/g, ' ')
-      .replace(/\\([()_*\[\]#])/g, '$1')
-      .trim();
-  };
+  // === PARSE ATOM ENTRIES ===
+  const cleanText = (text) => { for (let i = 0; i < 3; i++) text = text.replace(/<!\[CDATA\[|\]\]>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&#x27;/g, "'").replace(/&nbsp;/g, " "); return text; };
+  const stripTags = (text) => text.replace(/<!--\s*SC_(OFF|ON)\s*-->/g, "\n").replace(/<table>/g, " ").replace(/<\/table>/g, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 
   const posts = [];
   const seen = new Set();
-
-  if (mListing) {
-    // === LISTING MODE: parse "thing" divs with data-* attributes ===
-    const getAttr = (str, name) => {
-      const ma = str.match(new RegExp('data-' + name + '="([^"]*)"'));
-      return ma ? ma[1] : '';
-    };
-    const thingRegex = /<div class="[^"]*thing id-t3_(\w+)[^"]*"([^>]*)>/g;
-    let tm;
-    while ((tm = thingRegex.exec(html)) !== null) {
-      const id = tm[1];
-      if (seen.has(id)) continue;
-      seen.add(id);
-      const attrs = tm[2];
-      const author = getAttr(attrs, 'author') || '[deleted]';
-      const score = parseInt(getAttr(attrs, 'score')) || 0;
-      const num_comments = parseInt(getAttr(attrs, 'comments-count')) || 0;
-      const created_utc = Math.floor((parseInt(getAttr(attrs, 'timestamp')) || 0) / 1000);
-      const sr = (getAttr(attrs, 'subreddit-prefixed') || '').replace('r/', '');
-      const permalinkRaw = getAttr(attrs, 'permalink');
-      const permalink = permalinkRaw ? `https://reddit.com${permalinkRaw}` : `https://reddit.com/r/${sr}/comments/${id}/`;
-
-      const pos = tm.index;
-      const chunk = html.slice(pos, pos + 2000);
-      const titleMatch = chunk.match(/<a[^>]*class="[^"]*\btitle\b[^"]*"[^>]*>([^<]+)<\/a>/);
-      const title = titleMatch ? cleanText(titleMatch[1]) : '';
-
-      const is_self = !chunk.match(/<a[^>]*class="[^"]*\bthumbnail\b[^"]*"[^>]*href="(https?:[^"]+)"/i);
-
-      posts.push({permalink, title, subreddit:sr, author, score, num_comments,
-        url: '', is_self: !!is_self, created_utc});
-    }
-  } else {
-    // === SEARCH MODE: parse search-result divs (flexible attribute order) ===
-    const resultRegex = /<div class="[^"]*search-result search-result-link[^"]*"[^>]*data-fullname="t3_(\w+)"[^>]*>/g;
-    let sm;
-    while ((sm = resultRegex.exec(html)) !== null) {
-      const id = sm[1];
-      if (seen.has(id)) continue;
-      seen.add(id);
-      const pos = sm.index;
-      const chunk = html.slice(pos, pos + 4000);
-
-      // Title: <a ... class="...search-title..." ...>TITLE</a>
-      const titleMatch = chunk.match(/<a\s[^>]*class="[^"]*\bsearch-title\b[^"]*"[^>]*>([^<]+)<\/a>/i);
-      const title = titleMatch ? cleanText(titleMatch[1]) : '';
-
-      // Score: <span class="...search-score...">N points</span>
-      const scoreMatch = chunk.match(/<span[^>]*class="[^"]*\bsearch-score\b[^"]*"[^>]*>([\d,]+)\s*points?<\/span>/i);
-      const score = scoreMatch ? parseInt(scoreMatch[1].replace(/,/g, '')) : 0;
-
-      // Comments: <a class="...search-comments...">N comments</a>
-      const commentsMatch = chunk.match(/<a\s[^>]*class="[^"]*\bsearch-comments\b[^"]*"[^>]*>([\d,]+)\s*comments?<\/a>/i);
-      const num_comments = commentsMatch ? parseInt(commentsMatch[1].replace(/,/g, '')) : 0;
-
-      // Time: <time datetime="...">
-      const timeMatch = chunk.match(/<time[^>]*datetime="([^"]+)"/);
-      const created_utc = timeMatch ? Math.floor(new Date(timeMatch[1]).getTime() / 1000) : 0;
-
-      // Author: within <span class="...search-author..."> ... <a ...>USER</a></span>
-      const authorMatch = chunk.match(/<span[^>]*class="[^"]*\bsearch-author\b[^"]*"[^>]*>[\s\S]*?<a\s[^>]*>([^<]+)<\/a>/i);
-      const author = authorMatch ? cleanText(authorMatch[1]) : '[deleted]';
-
-      // Subreddit: <a class="...search-subreddit-link...">r/NAME</a>
-      const srMatch = chunk.match(/<a\s[^>]*class="[^"]*\bsearch-subreddit-link\b[^"]*"[^>]*>r\/([^<]+)<\/a>/i);
-      const sr = srMatch ? srMatch[1] : '';
-
-      // Permalink: construct from href in search-title, or fall back to ID
-      const hrefMatch = chunk.match(/<a\s[^>]*class="[^"]*\bsearch-title\b[^"]*"[^>]*href="([^"]+)"/i)
-                      || chunk.match(/<a\s[^>]*href="([^"]+)"[^>]*class="[^"]*\bsearch-title\b[^"]*"/i);
-      const href = hrefMatch ? hrefMatch[1] : '';
-      const permalink = href ? (href.startsWith('https://') ? href : `https://reddit.com${href}`) : `https://reddit.com/r/${sr}/comments/${id}/`;
-
-      // is_self: check for external thumbnail link
-      const is_self = !chunk.match(/<a[^>]*class="[^"]*\bthumbnail\b[^"]*"[^>]*href="(https?:[^"]+)"/i);
-
-      posts.push({permalink, title, subreddit:sr, author, score, num_comments,
-        url: '', is_self: !!is_self, created_utc});
-    }
+  const er = /<entry>([\s\S]*?)<\/entry>/g;
+  let em;
+  while ((em = er.exec(html)) !== null) {
+    const e = em[1];
+    const g = (name) => { const mm = e.match(new RegExp('<' + name + '[^>]*>([\\s\\S]*?)</' + name + '>')); return mm ? mm[1] : ""; };
+    const id = g("id");
+    if (!id.startsWith("t3_") || seen.has(id)) continue;
+    seen.add(id);
+    const linkM = e.match(/<link href="([^"]*)"/);
+    const catM = e.match(/<category [^>]*label="([^"]*)"/);
+    const authorM = e.match(/<author><name>([^<]*)<\/name>/);
+    const link = linkM ? linkM[1] : "";
+    const topicDate = g("published") || g("updated");
+    posts.push({
+      permalink: link.replace(/^https?:\/\/(www\.|old\.)?reddit\.com/i, ""),
+      title: cleanText(g("title")),
+      subreddit: catM ? catM[1].replace(/^r\//, "") : "",
+      author: authorM ? authorM[1].replace(/^\/u\//, "") : "[deleted]",
+      score: 0, num_comments: 0, url: "", is_self: true,
+      created_utc: topicDate ? Math.floor(new Date(topicDate).getTime() / 1000) : 0,
+      body: stripTags(cleanText(g("content"))).substring(0, 500)
+    });
   }
 
-  await mcp__yesmem__cap_store({capability:"reddit", action:"create_table", table:"listings", columns: JSON.stringify([
-    {name:"query",type:"TEXT"},{name:"mode",type:"TEXT"},{name:"permalink",type:"TEXT"},{name:"title",type:"TEXT"},
-    {name:"subreddit",type:"TEXT"},{name:"author",type:"TEXT"},{name:"score",type:"INTEGER"},{name:"num_comments",type:"INTEGER"},
-    {name:"url",type:"TEXT"},{name:"created_utc",type:"INTEGER"},{name:"fetched_at",type:"INTEGER"}
-  ])});
-  await mcp__yesmem__cap_store({capability:"reddit", action:"create_table", table:"categories", columns: JSON.stringify([
-    {name:"permalink",type:"TEXT"},{name:"category",type:"TEXT"},{name:"confidence",type:"TEXT"},{name:"model",type:"TEXT"},{name:"classified_at",type:"INTEGER"}
-  ])});
+  // === CAP_STORE PERSISTENCE ===
+  await mcp__yesmem__cap_store({capability: "reddit", action: "create_table", table: "listings", columns: JSON.stringify([{name: "query", type: "TEXT"},{name: "mode", type: "TEXT"},{name: "permalink", type: "TEXT"},{name: "title", type: "TEXT"},{name: "subreddit", type: "TEXT"},{name: "author", type: "TEXT"},{name: "score", type: "INTEGER"},{name: "num_comments", type: "INTEGER"},{name: "url", type: "TEXT"},{name: "created_utc", type: "INTEGER"},{name: "fetched_at", type: "INTEGER"}])});
+  await mcp__yesmem__cap_store({capability: "reddit", action: "create_table", table: "categories", columns: JSON.stringify([{name: "permalink", type: "TEXT"},{name: "category", type: "TEXT"},{name: "confidence", type: "TEXT"},{name: "model", type: "TEXT"},{name: "classified_at", type: "INTEGER"}])});
 
   let classifications = {};
   let modelUsed = "", classifyErr = null;
@@ -379,7 +250,7 @@ async ({ query, limit = 25, sort = "relevance", t = "week", subreddit, after = "
       if (mm) {
         const arr = JSON.parse(mm[0]);
         for (const c of arr) {
-          if (c?.permalink && c?.category) classifications[c.permalink] = {category:c.category, confidence:c.confidence||'med'};
+          if (c?.permalink && c?.category) classifications[c.permalink] = {category: c.category, confidence: c.confidence || 'med'};
         }
         modelUsed = "haiku";
       } else { classifyErr = 'no json in haiku response'; }
@@ -388,24 +259,16 @@ async ({ query, limit = 25, sort = "relevance", t = "week", subreddit, after = "
 
   const outPosts = [];
   for (const p of posts) {
-    const row = {
-      query:q, mode, permalink:p.permalink, title:p.title, subreddit:p.subreddit, author:p.author,
-      score:p.score, num_comments:p.num_comments, url:p.url, created_utc:p.created_utc, fetched_at:fetchedAt
-    };
-    await mcp__yesmem__cap_store({capability:"reddit", action:"upsert", table:"listings", data: JSON.stringify(row)});
+    const row = { query: q, mode, permalink: p.permalink, title: p.title, subreddit: p.subreddit, author: p.author, score: p.score, num_comments: p.num_comments, url: p.url, created_utc: p.created_utc, fetched_at: fetchedAt };
+    await mcp__yesmem__cap_store({capability: "reddit", action: "upsert", table: "listings", data: JSON.stringify(row)});
     const cls = classifications[p.permalink];
     if (cls) {
-      await mcp__yesmem__cap_store({capability:"reddit", action:"upsert", table:"categories",
-        data: JSON.stringify({permalink:p.permalink, category:cls.category, confidence:cls.confidence, model:modelUsed, classified_at:fetchedAt})});
+      await mcp__yesmem__cap_store({capability: "reddit", action: "upsert", table: "categories", data: JSON.stringify({permalink: p.permalink, category: cls.category, confidence: cls.confidence, model: modelUsed, classified_at: fetchedAt})});
     }
-    outPosts.push({...p, category: cls?.category || null, confidence: cls?.confidence || null});
+    outPosts.push({...p, category: cls?.category || null, confidence: cls?.confidence || null, body: undefined});
   }
 
-  let afterToken = after;
-  const nextMatch = html.match(/<a[^>]*rel="nofollow next"[^>]*href="[^"]*after=(\w+)/);
-  if (nextMatch) afterToken = nextMatch[1];
-
-  return {query:q, mode, count:outPosts.length, posts:outPosts, stored:outPosts.length, classified:Object.keys(classifications).length, classify_error:classifyErr, after:afterToken, source_url:url};
+  return { query: q, mode, count: outPosts.length, posts: outPosts, stored: outPosts.length, classified: Object.keys(classifications).length, classify_error: classifyErr, after: "", source_url: url, source: "www.reddit.com/.rss" };
 }
 ```
 
@@ -533,101 +396,3 @@ ${synthInput}`, {
   }
 ```
 
-## Database
-
-```sql
-CREATE TABLE cap_reddit__blobs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  key TEXT,
-  chunk_idx INTEGER,
-  data TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE cap_reddit__posts (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  permalink TEXT,
-  subreddit TEXT,
-  author TEXT,
-  title TEXT,
-  body TEXT,
-  score INTEGER,
-  num_comments INTEGER,
-  created_utc INTEGER,
-  external_url TEXT,
-  fetched_at INTEGER,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE cap_reddit__comments (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  post_permalink TEXT,
-  comment_id TEXT,
-  depth INTEGER,
-  author TEXT,
-  score INTEGER,
-  body TEXT,
-  created_utc INTEGER,
-  parent_id TEXT,
-  fetched_at INTEGER,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE cap_reddit__links (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  post_permalink TEXT,
-  target_url TEXT,
-  kind TEXT,
-  source_kind TEXT,
-  source_author TEXT,
-  source_comment_id TEXT,
-  fetched_at INTEGER,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE cap_reddit__listings (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  query TEXT,
-  mode TEXT,
-  permalink TEXT,
-  title TEXT,
-  subreddit TEXT,
-  author TEXT,
-  score INTEGER,
-  num_comments INTEGER,
-  url TEXT,
-  created_utc INTEGER,
-  fetched_at INTEGER,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE cap_reddit__categories (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  permalink TEXT,
-  category TEXT,
-  confidence TEXT,
-  model TEXT,
-  classified_at INTEGER,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE cap_reddit__analyses (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  source_table TEXT,
-  filter_where TEXT,
-  filter_args TEXT,
-  instruction TEXT,
-  summary TEXT,
-  row_count INTEGER,
-  model TEXT,
-  tags TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-```
