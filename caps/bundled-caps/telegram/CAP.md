@@ -131,7 +131,7 @@ elif [[ "$TEXT" =~ ^/sessions?$ ]]; then
   if [ -z "$COUNT" ] || [ "$COUNT" = "0" ] || [ "$COUNT" = "null" ]; then
     MSG="Keine Sessions registriert. /use <name> legt eine an."
   else
-    MSG=$(echo "$ROWS" | yesmem json -r '"Sessions (\(.rows | length)):\n" + ([.rows[] | "  \(.name)\(if .is_default == 1 then " (*)" else "") [\(.session_id // "fresh")]"] | join("\n"))')
+    MSG=$(echo "$ROWS" | yesmem json -r '"Sessions (\(.rows | length)):\n" + ([.rows[] | "  \(.name)\(if .is_default == 1 then " (*)" else "" end) [\(.session_id // "fresh")]"] | join("\n"))')
   fi
   curl -4 -s -m 10 "https://api.telegram.org/bot${TOKEN}/sendMessage" -d "chat_id=${CHAT_ID}" --data-urlencode "text=${MSG}" > /dev/null
   printf '[%s] reply: /sessions -> %s\n' "$(date -Is)" "${COUNT:-0}" >> /tmp/treply.log

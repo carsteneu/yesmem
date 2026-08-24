@@ -38,6 +38,9 @@ func parseStoreArgs(jsonStr string) (map[string]any, error) {
 	if w, ok := raw["where"].(string); ok {
 		params["where"] = w
 	}
+	if o, ok := raw["order"].(string); ok {
+		params["order"] = o
+	}
 	if l, ok := raw["limit"].(float64); ok {
 		params["limit"] = l
 	}
@@ -65,6 +68,20 @@ func parseStoreArgs(jsonStr string) (map[string]any, error) {
 				return nil, fmt.Errorf("cannot serialize data: %w", err)
 			}
 			params["data"] = string(b)
+		}
+	}
+
+	for _, key := range []string{"set", "returning"} {
+		if v, ok := raw[key]; ok {
+			if s, isStr := v.(string); isStr {
+				params[key] = s
+			} else {
+				b, err := json.Marshal(v)
+				if err != nil {
+					return nil, fmt.Errorf("cannot serialize %s: %w", key, err)
+				}
+				params[key] = string(b)
+			}
 		}
 	}
 

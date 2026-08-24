@@ -130,5 +130,14 @@ func runMigrateCmd() {
 		fmt.Println("  Guard state: OK")
 	}
 
+	// 7. systemd units: drop obsolete network-online.target wait (local-first services)
+	if n, err := setup.MigrateSystemdUnits(home); err != nil {
+		fmt.Fprintf(os.Stderr, "  systemd units warning: %v\n", err)
+	} else if n > 0 {
+		fmt.Printf("  systemd units: removed network-online.target from %d unit(s)\n", n)
+	} else {
+		fmt.Println("  systemd units: OK")
+	}
+
 	fmt.Printf("Migration complete (version: %s)\n", buildinfo.Version)
 }

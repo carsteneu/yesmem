@@ -16,6 +16,11 @@ type PhaseValidation struct {
 	// IsStatusField is true for the pattern that checks **Status:** — this field is
 	// always required and all others are only checked when status is found.
 	IsStatusField bool
+	// IfTaskType, when non-empty, makes the phase's TaskTypeFields mandatory only
+	// when the Phase 1 **Task type:** value equals this string (e.g. "debug" gates
+	// the Depth-lock line in Phase 2). Empty means TaskTypeFields are never checked.
+	IfTaskType     string
+	TaskTypeFields []*regexp.Regexp
 }
 
 // phaseValidations defines the v3 contract: what each phase MUST contain.
@@ -29,6 +34,7 @@ func compileValidations() []PhaseValidation {
 			RequiredFields: []*regexp.Regexp{
 				regexp.MustCompile(`(?m)^\*\*Status:\*\*\s+(COMPLETE|BLOCKED|IN PROGRESS)`),
 				regexp.MustCompile(`(?m)^\*\*Goal understood:\*\*`),
+				regexp.MustCompile(`(?m)^\*\*Task type:\*\*\s+(debug|feature|chore|docs)`),
 				regexp.MustCompile(`(?m)^\*\*Codebase explored:\*\*`),
 				regexp.MustCompile(`(?m)^\*\*Session id:\*\*\s+\S`),
 			},
@@ -41,6 +47,10 @@ func compileValidations() []PhaseValidation {
 				regexp.MustCompile(`(?m)^\*\*Plan stored via set_plan:\*\*`),
 				regexp.MustCompile(`(?m)^\*\*Files in scope:\*\*`),
 			},
+			// Debug tasks must lock their fix layer before implementation; the
+			// Depth-lock discipline is only enforced when Task type == debug.
+			IfTaskType:     "debug",
+			TaskTypeFields: []*regexp.Regexp{depthLockRe},
 		},
 		{
 			Number: 3, Name: "EXECUTE",
@@ -57,6 +67,9 @@ func compileValidations() []PhaseValidation {
 				// Pure-build tasks (binary patching, frontend) often have no
 				// test suite; **Build:** or **Verification:** is equally valid.
 				regexp.MustCompile(`(?m)^\*\*(Tests run|Build|Verification):\*\*`),
+				// Autoprompt-Härtung: every task must record what new test was
+				// proven RED before the fix — or explicitly say "none — docs-only".
+				redProofRe,
 			},
 		},
 		{
@@ -81,7 +94,23 @@ func compileValidations() []PhaseValidation {
 	}
 }
 
-var phaseHeaderRe = regexp.MustCompile(`(?m)^### Phase (\d+):`)
+var (
+	phaseHeaderRe   = regexp.MustCompile(`(?m)^### Phase (\d+):`)
+	taskTypeValueRe = regexp.MustCompile(`(?m)^\*\*Task type:\*\*\s+(debug|feature|chore|docs)`)
+	depthLockRe     = regexp.MustCompile(`(?m)^\*\*Depth-lock:\*\*\s+\S`)
+	redProofRe      = regexp.MustCompile(`(?m)^\*\*RED proof:\*\*\s+\S`)
+)
+
+// detectTaskType extracts the Phase 1 **Task type:** value (one of
+// debug|feature|chore|docs). Returns "" when absent or invalid — in that case
+// no task-type-conditional fields are enforced.
+func detectTaskType(phase1 string) string {
+	m := taskTypeValueRe.FindStringSubmatch(phase1)
+	if len(m) < 2 {
+		return ""
+	}
+	return m[1]
+}
 
 // splitPhases splits scratchpad content into phase blocks keyed by phase number (1-6).
 func splitPhases(content string) map[int]string {
@@ -163,6 +192,8 @@ func ValidatePhaseBlocks(content string) ValidationResult {
 
 	var errors []FieldError
 
+	taskType := detectTaskType(phases[1])
+
 	for _, pv := range phaseValidations {
 		block, ok := phases[pv.Number]
 		if !ok {
@@ -190,6 +221,20 @@ func ValidatePhaseBlocks(content string) ValidationResult {
 				Field:  "**Status:**",
 				Detail: "missing or invalid status line (must be on its own line)",
 			})
+		}
+
+		// Task-type-conditional fields: e.g. Depth-lock only for debug tasks.
+		if pv.IfTaskType != "" && pv.IfTaskType == taskType {
+			for _, re := range pv.TaskTypeFields {
+				if re.MatchString(block) {
+					continue
+				}
+				errors = append(errors, FieldError{
+					Phase:  pv.Number,
+					Field:  re.String(),
+					Detail: "required field not found in phase block (conditional on task type " + pv.IfTaskType + ")",
+				})
+			}
 		}
 	}
 

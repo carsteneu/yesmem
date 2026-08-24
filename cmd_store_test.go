@@ -107,6 +107,39 @@ func TestParseStoreArgs_ArgsStringification(t *testing.T) {
 	}
 }
 
+func TestParseStoreArgs_ClaimAndReadParams(t *testing.T) {
+	input := `{"capability":"rocketchat","action":"claim_and_read","table":"updates","where":"processed=0","order":"id ASC","set":{"processed":1},"returning":["id","text"]}`
+	params, err := parseStoreArgs(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if params["order"] != "id ASC" {
+		t.Errorf("order = %v, want 'id ASC'", params["order"])
+	}
+	set, ok := params["set"].(string)
+	if !ok {
+		t.Fatalf("set should be string, got %T", params["set"])
+	}
+	var setObj map[string]any
+	if err := json.Unmarshal([]byte(set), &setObj); err != nil {
+		t.Fatalf("set string should be valid JSON object: %v", err)
+	}
+	if setObj["processed"] != float64(1) {
+		t.Errorf("set.processed = %v, want 1", setObj["processed"])
+	}
+	ret, ok := params["returning"].(string)
+	if !ok {
+		t.Fatalf("returning should be string, got %T", params["returning"])
+	}
+	var retArr []string
+	if err := json.Unmarshal([]byte(ret), &retArr); err != nil {
+		t.Fatalf("returning string should be valid JSON array: %v", err)
+	}
+	if len(retArr) != 2 || retArr[0] != "id" || retArr[1] != "text" {
+		t.Errorf("returning = %v, want [id text]", retArr)
+	}
+}
+
 func TestParseStoreArgs_DataStringification(t *testing.T) {
 	input := `{"capability":"telegram","action":"upsert","table":"messages","data":{"telegram_id":123,"text":"hello"}}`
 	params, err := parseStoreArgs(input)

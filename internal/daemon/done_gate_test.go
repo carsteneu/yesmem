@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -30,6 +31,7 @@ const agent233Content = `### Phase 5: REVIEW → **Status:** COMPLETE
 const validV3Content = `### Phase 1: ANALYZE
 **Status:** COMPLETE
 **Goal understood:** Replace LLM-based DONE-guard with Go regex-validator
+**Task type:** feature
 **Session id:** ses_test123
 **Codebase explored:** internal/daemon/
 **Constraints identified:** deterministic validation, no LLM dependency
@@ -55,6 +57,7 @@ const validV3Content = `### Phase 1: ANALYZE
 ### Phase 4: VERIFY
 **Status:** COMPLETE
 **Tests run:** go test ./internal/daemon/... → exit 0
+**RED proof:** none — docs-only
 **Lint/type-check:** go vet ./... → ok
 **Build:** go build ./... → success
 
@@ -89,6 +92,7 @@ const validV3Content = `### Phase 1: ANALYZE
 var partialContent = `### Phase 1: ANALYZE
 **Status:** COMPLETE
 **Goal understood:** Some task
+**Task type:** feature
 **Session id:** ses_test456
 **Codebase explored:** some files
 
@@ -215,6 +219,7 @@ func TestValidatePhaseBlocks_MissingPhase5Stage2(t *testing.T) {
 	content := `### Phase 1: ANALYZE
 **Status:** COMPLETE
 **Goal understood:** test
+**Task type:** feature
 **Session id:** ses_test789
 **Codebase explored:** test
 
@@ -230,6 +235,7 @@ func TestValidatePhaseBlocks_MissingPhase5Stage2(t *testing.T) {
 ### Phase 4: VERIFY
 **Status:** COMPLETE
 **Tests run:** test
+**RED proof:** none — docs-only
 
 ### Phase 5: REVIEW
 **Status:** COMPLETE
@@ -258,6 +264,7 @@ func TestValidatePhaseBlocks_MissingPhase5Security(t *testing.T) {
 	content := `### Phase 1: ANALYZE
 **Status:** COMPLETE
 **Goal understood:** test
+**Task type:** feature
 **Codebase explored:** test
 
 ### Phase 2: PLAN
@@ -272,6 +279,7 @@ func TestValidatePhaseBlocks_MissingPhase5Security(t *testing.T) {
 ### Phase 4: VERIFY
 **Status:** COMPLETE
 **Tests run:** test
+**RED proof:** none — docs-only
 
 ### Phase 5: REVIEW
 **Status:** COMPLETE
@@ -312,6 +320,7 @@ func TestValidatePhaseBlocks_Phase5SecurityEdgeCases(t *testing.T) {
 		return `### Phase 1: ANALYZE
 **Status:** COMPLETE
 **Goal understood:** test
+**Task type:** feature
 **Codebase explored:** test
 
 ### Phase 2: PLAN
@@ -326,6 +335,7 @@ func TestValidatePhaseBlocks_Phase5SecurityEdgeCases(t *testing.T) {
 ### Phase 4: VERIFY
 **Status:** COMPLETE
 **Tests run:** test
+**RED proof:** none — docs-only
 
 ### Phase 5: REVIEW
 **Status:** COMPLETE
@@ -394,5 +404,128 @@ func TestCountCompletedPhases_Empty(t *testing.T) {
 	count := CountCompletedPhases("")
 	if count != 0 {
 		t.Errorf("expected 0 completed phases for empty content, got %d", count)
+	}
+}
+
+// --- Autoprompt-Härtung: Task type, konditionaler Depth-Lock, RED proof ---
+
+// scaffoldScratchpad builds a minimal full (6-phase) scratchpad carrying the
+// Autoprompt-Härtung fields. Empty values remove the corresponding line so
+// the negative tests exercise the missing-field path.
+func scaffoldScratchpad(taskType, depthLock, redProof string) string {
+	phase1 := "**Goal understood:** test"
+	if taskType != "" {
+		phase1 += "\n**Task type:** " + taskType
+	}
+	phase2 := "**Plan stored via set_plan:** yes\n**Files in scope:** test\n**Test strategy:** test"
+	if depthLock != "" {
+		phase2 += "\n" + depthLock
+	}
+	phase4 := "**Tests run:** test"
+	if redProof != "" {
+		phase4 += "\n**RED proof:** " + redProof
+	}
+	return fmt.Sprintf(`### Phase 1: ANALYZE
+**Status:** COMPLETE
+%s
+**Session id:** ses_scaffold
+**Codebase explored:** test
+
+### Phase 2: PLAN
+**Status:** COMPLETE
+%s
+
+### Phase 3: EXECUTE
+**Status:** COMPLETE
+
+### Phase 4: VERIFY
+**Status:** COMPLETE
+%s
+
+### Phase 5: REVIEW
+**Status:** COMPLETE
+**Stage 2: Cold Review via task()**
+**task() dispatched:** yes
+**Subagent ID:** agent-x
+**Findings:** none
+**Merged assessment:** Yes
+**Fix commits:** none needed
+**Security:** none — diff reviewed, no findings
+
+### Phase 6: FINISH
+**Status:** COMPLETE
+**Deploy required:** no
+**send_to orchestrator:** yes`, phase1, phase2, phase4)
+}
+
+func TestValidatePhaseBlocks_MissingTaskType_Fails(t *testing.T) {
+	result := ValidatePhaseBlocks(scaffoldScratchpad("", "", "none — docs-only"))
+	if result.Compliant {
+		t.Errorf("Phase 1 without **Task type:** should not be compliant:\n%s", result.String())
+	}
+	found := false
+	for _, fe := range result.FieldErrors {
+		if fe.Phase == 1 && strings.Contains(fe.Field, "Task type") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected Phase 1 field error for missing **Task type:**, got: %v", result.FieldErrors)
+	}
+}
+
+func TestValidatePhaseBlocks_InvalidTaskType_Fails(t *testing.T) {
+	result := ValidatePhaseBlocks(scaffoldScratchpad("nonsense", "", "none — docs-only"))
+	if result.Compliant {
+		t.Errorf("non-enum **Task type:** value should not be compliant:\n%s", result.String())
+	}
+}
+
+func TestValidatePhaseBlocks_FeatureTask_Passes(t *testing.T) {
+	// Task type feature: no Depth-lock required — this is the common path.
+	result := ValidatePhaseBlocks(scaffoldScratchpad("feature", "", "none — docs-only"))
+	if !result.Compliant {
+		t.Errorf("feature task with RED proof + no depth-lock should be compliant:\n%s", result.String())
+	}
+}
+
+func TestValidatePhaseBlocks_DebugTaskMissingDepthLock_Fails(t *testing.T) {
+	// Task type debug: Phase 2 MUST carry **Depth-lock:** — conditional rule.
+	result := ValidatePhaseBlocks(scaffoldScratchpad("debug", "", "RED: TestX fails before, passes after"))
+	if result.Compliant {
+		t.Errorf("debug task without **Depth-lock:** in Phase 2 should not be compliant:\n%s", result.String())
+	}
+	found := false
+	for _, fe := range result.FieldErrors {
+		if fe.Phase == 2 && strings.Contains(fe.Field, "Depth-lock") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected Phase 2 field error for missing **Depth-lock:**, got: %v", result.FieldErrors)
+	}
+}
+
+func TestValidatePhaseBlocks_DebugTaskWithDepthLock_Passes(t *testing.T) {
+	dl := "**Depth-lock:** D1 home=test::New; D3 deepest=test::Fix; D4 repro=test"
+	result := ValidatePhaseBlocks(scaffoldScratchpad("debug", dl, "RED: TestX fails before, passes after"))
+	if !result.Compliant {
+		t.Errorf("debug task with **Depth-lock:** should be compliant:\n%s", result.String())
+	}
+}
+
+func TestValidatePhaseBlocks_MissingRedProof_Fails(t *testing.T) {
+	result := ValidatePhaseBlocks(scaffoldScratchpad("feature", "", ""))
+	if result.Compliant {
+		t.Errorf("Phase 4 without **RED proof:** should not be compliant:\n%s", result.String())
+	}
+	found := false
+	for _, fe := range result.FieldErrors {
+		if fe.Phase == 4 && strings.Contains(fe.Field, "RED proof") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected Phase 4 field error for missing **RED proof:**, got: %v", result.FieldErrors)
 	}
 }
