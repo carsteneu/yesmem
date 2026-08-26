@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Bundle chrome_headless cap: render any URL (screenshot/full-page shot/PDF/DOM/text) + interactive Playwright runs
 - Layer-4 skillcheck — context-compaction guard for yesloop agents
 - Task-type + conditional depth-lock + RED proof disciplines
 
