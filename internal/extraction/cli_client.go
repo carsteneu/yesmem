@@ -104,33 +104,17 @@ func (c *CLIClient) runClaude(ctx context.Context, system, userMsg string, schem
 	}
 	sysFile.Close()
 
-	// Write user message to temp file
-	msgFile, err := os.CreateTemp("", "yesmem-msg-*.txt")
+	args, err := c.claudeArgs(sysFile.Name(), schema)
 	if err != nil {
-		return "", fmt.Errorf("create msg file: %w", err)
-	}
-	defer os.Remove(msgFile.Name())
-	msgFile.WriteString(userMsg)
-	msgFile.Close()
-
-	// Build wrapper script — Go exec.Command can't pass --tools= correctly
-	scriptFile, err := os.CreateTemp("", "yesmem-cli-*.sh")
-	if err != nil {
-		return "", fmt.Errorf("create script: %w", err)
-	}
-	defer os.Remove(scriptFile.Name())
-
-	budgetFlag := ""
-	if c.MaxBudgetPerCall > 0 {
-		budgetFlag = fmt.Sprintf(" --max-budget-usd %.2f", c.MaxBudgetPerCall)
+		return "", err
 	}
 
-	fmt.Fprintf(scriptFile, "#!/bin/sh\nunset ANTHROPIC_BASE_URL CLAUDECODE CLAUDE_CODE_ENTRYPOINT\nexec %s -p --model %s --system-prompt-file %s --max-turns 1 --no-session-persistence --output-format json%s --tools= --mcp-config '{\"mcpServers\":{}}' --strict-mcp-config < %s\n",
-		c.binary, c.cliModelName(), sysFile.Name(), budgetFlag, msgFile.Name())
-	scriptFile.Close()
-	os.Chmod(scriptFile.Name(), 0755)
-
-	cmd := exec.CommandContext(ctx, scriptFile.Name())
+	// Invoke Claude directly so the schema, model, and paths remain literal
+	// arguments. A generated shell wrapper made those caller-controlled values
+	// vulnerable to shell interpretation and also prevented CompleteJSON from
+	// using Claude Code's native structured-output validation.
+	cmd := exec.CommandContext(ctx, c.binary, args...)
+	cmd.Stdin = strings.NewReader(userMsg)
 
 	// Unset nested-session guards AND proxy redirect
 	cmd.Env = filterEnv(os.Environ(), "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "ANTHROPIC_BASE_URL")
@@ -158,10 +142,39 @@ func (c *CLIClient) runClaude(ctx context.Context, system, userMsg string, schem
 		return "", fmt.Errorf("empty response from cli")
 	}
 
-	// Parse JSON response — extract result text and report usage
-	result = c.extractAndReportUsage(result)
+	// Parse the Claude Code result envelope. Structured-output runs return the
+	// validated object in structured_output, not in the free-text result field.
+	result, err = c.extractAndReportUsage(result, schema != nil)
+	if err != nil {
+		return "", err
+	}
 
 	return result, nil
+}
+
+func (c *CLIClient) claudeArgs(systemPromptPath string, schema map[string]any) ([]string, error) {
+	args := []string{
+		"-p",
+		"--model", c.cliModelName(),
+		"--system-prompt-file", systemPromptPath,
+		"--max-turns", "1",
+		"--no-session-persistence",
+		"--output-format", "json",
+		"--tools=",
+		"--mcp-config", `{"mcpServers":{}}`,
+		"--strict-mcp-config",
+	}
+	if c.MaxBudgetPerCall > 0 {
+		args = append(args, "--max-budget-usd", fmt.Sprintf("%.2f", c.MaxBudgetPerCall))
+	}
+	if schema != nil {
+		schemaJSON, err := json.Marshal(schema)
+		if err != nil {
+			return nil, fmt.Errorf("marshal JSON schema: %w", err)
+		}
+		args = append(args, "--json-schema", string(schemaJSON))
+	}
+	return args, nil
 }
 
 // runStdin pipes system+user prompt via stdin to codex exec / opencode run.
@@ -342,12 +355,14 @@ func (c *CLIClient) cliModelName() string {
 
 // cliResult represents the JSON output from claude -p --output-format json.
 type cliResult struct {
-	Type         string  `json:"type"`
-	Subtype      string  `json:"subtype"`
-	Result       string  `json:"result"`
-	IsError      bool    `json:"is_error"`
-	TotalCostUSD float64 `json:"total_cost_usd"`
-	Usage        struct {
+	Type             string          `json:"type"`
+	Subtype          string          `json:"subtype"`
+	Result           string          `json:"result"`
+	StructuredOutput json.RawMessage `json:"structured_output"`
+	Errors           json.RawMessage `json:"errors"`
+	IsError          bool            `json:"is_error"`
+	TotalCostUSD     float64         `json:"total_cost_usd"`
+	Usage            struct {
 		InputTokens              int `json:"input_tokens"`
 		OutputTokens             int `json:"output_tokens"`
 		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
@@ -358,11 +373,14 @@ type cliResult struct {
 // extractAndReportUsage parses the CLI JSON output, reports token usage
 // via OnUsage callback, and returns the LLM response text.
 // Falls back to raw output if JSON parsing fails.
-func (c *CLIClient) extractAndReportUsage(output string) string {
+func (c *CLIClient) extractAndReportUsage(output string, requireStructured bool) (string, error) {
 	var resp cliResult
-	if err := json.Unmarshal([]byte(output), &resp); err != nil || resp.Result == "" {
-		// Fallback: not valid JSON or no result — return raw output
-		return output
+	if err := json.Unmarshal([]byte(output), &resp); err != nil {
+		if requireStructured {
+			return "", fmt.Errorf("decode structured CLI response: %w", err)
+		}
+		// Preserve the historical plain-completion fallback.
+		return output, nil
 	}
 
 	// Report real token usage (same callback as API client)
@@ -381,7 +399,24 @@ func (c *CLIClient) extractAndReportUsage(output string) string {
 			resp.Usage.CacheReadInputTokens)
 	}
 
-	return resp.Result
+	if requireStructured {
+		if resp.Subtype != "success" || resp.IsError {
+			return "", fmt.Errorf(
+				"structured CLI response failed (subtype=%q, errors=%s)",
+				resp.Subtype,
+				strings.TrimSpace(string(resp.Errors)),
+			)
+		}
+		structured := bytes.TrimSpace(resp.StructuredOutput)
+		if len(structured) == 0 || bytes.Equal(structured, []byte("null")) {
+			return "", fmt.Errorf("structured CLI response missing structured_output")
+		}
+		return string(structured), nil
+	}
+	if resp.Result == "" {
+		return output, nil
+	}
+	return resp.Result, nil
 }
 
 // adaptSystemPromptForAgent replaces Claude-specific references in a system prompt
