@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"io"
 	"net"
 	"os"
@@ -1765,5 +1766,64 @@ func TestBuildAgentExtraEnv_EmptySessionID(t *testing.T) {
 	}
 	if _, ok := containsEnv(env, "YESMEM_SOURCE_AGENT"); ok {
 		t.Errorf("YESMEM_SOURCE_AGENT must also be omitted when sessionID is empty (no partial identity)")
+	}
+}
+
+func TestHandleOpenAgentTerminal_Resume(t *testing.T) {
+	h, _ := mustHandler(t)
+	h.disableAgentProcesses = true
+	resp := h.Handle(Request{Method: "open_agent_terminal", Params: map[string]any{
+		"session_id": "ses_abc123",
+		"work_dir":   "/home/chief/projects/deepseek",
+		"project":    "deepseek",
+		"backend":    "opencode",
+	}})
+	if resp.Error != "" {
+		t.Fatal(resp.Error)
+	}
+	var out map[string]any
+	json.Unmarshal(resp.Result, &out)
+	if out["resume"] != true {
+		t.Fatalf("resume = %v, want true", out["resume"])
+	}
+	agentID, _ := out["agent_id"].(string)
+	if agentID == "" {
+		t.Fatal("no agent_id returned")
+	}
+	agent, err := h.store.AgentGet(agentID)
+	if err != nil || agent == nil {
+		t.Fatalf("agent %s not created: %v", agentID, err)
+	}
+	if agent.OpencodeSessionID != "ses_abc123" {
+		t.Fatalf("OpencodeSessionID = %q, want ses_abc123", agent.OpencodeSessionID)
+	}
+	if agent.Status == "" {
+		t.Fatal("empty status")
+	}
+}
+
+func TestHandleOpenAgentTerminal_New(t *testing.T) {
+	h, _ := mustHandler(t)
+	h.disableAgentProcesses = true
+	resp := h.Handle(Request{Method: "open_agent_terminal", Params: map[string]any{
+		"work_dir": "/home/chief/projects/greenwebsite",
+		"project":  "greenwebsite",
+		"backend":  "opencode",
+	}})
+	if resp.Error != "" {
+		t.Fatal(resp.Error)
+	}
+	var out map[string]any
+	json.Unmarshal(resp.Result, &out)
+	if out["resume"] != false {
+		t.Fatalf("resume = %v, want false", out["resume"])
+	}
+	agentID, _ := out["agent_id"].(string)
+	agent, err := h.store.AgentGet(agentID)
+	if err != nil || agent == nil {
+		t.Fatalf("agent not created: %v", err)
+	}
+	if agent.OpencodeSessionID != "" {
+		t.Fatalf("OpencodeSessionID = %q, want empty for new session", agent.OpencodeSessionID)
 	}
 }

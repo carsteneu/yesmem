@@ -287,10 +287,10 @@ func (h *Handler) handleCheckInvitations(params map[string]any) Response {
 
 	return jsonResponse(map[string]any{
 		"has_invitation": true,
-		"dialog_id":     dialog.ID,
-		"initiator":     dialog.Initiator,
-		"topic":         dialog.Topic,
-		"messages":      msgTexts,
+		"dialog_id":      dialog.ID,
+		"initiator":      dialog.Initiator,
+		"topic":          dialog.Topic,
+		"messages":       msgTexts,
 	})
 }
 
@@ -414,6 +414,35 @@ func (h *Handler) tryRecoverFromPIDFile(pid int) string {
 	return strings.TrimSpace(string(data))
 }
 
+// handleListRegistrations returns the daemon's live session→PID, session→window
+// and session→terminal maps. Used by `save-terminals` to annotate terminal
+// windows with their running agent sessions.
+func (h *Handler) handleListRegistrations(params map[string]any) Response {
+	h.pidMapMu.Lock()
+	sessions := make(map[string]int, len(h.pidMap))
+	for sid, p := range h.pidMap {
+		sessions[sid] = p
+	}
+	h.pidMapMu.Unlock()
+
+	h.windowMapMu.Lock()
+	windows := make(map[string]string, len(h.windowMap))
+	for sid, xid := range h.windowMap {
+		windows[sid] = xid
+	}
+	terminals := make(map[string]string, len(h.terminalMap))
+	for sid, t := range h.terminalMap {
+		terminals[sid] = t
+	}
+	h.windowMapMu.Unlock()
+
+	return jsonResponse(map[string]any{
+		"sessions":  sessions,
+		"windows":   windows,
+		"terminals": terminals,
+	})
+}
+
 // handleRegisterWindow stores the X11 window ID and terminal type for xdotool push.
 func (h *Handler) handleRegisterWindow(params map[string]any) Response {
 	sessionID, _ := params["session_id"].(string)
@@ -528,9 +557,9 @@ func (h *Handler) handleCheckBroadcasts(params map[string]any) Response {
 	var result []map[string]any
 	for _, m := range msgs {
 		result = append(result, map[string]any{
-			"sender":     m.Sender,
+			"sender":       m.Sender,
 			"sender_short": m.Sender[:min(8, len(m.Sender))],
-			"content":    m.Content,
+			"content":      m.Content,
 		})
 		ids = append(ids, m.ID)
 	}
@@ -546,7 +575,7 @@ func (h *Handler) handleCheckBroadcasts(params map[string]any) Response {
 // formatCheckMessagesResult formats check_messages output for injection.
 func formatCheckMessagesResult(raw json.RawMessage) string {
 	var r struct {
-		Messages  []struct {
+		Messages []struct {
 			Sender  string `json:"sender"`
 			Content string `json:"content"`
 		} `json:"messages"`
@@ -584,8 +613,8 @@ func (h *Handler) handleWhoami(params map[string]any) Response {
 		// the prefixed value for caller-contract compatibility.
 		if agent, err := h.store.AgentGetAnyBySession(sessionID); err == nil && agent != nil {
 			result["agent_id"] = agent.ID
-			result["section"]  = agent.Section
-			result["status"]   = agent.Status
+			result["section"] = agent.Section
+			result["status"] = agent.Status
 			result["is_agent"] = true
 			// Surface the project string the agent was spawned under so agents
 			// can use it verbatim for scratchpad_write/read calls — prevents

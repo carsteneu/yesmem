@@ -14,6 +14,9 @@ func TestBuildSpawnCommand_Ghostty(t *testing.T) {
 	if len(args) == 0 {
 		t.Error("args must not be empty")
 	}
+	if args[0] != "+new-window" {
+		t.Errorf("ghostty spawn must use +new-window (single-instance), got args[0]=%q", args[0])
+	}
 }
 
 func TestBuildSpawnCommand_Kitty(t *testing.T) {
