@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/carsteneu/yesmem/internal/daemon"
+	"github.com/carsteneu/yesmem/internal/terminals"
 )
 
 // RunThink registers the session PID with the daemon for MCP session resolution.
@@ -28,6 +29,8 @@ func RunThink(dataDir string) {
 	pid := os.Getppid()
 	RegisterPID(dataDir, input.SessionID, pid)
 	WritePIDFile(dataDir, input.SessionID, pid)
+	// Remember which terminal window runs this session (best-effort).
+	terminals.Touch(dataDir, input.SessionID, pid)
 }
 
 // RegisterPID tells the daemon which OS PID belongs to this session.

@@ -715,6 +715,10 @@ func (h *Handler) Handle(req Request) Response {
 		return h.handleRegisterPID(req.Params)
 	case "register_window":
 		return h.handleRegisterWindow(req.Params)
+	case "list_registrations":
+		return h.handleListRegistrations(req.Params)
+	case "open_agent_terminal":
+		return h.handleOpenAgentTerminal(req.Params)
 	case "fork_extract_learnings":
 		return h.handleForkExtractLearnings(req.Params)
 	case "fork_set_session_flavor":

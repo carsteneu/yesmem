@@ -406,6 +406,33 @@ func TestHandleMarkChannelRead_MissingSessionID(t *testing.T) {
 
 // --- handleRegisterPID ---
 
+func TestHandleListRegistrations(t *testing.T) {
+	h, _ := mustHandler(t)
+	h.Handle(Request{Method: "register_pid", Params: map[string]any{"session_id": "opencode:ses-1", "pid": float64(12345), "source_agent": "opencode"}})
+	h.Handle(Request{Method: "register_window", Params: map[string]any{"session_id": "opencode:ses-1", "window_id": "0x5600004", "terminal": "ghostty"}})
+
+	resp := h.Handle(Request{Method: "list_registrations", Params: map[string]any{}})
+	if resp.Error != "" {
+		t.Fatal(resp.Error)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(resp.Result, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	sessions, _ := m["sessions"].(map[string]any)
+	if sessions["opencode:ses-1"] != float64(12345) {
+		t.Errorf("sessions = %v", sessions)
+	}
+	windows, _ := m["windows"].(map[string]any)
+	if windows["opencode:ses-1"] != "0x5600004" {
+		t.Errorf("windows = %v", windows)
+	}
+	terms, _ := m["terminals"].(map[string]any)
+	if terms["opencode:ses-1"] != "ghostty" {
+		t.Errorf("terminals = %v", terms)
+	}
+}
+
 func TestHandleRegisterPID_OK(t *testing.T) {
 	h, _ := mustHandler(t)
 	resp := h.Handle(Request{Method: "register_pid", Params: map[string]any{"session_id": "pid-sess-1", "pid": float64(12345)}})
@@ -1002,8 +1029,8 @@ func TestHandleWhoami_StripsOpenCodePrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp := h.Handle(Request{Method: "whoami", Params: map[string]any{
-		"session_id":     "opencode:ses_oc_real_1",
-		"_source_agent":  "opencode",
+		"session_id":    "opencode:ses_oc_real_1",
+		"_source_agent": "opencode",
 	}})
 	if resp.Error != "" {
 		t.Fatal(resp.Error)
@@ -1033,8 +1060,8 @@ func TestHandleWhoami_StripsCodexPrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp := h.Handle(Request{Method: "whoami", Params: map[string]any{
-		"session_id":     "codex:ses_cx_real_1",
-		"_source_agent":  "codex",
+		"session_id":    "codex:ses_cx_real_1",
+		"_source_agent": "codex",
 	}})
 	if resp.Error != "" {
 		t.Fatal(resp.Error)

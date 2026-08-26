@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/carsteneu/yesmem/internal/daemon"
+	"github.com/carsteneu/yesmem/internal/terminals"
 )
 
 // RunIdleTick reads UserPromptSubmit hook JSON from stdin, calls daemon idle_tick,
@@ -27,6 +28,9 @@ func RunIdleTick(dataDir string) {
 	if sessionID == "" {
 		sessionID = "unknown"
 	}
+
+	// Record the terminal window that hosts this session (best-effort).
+	terminals.Touch(dataDir, sessionID, os.Getppid())
 
 	client, err := daemon.Dial(dataDir)
 	if err != nil {

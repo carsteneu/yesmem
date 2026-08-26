@@ -160,6 +160,69 @@ func (h *Handler) handleSpawnAgent(params map[string]any) Response {
 	})
 }
 
+// handleOpenAgentTerminal starts a terminal agent session as a managed agent:
+// a PTY bridge + terminal window (like spawn_agent) for existing (session_id)
+// or new (empty session_id) sessions. Managed sessions are then reachable via
+// relay_agent/send_to, exactly like swarm agents.
+func (h *Handler) handleOpenAgentTerminal(params map[string]any) Response {
+	sessionID, _ := params["session_id"].(string) // resume target; empty = new session
+	workDir, _ := params["work_dir"].(string)
+	backend, _ := params["backend"].(string)
+	if backend == "" {
+		backend = "opencode"
+	}
+	project, _ := params["project"].(string)
+	// Project als Absolutpfad aus dem Workdir auflösen. Short-Names können
+	// mehrdeutig sein (ResolveProjectShort wirft AmbiguousProjectError, wenn
+	// mehrere Kandidaten existieren — z.B. mehrere "opencode"-Worktrees).
+	if project == "" || !strings.HasPrefix(project, "/") {
+		project = h.store.ResolveProjectShort(workDir)
+	}
+	if project == "" {
+		project = filepath.Base(workDir)
+	}
+	if project == "" {
+		return errorResponse("project required")
+	}
+
+	id, err := h.store.AgentNextID(project)
+	if err != nil {
+		return errorResponse(fmt.Sprintf("generate agent ID: %v", err))
+	}
+	agentSessionID := sessionID
+	if agentSessionID == "" {
+		agentSessionID = generateAgentUUID()
+	}
+	section := fmt.Sprintf("term-%s", strings.TrimPrefix(id, "agent-"))
+
+	agent := storage.Agent{
+		ID:        id,
+		Project:   project,
+		Section:   section,
+		SessionID: agentSessionID,
+		Status:    "pending",
+		Backend:   backend,
+	}
+	if backend == "opencode" {
+		agent.OpencodeSessionID = sessionID
+	}
+	if err := h.store.AgentCreate(agent); err != nil {
+		return errorResponse(fmt.Sprintf("create agent: %v", err))
+	}
+
+	sockPath := filepath.Join(h.dataDir, fmt.Sprintf("%s.sock", id))
+	wd := h.resolveAgentWorkDir(project, workDir, backend)
+	if !h.disableAgentProcesses {
+		go h.spawnAgentProcess(id, agentSessionID, project, section, "", sockPath, wd, backend, "", 0, sessionID != "")
+	}
+	return jsonResponse(map[string]any{
+		"status":   "starting",
+		"agent_id": id,
+		"section":  section,
+		"resume":   sessionID != "",
+	})
+}
+
 // codexSessionFile holds a path and modification time for sorting.
 type codexSessionFile struct {
 	path    string
@@ -474,6 +537,12 @@ func (h *Handler) spawnAgentProcess(id, sessionID, project, section, prompt, soc
 	terminal := h.agentTerminal
 	if terminal == "" {
 		terminal = orchestrator.DetectTerminal()
+	}
+	if terminal == "unknown" {
+		// Daemon läuft headless (systemd) — DetectTerminal findet keinen
+		// Emulator. Ghostty ist auf diesem Host das Standard-Terminal und
+		// wird via +new-window zuverlässig geöffnet.
+		terminal = "ghostty"
 	}
 	title := fmt.Sprintf("yesmem-%s #%s", section, strings.TrimPrefix(id, "agent-"))
 	bin, spawnArgs := orchestrator.BuildSpawnCommand(terminal, binPath, title, "agent-tty", "--sock", sockPath)

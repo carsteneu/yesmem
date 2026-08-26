@@ -91,6 +91,12 @@ func main() {
 		hooks.RunResolveCheck(yesmemDataDir())
 	case "hook-think":
 		hooks.RunThink(yesmemDataDir())
+	case "save-terminals":
+		runSaveTerminals()
+	case "restart-terminals":
+		runRestartTerminals()
+	case "spawn-terminal":
+		runSpawnTerminal()
 	case "session-end":
 		hooks.RunSessionEnd(yesmemDataDir())
 	case "reextract":
@@ -309,6 +315,9 @@ func printUsage() {
 	fmt.Println("  quickstart      Fast extraction of last N sessions [--last N]")
 	fmt.Println("  uninstall       Remove all YesMem registrations")
 	fmt.Println("  status          Show index status")
+	fmt.Println("  save-terminals  Snapshot open terminal windows (positions + sessions)")
+	fmt.Println("  restart-terminals  Reopen saved terminal windows after a reboot")
+	fmt.Println("  spawn-terminal [dir]  Start a new terminal session as a managed (relayable) agent; default: current dir")
 	fmt.Println("  version         Show version")
 	fmt.Println()
 	fmt.Println("Hooks (called by Claude Code, not directly):")
