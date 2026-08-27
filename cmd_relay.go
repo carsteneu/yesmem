@@ -15,11 +15,12 @@ func runRelay() {
 	content := fs.String("content", "", "Message to inject into agent's terminal")
 	stop := fs.Bool("stop", false, "Stop the agent gracefully")
 	resume := fs.Bool("resume", false, "Resume a stopped agent in a new terminal")
+	session := fs.String("session", "", "Explicit session id to resume (opencode ses_*, codex session)")
 	project := fs.String("project", "", "Project name (for section lookup)")
 	fs.Parse(os.Args[2:])
 
-	if *to == "" {
-		fmt.Fprintln(os.Stderr, "Error: --to is required")
+	if *to == "" && *session == "" {
+		fmt.Fprintln(os.Stderr, "Error: --to or --session is required")
 		fs.Usage()
 		os.Exit(1)
 	}
@@ -47,7 +48,7 @@ func runRelay() {
 	case *stop:
 		relayViaDaemon(dataDir, "stop_agent", map[string]any{"to": *to, "project": *project})
 	case *resume:
-		relayViaDaemon(dataDir, "resume_agent", map[string]any{"to": *to, "project": *project})
+		relayViaDaemon(dataDir, "resume_agent", map[string]any{"to": *to, "project": *project, "session_id": *session})
 	}
 }
 

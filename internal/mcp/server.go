@@ -1357,8 +1357,9 @@ func (s *Server) registerTools() {
 
 	s.srv.AddTool(
 		mcplib.NewTool("resume_agent",
-			mcplib.WithDescription("Resume a previously stopped agent. Use to continue work from where a stopped agent left off. Target by agent ID or section name."),
-			mcplib.WithString("to", mcplib.Required(), mcplib.Description("Agent ID or section name")),
+			mcplib.WithDescription("Resume a previously stopped agent. Target by agent ID, section name, or session id (claude session, opencode ses_*, codex session); an explicit session_id is persisted when the backend session column is empty. A bare opencode session id with no agent row bootstraps a fresh agent from opencode's own session DB. Use to continue work from where a stopped agent left off."),
+			mcplib.WithString("to", mcplib.Description("Agent ID, section name, or session id")),
+			mcplib.WithString("session_id", mcplib.Description("Explicit session id to resume (claude session, opencode ses_*, codex session)")),
 			mcplib.WithString("project", mcplib.Description("Project name (for section lookup)")),
 		), s.proxyCall("resume_agent"))
 
