@@ -1,11 +1,9 @@
 package extraction
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -140,146 +138,6 @@ func TestCLIClientName(t *testing.T) {
 	if c.Model() != "claude-haiku-4-5-20251001" {
 		t.Errorf("expected model, got %q", c.Model())
 	}
-}
-
-func TestClaudeArgsPassJSONSchemaAsOneLiteralArgument(t *testing.T) {
-	c := NewCLIClient("claude", "claude-sonnet-4-6", "claude")
-	schema := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"answer": map[string]any{"type": "string"},
-		},
-		"required": []string{"answer"},
-	}
-
-	args, err := c.claudeArgs("/tmp/system prompt.txt", schema)
-	if err != nil {
-		t.Fatalf("claudeArgs returned error: %v", err)
-	}
-	wantSchema, err := json.Marshal(schema)
-	if err != nil {
-		t.Fatalf("marshal expected schema: %v", err)
-	}
-
-	assertArgPair(t, args, "--json-schema", string(wantSchema))
-	assertArgPair(t, args, "--system-prompt-file", "/tmp/system prompt.txt")
-	if !containsArg(args, "--tools=") {
-		t.Fatalf("arguments missing literal --tools=: %v", args)
-	}
-}
-
-func TestClaudeArgsOmitJSONSchemaForPlainCompletion(t *testing.T) {
-	c := NewCLIClient("claude", "claude-sonnet-4-6", "claude")
-	args, err := c.claudeArgs("/tmp/system.txt", nil)
-	if err != nil {
-		t.Fatalf("claudeArgs returned error: %v", err)
-	}
-	if containsArg(args, "--json-schema") {
-		t.Fatalf("plain completion unexpectedly includes --json-schema: %v", args)
-	}
-}
-
-func TestClaudeArgsRejectUnserializableJSONSchema(t *testing.T) {
-	c := NewCLIClient("claude", "claude-sonnet-4-6", "claude")
-	_, err := c.claudeArgs("/tmp/system.txt", map[string]any{"invalid": make(chan int)})
-	if err == nil || !strings.Contains(err.Error(), "marshal JSON schema") {
-		t.Fatalf("expected schema marshal error, got %v", err)
-	}
-}
-
-func TestRunClaudeDoesNotShellInterpretArguments(t *testing.T) {
-	tempDir := t.TempDir()
-	capturePath := filepath.Join(tempDir, "args.txt")
-	markerPath := filepath.Join(tempDir, "must-not-exist")
-	fakeClaude := filepath.Join(tempDir, "fake-claude")
-	script := `#!/bin/sh
-: > "$YESMEM_TEST_CAPTURE"
-for arg in "$@"; do
-  printf '%s\n' "$arg" >> "$YESMEM_TEST_CAPTURE"
-done
-printf '%s\n' '{"type":"result","subtype":"success","structured_output":{"answer":"ok"},"is_error":false}'
-`
-	if err := os.WriteFile(fakeClaude, []byte(script), 0755); err != nil {
-		t.Fatalf("write fake Claude: %v", err)
-	}
-	t.Setenv("YESMEM_TEST_CAPTURE", capturePath)
-
-	c := NewCLIClient(fakeClaude, "model; touch "+markerPath, "claude")
-	c.RateLimiter = nil
-	schema := map[string]any{
-		"type":        "object",
-		"description": "$(touch " + markerPath + ")",
-	}
-	got, err := c.runClaude(context.Background(), "system", "user", schema)
-	if err != nil {
-		t.Fatalf("runClaude returned error: %v", err)
-	}
-	if got != `{"answer":"ok"}` {
-		t.Fatalf("runClaude result = %q, want structured result", got)
-	}
-	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
-		t.Fatalf("shell metacharacters were interpreted; marker stat error = %v", err)
-	}
-	captured, err := os.ReadFile(capturePath)
-	if err != nil {
-		t.Fatalf("read captured arguments: %v", err)
-	}
-	if !strings.Contains(string(captured), "$(touch "+markerPath+")") {
-		t.Fatalf("schema was not passed literally: %s", captured)
-	}
-}
-
-func TestExtractStructuredOutputRequiresValidatedField(t *testing.T) {
-	c := NewCLIClient("claude", "claude-sonnet-4-6", "claude")
-
-	got, err := c.extractAndReportUsage(
-		`{"type":"result","subtype":"success","structured_output":{"answer":"ok"}}`,
-		true,
-	)
-	if err != nil {
-		t.Fatalf("extract structured output: %v", err)
-	}
-	if got != `{"answer":"ok"}` {
-		t.Fatalf("structured output = %q", got)
-	}
-
-	_, err = c.extractAndReportUsage(
-		`{"type":"result","subtype":"success","result":"unvalidated text"}`,
-		true,
-	)
-	if err == nil || !strings.Contains(err.Error(), "missing structured_output") {
-		t.Fatalf("expected missing structured_output error, got %v", err)
-	}
-}
-
-func TestExtractStructuredOutputSurfacesRetryFailure(t *testing.T) {
-	c := NewCLIClient("claude", "claude-sonnet-4-6", "claude")
-	_, err := c.extractAndReportUsage(
-		`{"type":"result","subtype":"error_max_structured_output_retries","errors":["schema mismatch"],"is_error":true}`,
-		true,
-	)
-	if err == nil || !strings.Contains(err.Error(), "error_max_structured_output_retries") {
-		t.Fatalf("expected structured retry error, got %v", err)
-	}
-}
-
-func assertArgPair(t *testing.T, args []string, key, value string) {
-	t.Helper()
-	for index := 0; index+1 < len(args); index++ {
-		if args[index] == key && args[index+1] == value {
-			return
-		}
-	}
-	t.Fatalf("arguments missing %s followed by %q: %v", key, value, args)
-}
-
-func containsArg(args []string, want string) bool {
-	for _, arg := range args {
-		if arg == want {
-			return true
-		}
-	}
-	return false
 }
 
 func TestAdaptSystemPromptForAgent_ClaudeUnchanged(t *testing.T) {

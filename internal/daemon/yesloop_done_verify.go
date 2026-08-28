@@ -47,7 +47,7 @@ const (
 // Metachar-free (no markdown, no backticks, no parens) because it is written
 // as a single line to the agent's PTY inject socket. Package-level so tests
 // can assert on the content without capturing the socket write.
-const doneVerifyRelayMessage = "Hast du wirklich alle Phasen abgehakt. Vor allem Phase 5 Code Review inklusive Security Review via security-review Skill. Im Phase 5 Block muss zusaetzlich zu Stage 2 Cold Review ein Security field stehen mit Findings oder skip-reason. Falls nicht bitte durchfuehren und BEWEISEN dass alle Phasen durch sind und DANN Phase 6 Finish durchfuehren mit commit und send_to. KEIN auto-deploy."
+const doneVerifyRelayMessage = "Hast du wirklich alle Phasen abgehakt. Vor allem Phase 5 Code Review inklusive Security Review via security-review Skill. Im Phase 5 Block muss zusaetzlich zu Stage 2 Cold Review und Stage 3 Consequence and Intent Check je ein task subagent gefahren sein und ein Security field stehen mit Findings oder skip-reason. Phase 4 braucht eine Regression baseline. Falls nicht bitte durchfuehren und BEWEISEN dass alle Phasen durch sind und DANN Phase 6 Finish durchfuehren mit commit und send_to. KEIN auto-deploy."
 
 // yesloopDoneVerifyState tracks the verify state machine for a single agent.
 type yesloopDoneVerifyState struct {

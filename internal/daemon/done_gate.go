@@ -70,6 +70,10 @@ func compileValidations() []PhaseValidation {
 				// Autoprompt-Härtung: every task must record what new test was
 				// proven RED before the fix — or explicitly say "none — docs-only".
 				redProofRe,
+				// Deterministic regression discipline: Phase 4 must diff the test-suite
+				// results between merge-base and HEAD (see SKILL.md procedure). Value
+				// must sit on the same line — [ \t] blocks the \s+\S newline bypass.
+				regexp.MustCompile(`(?m)^\*\*Regression baseline:\*\*[ \t]+\S`),
 			},
 		},
 		{
@@ -80,6 +84,11 @@ func compileValidations() []PhaseValidation {
 				regexp.MustCompile(`\*\*Stage 2: Cold Review`),
 				regexp.MustCompile(`task\(\) dispatched:\*{0,2}\s+(yes|blocked)`),
 				regexp.MustCompile(`(?m)^\*\*Security:\*\*[ \t]+\S`),
+				// Stage 3 Consequence & Intent: fresh task()-subagent traces second-order
+				// effects and intent fidelity (see SKILL.md). Format check only; substance
+				// is evidenced by the Subagent ID per BEWEISEN discipline.
+				regexp.MustCompile(`\*\*Stage 3: Consequence & Intent`),
+				regexp.MustCompile(`(?m)^\*\*consequence dispatched:\*{0,2}\s+(yes|blocked)`),
 			},
 		},
 		{

@@ -115,11 +115,16 @@ func (h *Handler) checkOneAgent(agent storage.Agent) {
 		yesloopIdleAgents[agent.ID] = state
 	}
 
-	// Reset to WORKING if stream is active
+	// Reset to WORKING if stream is active — but only while WORKING. Once the
+	// state machine is progressing (SELF_CHECK/REMARK_REQUEST/COMMIT_REQUEST),
+	// a stream blip from answering a relay must NOT reset the progression
+	// (#82787): it would restart the cycle every time the agent responds.
 	if streamActive {
-		state.state = yesloopIdleStateWorking
-		state.refireCount = 0
-		state.idleSince = time.Time{}
+		if state.state == yesloopIdleStateWorking {
+			state.refireCount = 0
+			state.idleSince = time.Time{}
+			return
+		}
 		return
 	}
 
@@ -216,6 +221,10 @@ func (h *Handler) readAgentScratchpad(agent storage.Agent) string {
 	return sections[0].Content
 }
 
+// dispatchVetoRe matches a dispatch FIELD whose value is "blocked" — the
+// canonical "Stage 2 did not run" signal in the modern field contract.
+var dispatchVetoRe = regexp.MustCompile(`(?im)^\*\*(?:task\(\) dispatched|consequence dispatched):\*{0,2}\s+blocked`)
+
 // phase5ColdReviewPresent validates that Phase 5's scratchpad block actually
 // contains a Cold Review / Stage 2 trace — not just a Status: COMPLETE header
 // the agent wrote without doing the work. Catches the rationalization pattern
@@ -226,10 +235,11 @@ func phase5ColdReviewPresent(content string) bool {
 	if !ok {
 		return false
 	}
-	lower := strings.ToLower(block)
-	// Hard veto: any "blocked" in the Phase 5 block means the agent did not
-	// complete Stage 2 — regardless of what else the block says.
-	if strings.Contains(lower, "blocked") {
+	// Hard veto: a dispatch field carrying "blocked" means Stage 2/3 did not
+	// complete — the canonical non-run signal. Prose occurrences of "blocked"
+	// (template quotes in findings text, idiom discussions) must NOT veto:
+	// they froze a fully completed agent in REMARK_REQUEST (Learning #87847).
+	if dispatchVetoRe.MatchString(block) {
 		return false
 	}
 	// Phase 5 block must contain at least one of these positive trace markers.
@@ -244,7 +254,7 @@ func (h *Handler) sendIdleRelay(agent storage.Agent, state *yesloopIdleState, re
 	var msg string
 	switch relayNum {
 	case 1:
-		msg = "Have you completed all 6 phases? If not do it now. For each phase prove you have done each, IF you have proven mark each phase in scratchpad with [x] showing it is done. MANDATORY: Make sure that you have also done phase 5 with all code reviews including Stage 2 cold review via task subagent. REVIEW BLOCKED without subagent trace is not acceptable. Mandatory: only mark as PROVEN if it IS proven."
+		msg = "Have you completed all 6 phases? If not do it now. For each phase prove you have done each, IF you have proven mark each phase in scratchpad with [x] showing it is done. MANDATORY: Make sure that you have also done phase 5 with all code reviews including Stage 2 cold review and Stage 3 consequence check via task subagents. REVIEW BLOCKED without subagent trace is not acceptable. Mandatory: only mark as PROVEN if it IS proven."
 	case 2:
 		msg = "Mark all 6 phases as done with x in scratchpad."
 	case 3:

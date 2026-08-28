@@ -31,7 +31,6 @@ func watchImportProgress(dataDir string, timeout time.Duration) int {
 
 	var lastLine int
 	started := false
-	idleZero := 0
 
 	for range ticker.C {
 		if time.Now().After(deadline) {
@@ -49,19 +48,11 @@ func watchImportProgress(dataDir string, timeout time.Duration) int {
 			started = true
 		}
 
-		if !started && !status.Running && status.Total == 0 && status.Done == 0 {
-			idleZero++
-		} else {
-			idleZero = 0
-		}
-
-		if done, processed, noSess := importDone(started, status, idleZero); done {
+		if (started || status.Done > 0) && !status.Running {
+			// Indexing finished (or completed before we caught Running=true)
 			clearLine(lastLine)
-			if noSess {
-				fmt.Println("  ✓ No sessions to import (fresh install)")
-			} else {
-				fmt.Printf("  ✓ Imported %d sessions (%d skipped)\n", processed, status.Skipped)
-			}
+			processed := status.Done - status.Skipped
+			fmt.Printf("  ✓ Imported %d sessions (%d skipped)\n", processed, status.Skipped)
 			return processed
 		}
 
@@ -73,24 +64,6 @@ func watchImportProgress(dataDir string, timeout time.Duration) int {
 		}
 	}
 	return 0
-}
-
-// importDone decides whether the import-wait loop may exit. Pure for
-// table-testing. started = a poll observed Running=true. idleZeroPolls =
-// consecutive polls with daemon reachable, not running, nothing done and
-// nothing queued — on a fresh machine (no sessions) indexing finishes before
-// any poll sees Running, so without this the loop spins to the full timeout.
-func importDone(started bool, status *indexStatus, idleZeroPolls int) (done bool, processed int, noSessions bool) {
-	if status.Running {
-		return false, 0, false
-	}
-	if started || status.Done > 0 {
-		return true, status.Done - status.Skipped, false
-	}
-	if status.Total == 0 && idleZeroPolls >= 3 {
-		return true, 0, true
-	}
-	return false, 0, false
 }
 
 func pollIndexStatus(dataDir string) (*indexStatus, error) {

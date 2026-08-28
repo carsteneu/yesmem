@@ -244,3 +244,19 @@ func (s *Server) resolveSystemTemplate(model string) []byte {
 	}
 	return s.customSystemPrompt
 }
+
+// projectSystemPromptPath returns the project-local system prompt template path.
+func projectSystemPromptPath(projectDir string) string {
+	return filepath.Join(projectDir, ".yesmem", "SYSTEM.md")
+}
+
+// resolveSystemTemplateForDir selects the appropriate template for a model,
+// preferring a project-local .yesmem/SYSTEM.md override when present.
+func (s *Server) resolveSystemTemplateForDir(projectDir, model string) []byte {
+	if projectDir != "" {
+		if tpl := loadSystemPromptFromPath(projectSystemPromptPath(projectDir)); tpl != nil {
+			return tpl
+		}
+	}
+	return s.resolveSystemTemplate(model)
+}
