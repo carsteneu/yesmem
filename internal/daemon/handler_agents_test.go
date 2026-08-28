@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -832,6 +833,164 @@ func TestHandleResumeAgent_OpencodeWithSession_Ok(t *testing.T) {
 	resp := h.handleResumeAgent(map[string]any{"to": "agent-1"})
 	if resp.Error != "" {
 		t.Fatalf("opencode agent WITH OpencodeSessionID should pass the unresumable check, got: %s", resp.Error)
+	}
+}
+
+// --- L4: resume by explicit session id (session_id/opencode/codex lookup + backfill) ---
+
+// TestHandleResumeAgent_ResolveByOpenCodeSessionID: resume_agent accepts an
+// opencode session id (ses_*) as the only target — no agent id needed — and
+// resolves the agent via AgentGetAnyBySession.
+func TestHandleResumeAgent_ResolveByOpenCodeSessionID(t *testing.T) {
+	h, s := mustHandler(t)
+
+	if err := s.AgentCreate(storage.Agent{
+		ID: "agent-1", Project: "proj", Section: "task",
+		SessionID: "sess-1", Status: "paused", Backend: "opencode",
+		OpencodeSessionID: "ses_opencode_abc",
+	}); err != nil {
+		t.Fatalf("AgentCreate: %v", err)
+	}
+
+	resp := h.handleResumeAgent(map[string]any{"session_id": "ses_opencode_abc"})
+	if resp.Error != "" {
+		t.Fatalf("resume by opencode session id should resolve the agent, got: %s", resp.Error)
+	}
+	agent, err := s.AgentGet("agent-1")
+	if err != nil || agent == nil {
+		t.Fatalf("AgentGet failed: %v", err)
+	}
+	if agent.Status != "pending" {
+		t.Errorf("expected agent status pending after resume, got %q", agent.Status)
+	}
+}
+
+// TestHandleResumeAgent_BackfillsOpenCodeSessionID: an opencode agent whose
+// OpencodeSessionID was never captured can still be resumed if the caller
+// passes the ses_* id explicitly — it is persisted before spawning so
+// spawnAgentProcess's -s picks it up instead of the daemon UUID.
+func TestHandleResumeAgent_BackfillsOpenCodeSessionID(t *testing.T) {
+	h, s := mustHandler(t)
+
+	if err := s.AgentCreate(storage.Agent{
+		ID: "agent-1", Project: "proj", Section: "task",
+		SessionID: "sess-1", Status: "paused", Backend: "opencode",
+		// OpencodeSessionID intentionally empty — simulates failed poll.
+	}); err != nil {
+		t.Fatalf("AgentCreate: %v", err)
+	}
+
+	resp := h.handleResumeAgent(map[string]any{"to": "agent-1", "session_id": "ses_opencode_abc"})
+	if resp.Error != "" {
+		t.Fatalf("explicit session_id should unblock opencode resume, got: %s", resp.Error)
+	}
+	agent, err := s.AgentGet("agent-1")
+	if err != nil || agent == nil {
+		t.Fatalf("AgentGet failed: %v", err)
+	}
+	if agent.OpencodeSessionID != "ses_opencode_abc" {
+		t.Errorf("OpencodeSessionID should be backfilled, got %q", agent.OpencodeSessionID)
+	}
+}
+
+// TestHandleResumeAgent_BackfillsCodexSessionID: same backfill for codex agents
+// with an empty CodexSessionID — resume uses stored CodexSessionID over the
+// workDir heuristic.
+func TestHandleResumeAgent_BackfillsCodexSessionID(t *testing.T) {
+	h, s := mustHandler(t)
+
+	if err := s.AgentCreate(storage.Agent{
+		ID: "agent-1", Project: "proj", Section: "task",
+		SessionID: "sess-1", Status: "stopped", Backend: "codex",
+	}); err != nil {
+		t.Fatalf("AgentCreate: %v", err)
+	}
+
+	resp := h.handleResumeAgent(map[string]any{"to": "agent-1", "session_id": "sess-codex-123"})
+	if resp.Error != "" {
+		t.Fatalf("explicit session_id should unblock codex resume, got: %s", resp.Error)
+	}
+	agent, err := s.AgentGet("agent-1")
+	if err != nil || agent == nil {
+		t.Fatalf("AgentGet failed: %v", err)
+	}
+	if agent.CodexSessionID != "sess-codex-123" {
+		t.Errorf("CodexSessionID should be backfilled, got %q", agent.CodexSessionID)
+	}
+}
+
+// TestHandleResumeAgent_MissingTarget: neither to nor session_id → clear error.
+func TestHandleResumeAgent_MissingTarget(t *testing.T) {
+	h, _ := mustHandler(t)
+
+	resp := h.handleResumeAgent(map[string]any{"project": "proj"})
+	if resp.Error == "" {
+		t.Fatal("expected error when neither to nor session_id is given")
+	}
+	if !strings.Contains(resp.Error, "to or session_id required") {
+		t.Errorf("unexpected error: %s", resp.Error)
+	}
+}
+
+// --- L4: bootstrap fresh agent rows from bare opencode session ids ---
+
+// TestHandleResumeAgent_BootstrapFromBareOpenCodeSession: a ses_* id that
+// matches no agent row but exists in opencode's own DB bootstraps a fresh
+// agent whose workDir is the session directory.
+func TestHandleResumeAgent_BootstrapFromBareOpenCodeSession(t *testing.T) {
+	h, s := mustHandler(t)
+
+	dbPath := filepath.Join(t.TempDir(), "opencode.db")
+	if out, err := exec.Command("sqlite3", dbPath, "CREATE TABLE session (id TEXT, directory TEXT, time_created INTEGER); INSERT INTO session VALUES ('ses_fc1162f8affeJ7Omab43lZD4Ol', '/var/www/html/GreenWashProjekt/greenMarkting', 1);").CombinedOutput(); err != nil {
+		t.Fatalf("create opencode.db: %v (%s)", err, out)
+	}
+	orig := opencodeDBPath
+	opencodeDBPath = func() string { return dbPath }
+	t.Cleanup(func() { opencodeDBPath = orig })
+
+	resp := h.handleResumeAgent(map[string]any{"session_id": "ses_fc1162f8affeJ7Omab43lZD4Ol", "project": "proj"})
+	if resp.Error != "" {
+		t.Fatalf("bare opencode session should bootstrap an agent, got: %s", resp.Error)
+	}
+
+	var id, section, status, backend, ocSession string
+	err := s.DB().QueryRow(`SELECT id, section, status, COALESCE(backend,''), COALESCE(opencode_session_id,'') FROM agents WHERE opencode_session_id = 'ses_fc1162f8affeJ7Omab43lZD4Ol'`).Scan(&id, &section, &status, &backend, &ocSession)
+	if err != nil {
+		t.Fatalf("bootstrapped agent row missing: %v", err)
+	}
+	if status != "pending" {
+		t.Errorf("bootstrapped agent status should be pending, got %q", status)
+	}
+	if backend != "opencode" {
+		t.Errorf("bootstrapped agent backend should be opencode, got %q", backend)
+	}
+	if !strings.HasPrefix(section, "resumed-") {
+		t.Errorf("bootstrapped section should be prefixed resumed-, got %q", section)
+	}
+}
+
+// TestHandleResumeAgent_BootstrapUnknownSessionRejected: a ses_* id unknown to
+// both the agents table and opencode's DB yields the plain lookup error — no
+// agent is created for garbage ids.
+func TestHandleResumeAgent_BootstrapUnknownSessionRejected(t *testing.T) {
+	h, s := mustHandler(t)
+
+	dbPath := filepath.Join(t.TempDir(), "opencode.db")
+	if out, err := exec.Command("sqlite3", dbPath, "CREATE TABLE session (id TEXT, directory TEXT, time_created INTEGER);").CombinedOutput(); err != nil {
+		t.Fatalf("create opencode.db: %v (%s)", err, out)
+	}
+	orig := opencodeDBPath
+	opencodeDBPath = func() string { return dbPath }
+	t.Cleanup(func() { opencodeDBPath = orig })
+
+	resp := h.handleResumeAgent(map[string]any{"session_id": "ses_unknown12345678"})
+	if resp.Error == "" {
+		t.Fatal("expected error for unknown session id")
+	}
+	var n int
+	_ = s.DB().QueryRow(`SELECT COUNT(*) FROM agents`).Scan(&n)
+	if n != 0 {
+		t.Errorf("no agent row should be created for unknown sessions, got %d", n)
 	}
 }
 
