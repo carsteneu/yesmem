@@ -853,9 +853,11 @@ func (h *Handler) attributeLearningProject(text string, entities []string, expli
 		return explicitProject, "explicit"
 	}
 	base, baseSource := sessionProject, "session"
-	if base != "" {
+	if base != "" && strings.HasPrefix(base, "/") {
 		// A worktree-directory session entry counts as its main repo, so
 		// mentions of the same repo are recognized as session mentions.
+		// Guard: a short project name is not a filesystem path — only
+		// absolute paths may be coalesced through repo.Root.
 		if root := repo.Root(base); root != "" {
 			base = root
 		}

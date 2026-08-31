@@ -985,6 +985,18 @@ const (
 	attrDeepseek   = "/home/test/projects/deepseek"
 )
 
+func TestAttributeLearningProjectShortNameSession(t *testing.T) {
+	h, _ := mustHandler(t)
+
+	// A short project name (not a filesystem path) must pass through
+	// uncoalesced — repo.Root on a bare name resolves to whatever repo
+	// hosts the running process, not to the named project.
+	proj, source := h.attributeLearningProject("Cache TTL matters", nil, "", "yesmem", "")
+	if proj != "yesmem" || source != "session" {
+		t.Errorf("short-name session project = (%q, %q), want (yesmem, session)", proj, source)
+	}
+}
+
 func TestAttributeLearningProject(t *testing.T) {
 	h, s := mustHandler(t)
 	for _, p := range []string{attrOpenencode, attrYesmem, attrDeepseek} {
