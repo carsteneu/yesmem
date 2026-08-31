@@ -155,6 +155,47 @@ func TestCheckYesloopIdle_ActiveStream(t *testing.T) {
 	yesloopIdleAgentsMu.Unlock()
 }
 
+// TestCheckYesloopIdle_StreamBlipDoesNotResetProgression: a relay response
+// flips stream_active to true for a few ticks. While the state machine is
+// progressing (SELF_CHECK), that blip must NOT reset state and refireCount
+// (#82787). Only WORKING resets.
+func TestCheckYesloopIdle_StreamBlipDoesNotResetProgression(t *testing.T) {
+	resetIdleState()
+	h, s := mustHandler(t)
+
+	// Agent idle 11min (above 10min threshold) with inactive stream.
+	makeYesloopAgent(t, h, s, "blip-1", "sess-blip", testPID, false, 11*time.Minute)
+
+	// First tick: register idleSince.
+	h.checkYesloopIdle()
+
+	// Backdate idleSince so the next tick transitions WORKING -> SELF_CHECK.
+	yesloopIdleAgentsMu.Lock()
+	state, _ := yesloopIdleAgents["blip-1"]
+	state.idleSince = time.Now().Add(-11 * time.Minute)
+	yesloopIdleAgentsMu.Unlock()
+
+	// Second tick: transition to SELF_CHECK (relay 1 fires).
+	h.checkYesloopIdle()
+	if !hasIdleState("blip-1", yesloopIdleStateSelfCheck) {
+		t.Fatalf("expected SELF_CHECK after idle timeout")
+	}
+
+	// Relay response: stream flips active for a few ticks.
+	streamStatesMu.Lock()
+	streamStates["sess-blip"].Active = true
+	streamStatesMu.Unlock()
+	h.checkYesloopIdle()
+
+	// State machine must still be in SELF_CHECK with refireCount intact.
+	if !hasIdleState("blip-1", yesloopIdleStateSelfCheck) {
+		t.Errorf("stream blip must not reset progression state")
+	}
+	if got := getIdleStateRefireCount("blip-1"); got != 0 {
+		t.Errorf("stream blip must not touch refireCount, got %d", got)
+	}
+}
+
 // TestCheckYesloopIdle_InsufficientIdle stays in WORKING until timeout.
 func TestCheckYesloopIdle_InsufficientIdle(t *testing.T) {
 	resetIdleState()
@@ -284,8 +325,9 @@ func TestCheckYesloopIdle_RemarkToCommit_Phase5ColdReviewMissing(t *testing.T) {
 	state.state = yesloopIdleStateRemarkRequest
 	yesloopIdleAgentsMu.Unlock()
 
-	// 6 phases COMPLETE but Phase 5 has no Stage 2 / task() / subagent trace.
-	// Mirrors the VM failure case: "Stage 2 Cold Review: Blocked because no Subagent infrastructure"
+	// 6 phases COMPLETE, Phase 5 dispatch field carries the blocked value.
+	// Mirrors the modern field-contract form of the rationalization pattern:
+	// "Stage 2 failed, dispatched: blocked because no Subagent infrastructure".
 	content := `### Phase 1: ANALYZE
 **Status:** COMPLETE
 Goal understood
@@ -304,7 +346,8 @@ Tests run: ok
 ### Phase 5: REVIEW
 **Status:** COMPLETE
 Stage 1 Self-Review: Done
-Stage 2 Cold Review: Blocked because no Subagent infrastructure available
+**task() dispatched:** blocked
+No Subagent infrastructure available
 
 ### Phase 6: FINISH
 **Status:** COMPLETE
@@ -316,8 +359,48 @@ send_to orchestrator: yes
 	h.checkYesloopIdle()
 
 	if hasIdleState("remark-blocked-1", yesloopIdleStateCommitRequest) {
-		t.Error("agent with Phase 5 'Stage 2 Blocked' (no subagent trace) must NOT transition to COMMIT_REQUEST")
+		t.Error("agent with Phase 5 'task() dispatched: blocked' (no subagent trace) must NOT transition to COMMIT_REQUEST")
 	}
+}
+
+// TestPhase5ColdReviewPresent_VetoScope pins the veto granularity: the word
+// "blocked" must only veto when it is the VALUE of a dispatch field
+// (task() dispatched / consequence dispatched). Prose occurrences — template
+// quotes in findings text, idiom discussions — must NOT deadlock the idle
+// machine (observed 2026-08-28: a Phase-5 findings line quoting
+// "(yes|blocked)" froze a fully completed agent in REMARK_REQUEST).
+func TestPhase5ColdReviewPresent_VetoScope(t *testing.T) {
+	phase5 := func(body string) string {
+		return `### Phase 5: REVIEW
+**Status:** COMPLETE
+**Stage 2: Cold Review via task()**
+**task() dispatched:** yes
+**Subagent ID:** agent-x
+` + body
+	}
+
+	t.Run("template_quote_in_findings_passes", func(t *testing.T) {
+		block := phase5("**Findings:** none — idiom discussion cited `consequence dispatched: (yes|blocked)`")
+		if !phase5ColdReviewPresent(block) {
+			t.Error("prose occurrence of 'blocked' (template quote) must NOT veto a completed Stage 2")
+		}
+	})
+
+	t.Run("task_dispatched_blocked_vetoes", func(t *testing.T) {
+		block := phase5("**Subagent ID:** none")
+		block = strings.Replace(block, "**task() dispatched:** yes", "**task() dispatched:** blocked", 1)
+		if phase5ColdReviewPresent(block) {
+			t.Error("task() dispatched: blocked must veto")
+		}
+	})
+
+	t.Run("consequence_dispatched_blocked_vetoes", func(t *testing.T) {
+		block := phase5("**Findings:** none")
+		block += "\n**consequence dispatched:** blocked\n**Subagent ID:** agent-y\n**Findings:** none\n"
+		if phase5ColdReviewPresent(block) {
+			t.Error("consequence dispatched: blocked must veto")
+		}
+	})
 }
 func TestCheckYesloopIdle_CommitToDone(t *testing.T) {
 	resetIdleState()

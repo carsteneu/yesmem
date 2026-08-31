@@ -1,6 +1,8 @@
 package proxy
 
 import (
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -294,6 +296,50 @@ func TestResolveSystemTemplate_NilModelTemplates(t *testing.T) {
 		modelTemplates:     nil,
 	}
 	got := s.resolveSystemTemplate("codex")
+	if string(got) != "default" {
+		t.Errorf("expected default template, got %q", string(got))
+	}
+}
+
+func TestResolveSystemTemplateForDir_ProjectOverrides(t *testing.T) {
+	workDir := t.TempDir()
+	projDir := filepath.Join(workDir, ".yesmem")
+	if err := os.MkdirAll(projDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projDir, "SYSTEM.md"), []byte("project tpl"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{
+		customSystemPrompt: []byte("default"),
+		modelTemplates:     map[string][]byte{"codex": []byte("codex tpl")},
+	}
+	got := s.resolveSystemTemplateForDir(workDir, "codex")
+	if string(got) != "project tpl" {
+		t.Errorf("expected project template to win, got %q", string(got))
+	}
+}
+
+func TestResolveSystemTemplateForDir_FallsBackToModel(t *testing.T) {
+	workDir := t.TempDir() // no .yesmem/SYSTEM.md
+
+	s := &Server{
+		customSystemPrompt: []byte("default"),
+		modelTemplates:     map[string][]byte{"codex": []byte("codex tpl")},
+	}
+	got := s.resolveSystemTemplateForDir(workDir, "codex")
+	if string(got) != "codex tpl" {
+		t.Errorf("expected model template fallback, got %q", string(got))
+	}
+}
+
+func TestResolveSystemTemplateForDir_EmptyWorkDirUsesDefault(t *testing.T) {
+	s := &Server{
+		customSystemPrompt: []byte("default"),
+		modelTemplates:     nil,
+	}
+	got := s.resolveSystemTemplateForDir("", "codex")
 	if string(got) != "default" {
 		t.Errorf("expected default template, got %q", string(got))
 	}

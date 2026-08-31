@@ -137,7 +137,9 @@ Since yesmem v2.1.21, the heartbeat scheduler enforces the DONE contract **autom
 2. Each block must have `**Status:**` on its own line with valid value (COMPLETE|BLOCKED|IN PROGRESS)
 3. Per-phase required fields (see Phase Pipeline below)
 4. Phase 5 must contain `**Stage 2: Cold Review` subsection header AND `task() dispatched: yes|blocked`
-5. Phase 6 must contain `send_to orchestrator:` and deploy evidence
+5. Phase 4 must contain `**Regression baseline:**` with a non-empty value and `**RED proof:**`
+6. Phase 5 must contain `**Stage 3: Consequence & Intent` subsection header AND `**consequence dispatched:** yes|blocked`
+7. Phase 6 must contain `send_to orchestrator:` and deploy evidence
 
 **When the guard fires:**
 - Agent is paused with reason `DONE-GUARD: phase validation failed — <errors>`
@@ -154,6 +156,9 @@ These patterns cause the guard to reject the DONE claim:
 |---|---|---|
 | Status on same line as header | `### Phase N: → **Status:**` inline | Status must be on its own `**Status:**` line |
 | Missing Stage 2 header | No `**Stage 2: Cold Review` in Phase 5 | Stage 2 is mandatory per Learning #75412 |
+| Missing Stage 3 header | No `**Stage 3: Consequence & Intent` in Phase 5 | Stage 3 consequence check is mandatory (quality stage-2) |
+| Missing consequence dispatch | No `**consequence dispatched:** yes|blocked` in Phase 5 | Stage 3 dispatch must be evidenced |
+| Missing regression baseline | No `**Regression baseline:**` with a non-empty value in Phase 4 | Deterministic base-vs-head test diff is mandatory (quality stage-2) |
 | Missing orchestrator notification | No `send_to orchestrator:` in Phase 6 | Orchestrator must be notified for DONE |
 | Missing **Security:** field in Phase 5 | No `**Security:**` line in Phase 5 block | Security review (item 6) is mandatory per security-review skill integration |
 | Partial fields in Phase 5 | No issue breakdown, no Subagent ID | Self-Review must be structured |
@@ -282,15 +287,25 @@ update_agent_status(phase="Phase 4/6 VERIFY")
 ### Phase 4: VERIFY
 **Status:** COMPLETE
 **Tests run:** <command> → exit <code>, last 5 lines: <output>
+**Regression baseline:** base=<origin/main hash> failures=<none|list>; head failures=<none|list>; diff=<none|new failures>
 **Lint/type-check:** <command> → <result>
 **Build:** <command> → <binary mtime if applicable>
 **Coverage gaps:** none | <list>
 **VERIFY cycles used:** N/5
 ```
 
+**Regression baseline (mandatory, deterministic):**
+1. In Phase 2 (PLAN), note the merge-base: `git merge-base HEAD origin/main`
+2. In Phase 4, create a temp checkout of origin/main INSIDE your worktree:
+   `git worktree add .yesmem/tmp/base-checkout origin/main` (project-local, never /tmp)
+3. Run the relevant test suite there (same commands as head), record pass/fail sets
+4. Remove it after use: `git worktree remove .yesmem/tmp/base-checkout --force`
+5. `diff=` lists ONLY test failures that are green on base but fail on head — each is a
+   REGRESSION and must be fixed before REVIEW exit (or proven pre-existing on base)
+
 If issues found → fix and re-verify (max 5 cycles, see CONVERGENCE GATE).
 
-### Phase 5: REVIEW (Two-Stage: Self + Cold)
+### Phase 5: REVIEW (Three-Stage: Self + Cold + Consequence)
 ```
 update_agent_status(phase="Phase 5/6 REVIEW")
 
@@ -309,6 +324,11 @@ update_agent_status(phase="Phase 5/6 REVIEW")
 **Merged assessment:** Yes | With fixes | No — <reasoning>
 **Fix commits:** <hashes or "none needed">
 
+**Stage 3: Consequence & Intent**
+**consequence dispatched:** yes
+**Subagent ID:** <id>
+**Findings:** <intended-vs-actual list or "none">
+
 **Security:** <findings list with NEW/MODIFIED distinction per security-review skill, OR "none — diff reviewed, no findings", OR "skipped — diff is docs-only">
 
 **REVIEW→VERIFY cycles used:** N/5
@@ -322,7 +342,28 @@ update_agent_status(phase="Phase 5/6 REVIEW")
 - Dispatch focused task()-subagent with code-reviewer template (superpowers requesting-code-review)
 - Input: `git diff origin/main` + Phase 2 plan only (no exploration, for speed)
 - **MANDATORY — Cold Review is NOT optional.** Phase 5 is only complete when Stage 2 has actually run. Empirically verified (2026-06-20, Learning #75412): agents skip Stage 2 silently if framed as additive. Required evidence: `task() dispatched: yes` + Subagent ID in scratchpad.
+- **ALL subagent findings must be PROVEN ON CODE.** Every finding requires code-anchored evidence: file line refs, a call path (graph_traverse output), or a reproducing command/failing test. A finding without a code anchor is INVALID and must be reworked by the subagent.
 - **If task() truly fails:** status must be `REVIEW BLOCKED: task() unavailable — <error>`, NOT `DONE`. Orchestrator spawns separate TUI reviewer as fallback.
+
+**Stage 3 — Consequence & Intent Check via task()** (fresh subagent, MANDATORY):
+- Dispatch a focused task()-subagent (separate from Stage 2's reviewer) with:
+  `git diff origin/main`, the Phase 2 **Decisions resolved** block, and this mandate:
+  (a) trace second-order consequences: callers, exposed contracts, defaults, schema,
+  dependent behavior — what breaks or changes that the diff does not show?
+  (b) intent fidelity: does the landed behavior match what Phase 2 decided?
+  Anything drifting into an unwanted direction?
+- **ALL Stage-3 findings must be PROVEN ON CODE** — same evidence bar as Stage 2:
+  file line refs, call path, or a reproducing command/failing test. Unanchored
+  findings are INVALID and must be reworked by the subagent.
+- Evidence in the Phase 5 block: `**Stage 3: Consequence & Intent` header,
+  `**consequence dispatched:** yes`, `**Subagent ID:**`, `**Findings:**`
+- If task() truly fails: `**consequence dispatched:** blocked — <error>` (NOT COMPLETE)
+
+**Double-loop exit criteria (REVIEW→VERIFY):** the loop exits only when ALL of
+these hold: Stages 1-3 complete, Security field clean-or-annotated, and Phase 4
+Regression baseline shows `diff=none` (or all new failures fixed + re-run). If a
+check that must be clean stays red after 2 fix cycles → REVIEW BLOCKED
+escalation.
 
 **Merging & Resolution:**
 - Merge findings from both stages (deduplicate, preserve highest severity)
@@ -411,6 +452,7 @@ update_agent_status(phase="Phase 6/6 FINISH")
 ### Phase 4: VERIFY
 **Status:** COMPLETE
 **Tests run:** go test ./internal/config/... ./internal/daemon/... → exit 0
+**Regression baseline:** base=9e8aa888 failures=none; head failures=none; diff=none
 **Build:** go build ./... → success
 **VERIFY cycles used:** 1/5
 
@@ -426,6 +468,12 @@ update_agent_status(phase="Phase 6/6 FINISH")
 **Findings:** same 2 Important + 4 Minor
 **Merged assessment:** With fixes — ALL 6 findings (2 Important + 4 Minor) fixed before merge
 **Fix commits:** cd2ba04 fix(config): proxy_state dual-write, type coercion + all 4 minors
+
+**Stage 3: Consequence & Intent**
+**consequence dispatched:** yes
+**Subagent ID:** agent-237
+**Findings:** none
+
 **Security:** none — diff reviewed, no HIGH/MEDIUM/LOW findings
 
 ### Phase 6: FINISH
@@ -478,6 +526,7 @@ Before writing "DONE", "completed", "verified" to scratchpad, confirm the artifa
 | "commit pushed" | `git log origin/<branch> --oneline -1` shows the hash |
 | "PR created" | `gh pr view <url>` exit 0 |
 | "cold review ran" | task()-subagent ID present in scratchpad |
+| "consequence finding" (Stage 3) | file line reference, call path, or repro evidence — unanchored findings are invalid |
 | "file edited" | `Read` the file (not just `git show`) |
 | "DONE-guard passed" | `ValidatePhaseBlocks(content).Compliant == true` (auto-checked every 30s) |
 
@@ -560,7 +609,7 @@ Layer 2 of the yesloop guarantee: **Idle Detection** for yesloop agents with a l
 
 The daemon sends these exact messages (metachar-free, no markdown, no backticks):
 
-1. **State 0 → 1:** `Have you completed all 6 phases? If not do it now. For each phase prove you have done each, IF you have proven mark each phase in scratchpad with [x] showing it is done. MANDATORY: Make sure that you have also done phase 5 with all code reviews including Stage 2 cold review via task subagent. REVIEW BLOCKED without subagent trace is not acceptable. Mandatory: only mark as PROVEN if it IS proven.`
+1. **State 0 → 1:** `Have you completed all 6 phases? If not do it now. For each phase prove you have done each, IF you have proven mark each phase in scratchpad with [x] showing it is done. MANDATORY: Make sure that you have also done phase 5 with all code reviews including Stage 2 cold review and Stage 3 consequence check via task subagents. REVIEW BLOCKED without subagent trace is not acceptable. Mandatory: only mark as PROVEN if it IS proven.`
 2. **State 1 → 2:** `Mark all 6 phases as done with x in scratchpad.`
 3. **State 2 → 3:** `If 1 through 6 are ok commit and send_to to caller.`
 

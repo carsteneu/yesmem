@@ -90,7 +90,7 @@ func (s *Server) handleOpenAICompletions(w http.ResponseWriter, r *http.Request)
 				ModelDisplayName: modelDisplayName(ctx.Model),
 				HostAgentName: "OpenCode",
 			})
-			tpl := s.resolveSystemTemplate(ctx.Model)
+			tpl := s.resolveSystemTemplateForDir(workDir, ctx.Model)
 			if tpl == nil {
 				tpl = s.customSystemPrompt
 			}
