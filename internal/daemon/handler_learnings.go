@@ -5,13 +5,17 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
+	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/carsteneu/yesmem/internal/briefing"
 	"github.com/carsteneu/yesmem/internal/extraction"
 	"github.com/carsteneu/yesmem/internal/models"
+	"github.com/carsteneu/yesmem/internal/repo"
 	"github.com/carsteneu/yesmem/internal/storage"
 	"github.com/carsteneu/yesmem/internal/textutil"
 )
@@ -19,7 +23,7 @@ import (
 func (h *Handler) handleRemember(params map[string]any) Response {
 	text, _ := params["text"].(string)
 	category := stringOr(params, "category", "explicit_teaching")
-	project, _ := params["project"].(string)
+	projectParam, _ := params["project"].(string)
 	source := stringOr(params, "source", "user_stated")
 	supersedesID, _ := params["supersedes"].(float64) // optional: ID of learning this replaces
 
@@ -32,10 +36,26 @@ func (h *Handler) handleRemember(params map[string]any) Response {
 		origin = "user"
 	}
 
+	// Entities are parsed before learning construction: they feed the
+	// content-signal half of project attribution.
+	var entities []string
+	if entitiesRaw, ok := params["entities"].([]any); ok {
+		for _, e := range entitiesRaw {
+			if s, ok := e.(string); ok {
+				entities = append(entities, s)
+			}
+		}
+	}
+
+	// Project attribution (repo-root semantics + content signal); the basis
+	// lands in learnings.project_source for auditability.
+	cwd, _ := params["_cwd"].(string)
+	project, projectSource := h.attributeLearningProject(text, entities, projectParam, "", cwd)
+
 	l := &models.Learning{
 		Category: category, Content: text, Project: project,
 		Confidence: 1.0, CreatedAt: timeNow(), ModelUsed: h.rememberModel(params),
-		Source: source, OriginTool: origin,
+		Source: source, OriginTool: origin, ProjectSource: projectSource,
 		CanonicalProject: canonicalProjectFor(project),
 	}
 
@@ -54,13 +74,7 @@ func (h *Handler) handleRemember(params map[string]any) Response {
 	}
 
 	// Parse optional V2 params
-	if entitiesRaw, ok := params["entities"].([]any); ok {
-		for _, e := range entitiesRaw {
-			if s, ok := e.(string); ok {
-				l.Entities = append(l.Entities, s)
-			}
-		}
-	}
+	l.Entities = entities
 	if actionsRaw, ok := params["actions"].([]any); ok {
 		for _, a := range actionsRaw {
 			if s, ok := a.(string); ok {
@@ -109,12 +123,12 @@ func (h *Handler) handleRemember(params map[string]any) Response {
 	if l.Domain == "" {
 		metadataWarnings = append(metadataWarnings, "domain defaulted to 'general'")
 	}
-		codeFingerprint, _ := params["code_fingerprint"].(string)
+	codeFingerprint, _ := params["code_fingerprint"].(string)
 
-		// Auto-generate code fingerprint from entity file paths when not explicitly provided.
-		if codeFingerprint == "" && len(l.Entities) > 0 {
-			codeFingerprint = h.computeCodeFingerprint(l.Entities)
-		}
+	// Auto-generate code fingerprint from entity file paths when not explicitly provided.
+	if codeFingerprint == "" && len(l.Entities) > 0 {
+		codeFingerprint = h.computeCodeFingerprint(l.Entities)
+	}
 
 	// Generate enriched embedding text for V2 learnings
 	if l.IsV2() {
@@ -240,12 +254,13 @@ func (h *Handler) handleRemember(params map[string]any) Response {
 		warning = " ⚠ " + strings.Join(metadataWarnings, ", ")
 	}
 	resp := map[string]any{
-		"id":         id,
-		"category":   category,
-		"project":    project,
-		"content":    truncate(text, 120),
-		"model_used": l.ModelUsed,
-		"message":    fmt.Sprintf("Learning #%d saved (%s, model=%s).%s%s", id, category, l.ModelUsed, supersededMsg, warning),
+		"id":             id,
+		"category":       category,
+		"project":        project,
+		"project_source": projectSource,
+		"content":        truncate(text, 120),
+		"model_used":     l.ModelUsed,
+		"message":        fmt.Sprintf("Learning #%d saved (%s, model=%s).%s%s", id, category, l.ModelUsed, supersededMsg, warning),
 	}
 	if supersedesID > 0 {
 		resp["supersedes_id"] = int64(supersedesID)
@@ -815,6 +830,133 @@ func (h *Handler) handleGetSessionFlavorsForSession(params map[string]any) Respo
 // If project contains .worktrees/, returns the parent directory basename.
 func canonicalProjectFor(project string) string {
 	return models.CanonicalProject(project)
+}
+
+// knownProjectPaths returns the universe of projects known to this instance.
+func (h *Handler) knownProjectPaths() []string {
+	paths, err := h.store.ListProjectPaths()
+	if err != nil {
+		log.Printf("attributeProject: list project paths: %v", err)
+		return nil
+	}
+	return paths
+}
+
+// attributeLearningProject decides project attribution for one learning.
+// Order: explicit > content > repo/session fallback. Content reassignment
+// requires ≥2 path mentions of exactly one foreign project and 0 of the
+// session project; anything else prominent keeps the session project and is
+// flagged project_source="ambiguous". The returned source lands in
+// learnings.project_source (explicit|repo|session|content|ambiguous).
+func (h *Handler) attributeLearningProject(text string, entities []string, explicitProject, sessionProject, cwd string) (string, string) {
+	if explicitProject != "" {
+		return explicitProject, "explicit"
+	}
+	base, baseSource := sessionProject, "session"
+	if base != "" {
+		// A worktree-directory session entry counts as its main repo, so
+		// mentions of the same repo are recognized as session mentions.
+		if root := repo.Root(base); root != "" {
+			base = root
+		}
+	} else if cwd != "" {
+		base, baseSource = repo.Root(cwd), "repo"
+	}
+	if base == "" {
+		baseSource = ""
+	}
+
+	counts := countProjectPathMentions(text, entities, h.knownProjectPaths())
+	sessionCount := counts[base]
+	bestPath, bestN, secondN := "", 0, 0
+	for p, n := range counts {
+		if p == base || n < 1 {
+			continue
+		}
+		if n > bestN {
+			bestPath, bestN, secondN = p, n, bestN
+		} else if n > secondN {
+			secondN = n
+		}
+	}
+	switch {
+	case bestN >= 2 && sessionCount == 0 && secondN == 0:
+		return bestPath, "content"
+	case bestN >= 2:
+		return base, "ambiguous"
+	}
+	return base, baseSource
+}
+
+// countProjectPathMentions counts occurrences of project paths in text and
+// entities. Paths match as prefixes against known projects (longest wins);
+// unmatched absolute tokens fall back to repo.Root so worktrees living outside
+// the main tree are attributed to their main repo. Known paths are themselves
+// coalesced through repo.Root, so worktree-session project entries count as
+// their main repo.
+func countProjectPathMentions(text string, entities []string, known []string) map[string]int {
+	counts := map[string]int{}
+	if text == "" && len(entities) == 0 {
+		return counts
+	}
+
+	counted := make(map[string]bool, len(known))
+	knownByLen := make([]string, 0, len(known))
+	for _, p := range known {
+		if r := repo.Root(p); r != "" {
+			p = r
+		}
+		if counted[p] {
+			continue
+		}
+		counted[p] = true
+		knownByLen = append(knownByLen, p)
+	}
+	sort.Slice(knownByLen, func(i, j int) bool { return len(knownByLen[i]) > len(knownByLen[j]) })
+
+	tokens := pathTokens(text)
+	for _, e := range entities {
+		tokens = append(tokens, pathTokens(e)...)
+	}
+	seen := make(map[string]bool, len(tokens))
+	for _, tok := range tokens {
+		if seen[tok] {
+			continue
+		}
+		seen[tok] = true
+		if !strings.HasPrefix(tok, "/") {
+			continue
+		}
+		matched := ""
+		for _, p := range knownByLen {
+			if tok == p || strings.HasPrefix(tok, p+"/") {
+				matched = p
+				break
+			}
+		}
+		if matched != "" {
+			counts[matched]++
+			continue
+		}
+		if root := repo.Root(tok); root != "" {
+			counts[root]++
+		}
+	}
+	return counts
+}
+
+// pathTokens splits s into path-like tokens, keeping '/', '.', '-' and '_'
+// intact so absolute paths survive as single tokens. Trailing sentence
+// punctuation is stripped so "in /home/x/repo." still resolves to the path.
+func pathTokens(s string) []string {
+	tokens := strings.FieldsFunc(s, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) &&
+			r != '/' && r != '.' && r != '-' && r != '_'
+	})
+	for i, tok := range tokens {
+		tokens[i] = strings.TrimRight(tok, ".,;:!?")
+	}
+	return tokens
 }
 
 // computeCodeFingerprint generates a SHA256 hash of the content of entity file paths.

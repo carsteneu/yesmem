@@ -57,6 +57,7 @@ const validV3Content = `### Phase 1: ANALYZE
 ### Phase 4: VERIFY
 **Status:** COMPLETE
 **Tests run:** go test ./internal/daemon/... → exit 0
+**Regression baseline:** base=abc1234 failures=none; head failures=none; diff=none
 **RED proof:** none — docs-only
 **Lint/type-check:** go vet ./... → ok
 **Build:** go build ./... → success
@@ -75,6 +76,12 @@ const validV3Content = `### Phase 1: ANALYZE
 **Findings:** none
 **Merged assessment:** Yes
 **Fix commits:** none needed
+
+**Stage 3: Consequence & Intent**
+**consequence dispatched:** yes
+**Subagent ID:** agent-236
+**Findings:** none
+
 **Security:** none — diff reviewed, no HIGH/MEDIUM/LOW findings
 
 **REVIEW→VERIFY cycles used:** 1/3
@@ -421,7 +428,7 @@ func scaffoldScratchpad(taskType, depthLock, redProof string) string {
 	if depthLock != "" {
 		phase2 += "\n" + depthLock
 	}
-	phase4 := "**Tests run:** test"
+	phase4 := "**Tests run:** test\n**Regression baseline:** base=abc1234 failures=none; head failures=none; diff=none"
 	if redProof != "" {
 		phase4 += "\n**RED proof:** " + redProof
 	}
@@ -450,6 +457,12 @@ func scaffoldScratchpad(taskType, depthLock, redProof string) string {
 **Findings:** none
 **Merged assessment:** Yes
 **Fix commits:** none needed
+
+**Stage 3: Consequence & Intent**
+**consequence dispatched:** yes
+**Subagent ID:** agent-y
+**Findings:** none
+
 **Security:** none — diff reviewed, no findings
 
 ### Phase 6: FINISH
@@ -527,5 +540,52 @@ func TestValidatePhaseBlocks_MissingRedProof_Fails(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected Phase 4 field error for missing **RED proof:**, got: %v", result.FieldErrors)
+	}
+}
+
+// --- Quality Stage-2: regression baseline + Stage 3 Consequence & Intent ---
+
+// TestValidatePhaseBlocks_RegressionBaselineRequired: Phase 4 must diff the
+// test-suite results between merge-base and HEAD — the **Regression baseline:**
+// field is mandatory (format check; substance is the deterministic procedure
+// documented in SKILL.md Phase 4).
+func TestValidatePhaseBlocks_RegressionBaselineRequired(t *testing.T) {
+	// Without the field → not compliant.
+	noField := strings.Replace(validV3Content,
+		"**Regression baseline:** base=abc1234 failures=none; head failures=none; diff=none\n", "", 1)
+	if r := ValidatePhaseBlocks(noField); r.Compliant {
+		t.Error("Phase 4 without Regression baseline must be non-compliant")
+	}
+
+	// Whitespace-only value must not satisfy the requirement (the field
+	// follows the **Security:** strictness — value on the same line).
+	wsOnly := strings.Replace(validV3Content,
+		"**Regression baseline:** base=abc1234 failures=none; head failures=none; diff=none",
+		"**Regression baseline:**   ", 1)
+	if r := ValidatePhaseBlocks(wsOnly); r.Compliant {
+		t.Error("whitespace-only Regression baseline value must be non-compliant")
+	}
+
+	// With the field → compliant.
+	if r := ValidatePhaseBlocks(validV3Content); !r.Compliant {
+		t.Errorf("Phase 4 with Regression baseline must be compliant, errors: %v", r.FieldErrors)
+	}
+}
+
+// TestValidatePhaseBlocks_Stage3ConsequenceRequired: Phase 5 must carry the
+// Stage 3 Consequence & Intent sub-section with a yes|blocked dispatch value.
+func TestValidatePhaseBlocks_Stage3ConsequenceRequired(t *testing.T) {
+	noStage3 := strings.Replace(validV3Content, "**Stage 3: Consequence & Intent", "**Stage 2b: something else", 1)
+	if r := ValidatePhaseBlocks(noStage3); r.Compliant {
+		t.Error("Phase 5 without Stage 3 Consequence & Intent header must be non-compliant")
+	}
+
+	noDispatch := strings.Replace(validV3Content, "**consequence dispatched:** yes", "**consequence dispatched:**", 1)
+	if r := ValidatePhaseBlocks(noDispatch); r.Compliant {
+		t.Error("Phase 5 without consequence dispatched value must be non-compliant")
+	}
+
+	if r := ValidatePhaseBlocks(validV3Content); !r.Compliant {
+		t.Errorf("full block set must be compliant, errors: %v", r.FieldErrors)
 	}
 }

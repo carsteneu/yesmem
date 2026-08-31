@@ -132,8 +132,8 @@ func (s *Store) InsertLearningBatch(learnings []*models.Learning) ([]int64, erro
 	defer tx.Rollback()
 
 	stmt, err := tx.Prepare(`INSERT INTO learnings
-		(session_id, category, content, project, confidence, created_at, expires_at, model_used, source, emotional_intensity, session_flavor, supersedes, importance, context, domain, trigger_rule, embedding_text, embedding_status, embedding_content_hash, embedded_at, source_file, source_hash, doc_chunk_ref, content_hash, task_type, turns_at_creation, source_msg_from, source_msg_to, origin_tool, source_agent, target_agent, canonical_project, attribution)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		(session_id, category, content, project, confidence, created_at, expires_at, model_used, source, emotional_intensity, session_flavor, supersedes, importance, context, domain, trigger_rule, embedding_text, embedding_status, embedding_content_hash, embedded_at, source_file, source_hash, doc_chunk_ref, content_hash, task_type, turns_at_creation, source_msg_from, source_msg_to, origin_tool, source_agent, target_agent, canonical_project, attribution, project_source)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return nil, fmt.Errorf("prepare: %w", err)
 	}
@@ -202,7 +202,7 @@ func (s *Store) InsertLearningBatch(learnings []*models.Learning) ([]int64, erro
 		result, err := stmt.Exec(
 			l.SessionID, l.Category, l.Content, l.Project, l.Confidence,
 			fmtTime(l.CreatedAt), expiresAt, l.ModelUsed, source, l.EmotionalIntensity, l.SessionFlavor, l.Supersedes, importance,
-			l.Context, l.Domain, l.TriggerRule, l.EmbeddingText, embeddingStatus, embeddingContentHash, l.SourceFile, l.SourceHash, l.DocChunkRef, l.ContentHash, l.TaskType, turnCounts[turnKey], sourceMsgFrom, sourceMsgTo, l.OriginTool, srcAgent, tgtAgent, l.CanonicalProject, l.Attribution)
+			l.Context, l.Domain, l.TriggerRule, l.EmbeddingText, embeddingStatus, embeddingContentHash, l.SourceFile, l.SourceHash, l.DocChunkRef, l.ContentHash, l.TaskType, turnCounts[turnKey], sourceMsgFrom, sourceMsgTo, l.OriginTool, srcAgent, tgtAgent, l.CanonicalProject, l.Attribution, l.ProjectSource)
 		if err != nil {
 			return ids, fmt.Errorf("insert learning: %w", err)
 		}
@@ -372,7 +372,7 @@ func (s *Store) GetLearningsByCategory(category, project string, limit int) ([]m
 		COALESCE(source_file, ''), COALESCE(source_hash, ''), COALESCE(doc_chunk_ref, 0), COALESCE(task_type, ''), COALESCE(turns_at_creation, 0), COALESCE(origin_tool, ''), COALESCE(source_msg_from, -1), COALESCE(source_msg_to, -1),
 		COALESCE(canonical_project, ''),
 		COALESCE(attribution, ''),
-		COALESCE(staleness_score, 0.0), COALESCE(staleness_reason, ''), staleness_checked_at, COALESCE(staleness_type, ''), COALESCE(code_fingerprint, '')
+		COALESCE(staleness_score, 0.0), COALESCE(staleness_reason, ''), staleness_checked_at, COALESCE(staleness_type, ''), COALESCE(code_fingerprint, ''), COALESCE(project_source, '')
 		FROM learnings WHERE superseded_by IS NULL
 		AND category = ?
 		AND (canonical_project = ? OR canonical_project = '')
@@ -397,7 +397,7 @@ func (s *Store) GetLearningsSince(project string, since time.Time, limit int) ([
 		COALESCE(source_file, ''), COALESCE(source_hash, ''), COALESCE(doc_chunk_ref, 0), COALESCE(task_type, ''), COALESCE(turns_at_creation, 0), COALESCE(origin_tool, ''), COALESCE(source_msg_from, -1), COALESCE(source_msg_to, -1),
 		COALESCE(canonical_project, ''),
 		COALESCE(attribution, ''),
-		COALESCE(staleness_score, 0.0), COALESCE(staleness_reason, ''), staleness_checked_at, COALESCE(staleness_type, ''), COALESCE(code_fingerprint, '')
+		COALESCE(staleness_score, 0.0), COALESCE(staleness_reason, ''), staleness_checked_at, COALESCE(staleness_type, ''), COALESCE(code_fingerprint, ''), COALESCE(project_source, '')
 		FROM learnings WHERE superseded_by IS NULL
 		AND (expires_at IS NULL OR expires_at > ?)
 		AND created_at > ?
@@ -525,7 +525,7 @@ func (s *Store) GetConsolidationLearnings(afterID, throughID int64) ([]models.Le
 		COALESCE(l.source_file, ''), COALESCE(l.source_hash, ''), COALESCE(l.doc_chunk_ref, 0), COALESCE(l.task_type, ''), COALESCE(l.turns_at_creation, 0), COALESCE(l.origin_tool, ''), COALESCE(l.source_msg_from, -1), COALESCE(l.source_msg_to, -1),
 		COALESCE(l.canonical_project, ''),
 		COALESCE(l.attribution, ''),
-		COALESCE(l.staleness_score, 0.0), COALESCE(l.staleness_reason, ''), l.staleness_checked_at, COALESCE(l.staleness_type, ''), COALESCE(l.code_fingerprint, '')
+		COALESCE(l.staleness_score, 0.0), COALESCE(l.staleness_reason, ''), l.staleness_checked_at, COALESCE(l.staleness_type, ''), COALESCE(l.code_fingerprint, ''), COALESCE(l.project_source, '')
 	FROM learnings l
 	JOIN dirty d ON d.category = l.category
 		AND d.project = COALESCE(NULLIF(l.canonical_project, ''), COALESCE(l.project, ''))
@@ -550,7 +550,7 @@ func (s *Store) GetActiveLearnings(category, project, since, before string, limi
 		COALESCE(source_file, ''), COALESCE(source_hash, ''), COALESCE(doc_chunk_ref, 0), COALESCE(task_type, ''), COALESCE(turns_at_creation, 0), COALESCE(origin_tool, ''), COALESCE(source_msg_from, -1), COALESCE(source_msg_to, -1),
 		COALESCE(canonical_project, ''),
 		COALESCE(attribution, ''),
-		COALESCE(staleness_score, 0.0), COALESCE(staleness_reason, ''), staleness_checked_at, COALESCE(staleness_type, ''), COALESCE(code_fingerprint, '')
+		COALESCE(staleness_score, 0.0), COALESCE(staleness_reason, ''), staleness_checked_at, COALESCE(staleness_type, ''), COALESCE(code_fingerprint, ''), COALESCE(project_source, '')
 		FROM learnings WHERE superseded_by IS NULL
 		AND (expires_at IS NULL OR expires_at > ?)`
 	args := []any{fmtTime(time.Now())}
@@ -609,7 +609,7 @@ func (s *Store) GetActiveLearningsBySessionIDs(sessionIDs []string) ([]models.Le
 		COALESCE(source_file, ''), COALESCE(source_hash, ''), COALESCE(doc_chunk_ref, 0), COALESCE(task_type, ''), COALESCE(turns_at_creation, 0), COALESCE(origin_tool, ''), COALESCE(source_msg_from, -1), COALESCE(source_msg_to, -1),
 		COALESCE(canonical_project, ''),
 		COALESCE(attribution, ''),
-		COALESCE(staleness_score, 0.0), COALESCE(staleness_reason, ''), staleness_checked_at, COALESCE(staleness_type, ''), COALESCE(code_fingerprint, '')
+		COALESCE(staleness_score, 0.0), COALESCE(staleness_reason, ''), staleness_checked_at, COALESCE(staleness_type, ''), COALESCE(code_fingerprint, ''), COALESCE(project_source, '')
 		FROM learnings
 		WHERE superseded_by IS NULL
 		AND (expires_at IS NULL OR expires_at > ?)
@@ -661,23 +661,25 @@ func (s *Store) GetLearning(id int64) (*models.Learning, error) {
 		COALESCE(source_file, ''), COALESCE(source_hash, ''), COALESCE(doc_chunk_ref, 0), COALESCE(task_type, ''), COALESCE(turns_at_creation, 0), COALESCE(origin_tool, ''), COALESCE(source_msg_from, -1), COALESCE(source_msg_to, -1),
 		COALESCE(canonical_project, ''),
 		COALESCE(attribution, ''),
-		COALESCE(staleness_score, 0.0), COALESCE(staleness_reason, ''), COALESCE(staleness_checked_at, ''), COALESCE(staleness_type, ''), COALESCE(code_fingerprint, '')
+		COALESCE(staleness_score, 0.0), COALESCE(staleness_reason, ''), COALESCE(staleness_checked_at, ''), COALESCE(staleness_type, ''), COALESCE(code_fingerprint, ''), COALESCE(project_source, '')
 		FROM learnings WHERE id = ?`, id)
 
 	l := &models.Learning{}
 	var createdAt string
 	var expiresAt, sessionID, project, supersedeReason, source, lastHitAt, validUntil, supersedeStatus *string
 	var supersededBy, supersedes *int64
+	var projectSource string
 	err := row.Scan(&l.ID, &sessionID, &l.Category, &l.Content, &project, &l.Confidence,
 		&supersededBy, &supersedeReason, &createdAt, &expiresAt, &l.ModelUsed, &source, &l.HitCount, &l.EmotionalIntensity, &lastHitAt, &l.SessionFlavor, &validUntil, &supersedes, &l.Importance, &supersedeStatus, &l.NoiseCount, &l.FailCount,
 		&l.MatchCount, &l.InjectCount, &l.UseCount, &l.SaveCount, &l.Stability,
 		&l.Context, &l.Domain, &l.TriggerRule, &l.EmbeddingText,
 		&l.SourceFile, &l.SourceHash, &l.DocChunkRef, &l.TaskType, &l.TurnsAtCreation, &l.OriginTool, &l.SourceMsgFrom, &l.SourceMsgTo,
 		&l.CanonicalProject, &l.Attribution,
-		&l.StalenessScore, &l.StalenessReason, &l.StalenessCheckedAt, &l.StalenessType, &l.CodeFingerprint)
+		&l.StalenessScore, &l.StalenessReason, &l.StalenessCheckedAt, &l.StalenessType, &l.CodeFingerprint, &projectSource)
 	if err != nil {
 		return nil, fmt.Errorf("get learning %d: %w", id, err)
 	}
+	l.ProjectSource = projectSource
 	l.CreatedAt = parseTime(createdAt)
 	if source != nil {
 		l.Source = *source
@@ -826,7 +828,7 @@ func (s *Store) GetTriggeredLearnings(project string) ([]models.Learning, error)
 		COALESCE(source_file, ''), COALESCE(source_hash, ''), COALESCE(doc_chunk_ref, 0), COALESCE(task_type, ''), COALESCE(turns_at_creation, 0), COALESCE(origin_tool, ''), COALESCE(source_msg_from, -1), COALESCE(source_msg_to, -1),
 		COALESCE(canonical_project, ''),
 		COALESCE(attribution, ''),
-		COALESCE(staleness_score, 0.0), COALESCE(staleness_reason, ''), staleness_checked_at, COALESCE(staleness_type, ''), COALESCE(code_fingerprint, '')
+		COALESCE(staleness_score, 0.0), COALESCE(staleness_reason, ''), staleness_checked_at, COALESCE(staleness_type, ''), COALESCE(code_fingerprint, ''), COALESCE(project_source, '')
 		FROM learnings
 		WHERE superseded_by IS NULL
 		AND trigger_rule != '' AND trigger_rule IS NOT NULL
@@ -909,7 +911,7 @@ func (s *Store) GetStaleLearnings(project string, minScore float64) ([]models.Le
 		COALESCE(l.source_file, ''), COALESCE(l.source_hash, ''), COALESCE(l.doc_chunk_ref, 0), COALESCE(l.task_type, ''), COALESCE(l.turns_at_creation, 0), COALESCE(l.origin_tool, ''), COALESCE(l.source_msg_from, -1), COALESCE(l.source_msg_to, -1),
 		COALESCE(l.canonical_project, ''),
 		COALESCE(l.attribution, ''),
-		COALESCE(l.staleness_score, 0.0), COALESCE(l.staleness_reason, ''), l.staleness_checked_at, COALESCE(l.staleness_type, ''), COALESCE(l.code_fingerprint, '')
+		COALESCE(l.staleness_score, 0.0), COALESCE(l.staleness_reason, ''), l.staleness_checked_at, COALESCE(l.staleness_type, ''), COALESCE(l.code_fingerprint, ''), COALESCE(l.project_source, '')
 		FROM learnings l
 		WHERE l.superseded_by IS NULL
 		AND l.staleness_score >= ?
@@ -1160,7 +1162,7 @@ func (s *Store) GetRecentNarratives(project string, limit int) ([]models.Learnin
 		COALESCE(l.source_file, ''), COALESCE(l.source_hash, ''), COALESCE(l.doc_chunk_ref, 0), COALESCE(l.task_type, ''), COALESCE(l.turns_at_creation, 0), COALESCE(l.origin_tool, ''), COALESCE(l.source_msg_from, -1), COALESCE(l.source_msg_to, -1),
 		COALESCE(l.canonical_project, ''),
 		COALESCE(l.attribution, ''),
-		COALESCE(l.staleness_score, 0.0), COALESCE(l.staleness_reason, ''), l.staleness_checked_at, COALESCE(l.staleness_type, ''), COALESCE(l.code_fingerprint, '')
+		COALESCE(l.staleness_score, 0.0), COALESCE(l.staleness_reason, ''), l.staleness_checked_at, COALESCE(l.staleness_type, ''), COALESCE(l.code_fingerprint, ''), COALESCE(l.project_source, '')
 		FROM learnings l
 		LEFT JOIN sessions s ON l.session_id = s.id
 		WHERE l.category = 'narrative' AND l.canonical_project = ? AND l.superseded_by IS NULL
@@ -1186,15 +1188,17 @@ func scanLearnings(rows interface {
 		var expiresAt, sessionID, project, supersedeReason, source, lastHitAt, validUntil, supersedeStatus *string
 		var supersededBy, supersedes *int64
 		var stalenessCheckedAt *string
+		var projectSource string
 		if err := rows.Scan(&l.ID, &sessionID, &l.Category, &l.Content, &project, &l.Confidence,
 			&supersededBy, &supersedeReason, &createdAt, &expiresAt, &l.ModelUsed, &source, &l.HitCount, &l.EmotionalIntensity, &lastHitAt, &l.SessionFlavor, &validUntil, &supersedes, &l.Importance, &supersedeStatus, &l.NoiseCount, &l.FailCount,
 			&l.MatchCount, &l.InjectCount, &l.UseCount, &l.SaveCount, &l.Stability,
 			&l.Context, &l.Domain, &l.TriggerRule, &l.EmbeddingText,
 			&l.SourceFile, &l.SourceHash, &l.DocChunkRef, &l.TaskType, &l.TurnsAtCreation, &l.OriginTool, &l.SourceMsgFrom, &l.SourceMsgTo,
 			&l.CanonicalProject, &l.Attribution,
-			&l.StalenessScore, &l.StalenessReason, &stalenessCheckedAt, &l.StalenessType, &l.CodeFingerprint); err != nil {
+			&l.StalenessScore, &l.StalenessReason, &stalenessCheckedAt, &l.StalenessType, &l.CodeFingerprint, &projectSource); err != nil {
 			return nil, err
 		}
+		l.ProjectSource = projectSource
 		l.CreatedAt = parseTime(createdAt)
 		if expiresAt != nil {
 			t := parseTime(*expiresAt)

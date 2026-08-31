@@ -21,6 +21,14 @@ func resetStreamState() {
 	parentSubagentCountsMu.Lock()
 	parentSubagentCounts = make(map[string]int)
 	parentSubagentCountsMu.Unlock()
+
+	threadParentMu.Lock()
+	threadParent = make(map[string]string)
+	threadParentMu.Unlock()
+
+	parentSubByThreadMu.Lock()
+	activeSubByParent = make(map[string]int)
+	parentSubByThreadMu.Unlock()
 }
 
 // --- Track Stream State ---
@@ -214,6 +222,52 @@ func TestEnrichAgentWithStreamFields(t *testing.T) {
 	// Original fields preserved
 	if result["id"] != "agent-1" {
 		t.Error("original id should be preserved")
+	}
+}
+
+// --- Parent-Thread Subagent Counting (opencode task-subagents) ---
+
+func TestHandleTrackStreamState_ParentThreadSubagent(t *testing.T) {
+	resetStreamState()
+	h, _ := mustHandler(t)
+	parentThread := "parent-thread-oc"
+	subThread := "sub-thread-oc"
+
+	// Parent agent's session → thread mapping (as track_usage/registration does)
+	RegisterSessionThread("parent-session-1", parentThread)
+
+	// Parent agent main loop streams
+	h.handleTrackStreamState(map[string]any{
+		"thread_id":     parentThread,
+		"stream_active": true,
+	})
+	// Subagent stream in its own child session, linked to the parent thread
+	h.handleTrackStreamState(map[string]any{
+		"thread_id":     subThread,
+		"stream_active": true,
+		"is_subagent":   true,
+		"parent_thread": parentThread,
+	})
+
+	time.Sleep(10 * time.Millisecond)
+
+	fields := h.getStreamFields("parent-session-1")
+	if got := fields["subagent_streams"].(int); got != 1 {
+		t.Errorf("subagent_streams = %d, want 1", got)
+	}
+
+	// Stop subagent stream → count returns to 0
+	h.handleTrackStreamState(map[string]any{
+		"thread_id":     subThread,
+		"stream_active": false,
+		"is_subagent":   true,
+		"parent_thread": parentThread,
+	})
+	time.Sleep(10 * time.Millisecond)
+
+	fields = h.getStreamFields("parent-session-1")
+	if got := fields["subagent_streams"].(int); got != 0 {
+		t.Errorf("subagent_streams = %d, want 0 after stop", got)
 	}
 }
 

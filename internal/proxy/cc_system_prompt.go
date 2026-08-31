@@ -60,7 +60,7 @@ func (s *Server) applyCCSystemPrompt(req map[string]any) bool {
 		ModelDisplayName: modelDisplayName(modelID),
 		HostAgentName:    "Claude Code",
 	})
-	tpl := s.resolveSystemTemplate(modelID)
+	tpl := s.resolveSystemTemplateForDir(ctx.WorkingDir, modelID)
 	if tpl == nil {
 		tpl = s.customSystemPrompt
 	}

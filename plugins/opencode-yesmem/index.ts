@@ -21,8 +21,10 @@ import { YesMemRPC } from "./rpc";
 export const YesMemPlugin = async (ctx: any) => {
   const rpc = new YesMemRPC();
   const directory = ctx.directory || process.env.PWD || "";
-          const V = 19; // bump to bust Bun module cache
+          const V = 26; // bump to bust Bun module cache
 
+
+          // v23: idle_reminder moved to messages.transform — message.updated never fires in opencode
           // v18: ledger_nudge subscriber — append active plan as ledger suffix (PATCH-ONCE, plan-version-freeze, never-block)
           // v16: keep helper exports out of the plugin entrypoint for legacy OpenCode loaders
           // v15: inject authoritative per-call OpenCode session and cwd context into yesmem tools
@@ -41,7 +43,7 @@ export const YesMemPlugin = async (ctx: any) => {
   const grd = ruleGuardHook(directory);
   const fl = failureLearnHook(rpc);
   const ar = autoResolveHook(rpc);
-    const ir = idleReminderHook(rpc);
+    const ir = idleReminderHook();
     const sn = skillNudgeHook();
     const ln = ledgerNudgeHook(rpc, () => (currentSessionID ? `opencode:${currentSessionID}` : ""));
 
@@ -59,26 +61,21 @@ export const YesMemPlugin = async (ctx: any) => {
     try { await ar["tool.execute.after"]?.(input, output); } catch {}
   }
 
-      // Compose: experimental.chat.messages.transform — rule_guard conversation capture + skill_nudge + ledger_nudge
-      async function composedMessagesTransform(input: any, output: any) {
-        try { await grd["experimental.chat.messages.transform"]?.(input, output); } catch {}
-        try { await sn["experimental.chat.messages.transform"]?.(input, output); } catch {}
-        try { await ln["experimental.chat.messages.transform"]?.(input, output); } catch {}
-      }
+        // Compose: experimental.chat.messages.transform — rule_guard conversation capture + skill_nudge + ledger_nudge
+        async function composedMessagesTransform(input: any, output: any) {
+          try { await grd["experimental.chat.messages.transform"]?.(input, output); } catch {}
+          try { await sn["experimental.chat.messages.transform"]?.(input, output); } catch {}
+          try { await ln["experimental.chat.messages.transform"]?.(input, output); } catch {}
+          try { await ir["experimental.chat.messages.transform"]?.(input, output); } catch {}
+        }
 
-    // Compose: message.updated — idle_reminder
-    async function composedMessageUpdated(input: any) {
-      try { await ir["message.updated"]?.(input); } catch {}
-    }
-
-    return {
+      return {
       ...grd,              // chat.params, experimental.chat.messages.transform, etc.
       ...nv,               // any future code_nav hooks
       "experimental.chat.messages.transform": composedMessagesTransform,
       "tool.execute.before": composedBefore,
-      "tool.execute.after": composedAfter,
-      "message.updated": composedMessageUpdated,
-      "shell.env": async (_input: any, output: any) => {
+        "tool.execute.after": composedAfter,
+        "shell.env": async (_input: any, output: any) => {
           output.env.YESMEM_SOCKET = `${process.env.HOME}/.claude/yesmem/daemon.sock`;
         output.env.YESMEM_SOURCE_AGENT = "opencode";
         // Inject current session ID for subprocesses (including MCP server)

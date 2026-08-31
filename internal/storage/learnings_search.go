@@ -82,7 +82,7 @@ func (s *Store) QueryFacts(opts QueryFactsOpts) ([]models.Learning, error) {
 		COALESCE(l.source_file, ''), COALESCE(l.source_hash, ''), COALESCE(l.doc_chunk_ref, 0), COALESCE(l.task_type, ''), COALESCE(l.turns_at_creation, 0), COALESCE(l.origin_tool, ''), COALESCE(l.source_msg_from, -1), COALESCE(l.source_msg_to, -1),
 		COALESCE(l.canonical_project, ''),
 		COALESCE(l.attribution, ''),
-		COALESCE(l.staleness_score, 0.0), COALESCE(l.staleness_reason, ''), l.staleness_checked_at, COALESCE(l.staleness_type, ''), COALESCE(l.code_fingerprint, '')`
+		COALESCE(l.staleness_score, 0.0), COALESCE(l.staleness_reason, ''), l.staleness_checked_at, COALESCE(l.staleness_type, ''), COALESCE(l.code_fingerprint, ''), COALESCE(l.project_source, '')`
 
 	query := `SELECT DISTINCT ` + selectCols + ` FROM learnings l`
 	var joins []string
@@ -164,7 +164,7 @@ func (s *Store) SearchUnfinished(query, project string) ([]models.Learning, erro
 		COALESCE(l.source_file, ''), COALESCE(l.source_hash, ''), COALESCE(l.doc_chunk_ref, 0), COALESCE(l.task_type, ''), COALESCE(l.turns_at_creation, 0), COALESCE(l.origin_tool, ''), COALESCE(l.source_msg_from, -1), COALESCE(l.source_msg_to, -1),
 		COALESCE(l.canonical_project, ''),
 		COALESCE(l.attribution, ''),
-		COALESCE(l.staleness_score, 0.0), COALESCE(l.staleness_reason, ''), l.staleness_checked_at, COALESCE(l.staleness_type, ''), COALESCE(l.code_fingerprint, '')
+		COALESCE(l.staleness_score, 0.0), COALESCE(l.staleness_reason, ''), l.staleness_checked_at, COALESCE(l.staleness_type, ''), COALESCE(l.code_fingerprint, ''), COALESCE(l.project_source, '')
 		FROM learnings_fts
 		JOIN learnings l ON l.id = learnings_fts.rowid
 		WHERE learnings_fts MATCH ?
@@ -424,7 +424,7 @@ func (s *Store) FindLearningsByEntityMatch(entities []string, project string) ([
 		COALESCE(l.source_file, ''), COALESCE(l.source_hash, ''), COALESCE(l.doc_chunk_ref, 0), COALESCE(l.task_type, ''), COALESCE(l.turns_at_creation, 0), COALESCE(l.origin_tool, ''), COALESCE(l.source_msg_from, -1), COALESCE(l.source_msg_to, -1),
 		COALESCE(l.canonical_project, ''),
 		COALESCE(l.attribution, ''),
-		COALESCE(l.staleness_score, 0.0), COALESCE(l.staleness_reason, ''), l.staleness_checked_at, COALESCE(l.staleness_type, ''), COALESCE(l.code_fingerprint, '')
+		COALESCE(l.staleness_score, 0.0), COALESCE(l.staleness_reason, ''), l.staleness_checked_at, COALESCE(l.staleness_type, ''), COALESCE(l.code_fingerprint, ''), COALESCE(l.project_source, '')
 		FROM learnings l
 		JOIN learning_entities le ON le.learning_id = l.id
 		WHERE le.value IN (` + strings.Join(placeholders, ",") + `)

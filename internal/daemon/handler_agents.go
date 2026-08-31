@@ -844,7 +844,8 @@ func (h *Handler) handleStopAgent(params map[string]any) Response {
 		if err == nil {
 			exitCmd := "/exit\r"
 			if agent.Backend == "opencode" {
-				exitCmd = "\x03" // Ctrl+C for opencode (no /exit command)
+				// double ctrl+c — a single press doesn't exit this opencode version
+				exitCmd = "\x03\x03"
 			}
 			_, writeErr := conn.Write([]byte(exitCmd))
 			conn.Close()
