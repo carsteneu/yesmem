@@ -43,6 +43,16 @@ func (h *Handler) handleGetCaps(params map[string]any) Response {
 		if tag != "" && !meta.HasTag(tag) {
 			continue
 		}
+		// Legacy fields duplicate script bodies; scripts carry the same
+		// handlers via normalize(). Suppress them from all responses.
+		meta.HandlerBash = ""
+		meta.HandlerREPL = ""
+		meta.Schema = ""
+		if name == "" {
+			// List mode: metadata only — script bodies dominate the payload.
+			// Full definition available via name-filtered call.
+			meta.Scripts = nil
+		}
 		results = append(results, capResult{
 			ID:      l.ID,
 			Project: l.Project,
