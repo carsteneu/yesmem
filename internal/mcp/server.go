@@ -1015,7 +1015,7 @@ func (s *Server) registerTools() {
 
 	s.srv.AddTool(
 		mcplib.NewTool("get_caps",
-			mcplib.WithDescription("Load saved capability definitions. Use to discover available caps by name, tag, or project. Capabilities are reusable, tested tool definitions that persist across sessions."),
+			mcplib.WithDescription("Load saved capability definitions. Without 'name': compact metadata list (no script bodies). With 'name': full definition including scripts. Filter also by tag or project."),
 			mcplib.WithString("project", mcplib.Description(projectFilterDesc)),
 			mcplib.WithString("name", mcplib.Description("Get specific cap by name")),
 			mcplib.WithString("tag", mcplib.Description("Filter by tag")),

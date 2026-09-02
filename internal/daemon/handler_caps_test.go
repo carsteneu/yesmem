@@ -127,6 +127,45 @@ func TestHandleGetCapabilities_SkipsMalformed(t *testing.T) {
 	}
 }
 
+func TestHandleGetCapabilities_SummaryOmitsScripts(t *testing.T) {
+	h, _ := mustHandler(t)
+	seedCap(t, h, "reddit_fetch", "global", "curl -s", []string{"web", "reddit"})
+
+	caps := unmarshalCaps(t, h.handleGetCaps(map[string]any{}))
+	if len(caps) != 1 {
+		t.Fatalf("expected 1 cap, got %d", len(caps))
+	}
+	m := caps[0].Meta
+	if len(m.Scripts) != 0 {
+		t.Errorf("list mode must not include script bodies, got %d scripts", len(m.Scripts))
+	}
+	if m.HandlerBash != "" || m.HandlerREPL != "" || m.Schema != "" {
+		t.Errorf("list mode must omit legacy handler fields")
+	}
+	if m.Name != "reddit_fetch" || len(m.Tags) != 2 || m.Description == "" {
+		t.Errorf("list mode must keep metadata, got name=%q desc=%q tags=%v", m.Name, m.Description, m.Tags)
+	}
+}
+
+func TestHandleGetCapabilities_FullByName(t *testing.T) {
+	h, _ := mustHandler(t)
+	seedCap(t, h, "reddit_fetch", "global", "curl -s", nil)
+
+	caps := unmarshalCaps(t, h.handleGetCaps(map[string]any{"name": "reddit_fetch"}))
+	m := caps[0].Meta
+	if len(m.Scripts) == 0 {
+		t.Errorf("name-filtered call must return full definition with scripts")
+	}
+	for _, sc := range m.Scripts {
+		if sc.Body == "" {
+			t.Errorf("full mode script %q must have body", sc.Name)
+		}
+	}
+	if m.HandlerBash != "" || m.HandlerREPL != "" || m.Schema != "" {
+		t.Errorf("legacy handler fields must be stripped from responses, got bash=%q", m.HandlerBash)
+	}
+}
+
 // --- handleSaveCap tests ---
 
 func TestHandleSaveCapability_EmbeddingTextIsCleanNotJSON(t *testing.T) {
@@ -248,8 +287,8 @@ func TestHandleSaveCapability_WithREPLHandler(t *testing.T) {
 	}
 
 	caps := unmarshalCaps(t, h.handleGetCaps(map[string]any{"name": "repl_tool"}))
-	if caps[0].Meta.HandlerREPL == "" {
-		t.Error("expected non-empty HandlerREPL")
+	if !hasScriptRuntime(caps[0].Meta.Scripts, "repl") {
+		t.Error("expected repl script")
 	}
 }
 
@@ -346,7 +385,7 @@ func TestCapability_FullRoundTrip(t *testing.T) {
 	if len(caps) != 1 {
 		t.Fatalf("expected 1, got %d", len(caps))
 	}
-	if caps[0].Meta.HandlerBash == "" || caps[0].Meta.HandlerREPL == "" {
+	if !hasScriptRuntime(caps[0].Meta.Scripts, "bash") || !hasScriptRuntime(caps[0].Meta.Scripts, "repl") {
 		t.Error("expected both handlers")
 	}
 
@@ -831,13 +870,15 @@ func TestHandleSaveCapability_StoresInternalForm(t *testing.T) {
 	if len(caps) != 1 {
 		t.Fatalf("expected 1 cap, got %d", len(caps))
 	}
-	if !strings.Contains(caps[0].Meta.HandlerREPL, "mcp__yesmem__cap_store(") {
-		t.Errorf("DB should store internal form with mcp__yesmem__cap_store(), got: %s", caps[0].Meta.HandlerREPL)
+	if !hasScriptBody(caps[0].Meta.Scripts, "mcp__yesmem__cap_store(") {
+		t.Errorf("DB should store internal form with mcp__yesmem__cap_store() in script bodies")
 	}
 	// Verify no standalone generic store() remains (strip provider name first to avoid substring false positive)
-	stripped := strings.ReplaceAll(caps[0].Meta.HandlerREPL, "mcp__yesmem__cap_store", "")
-	if strings.Contains(stripped, "store(") {
-		t.Errorf("DB should not contain standalone generic store() after conversion, got: %s", caps[0].Meta.HandlerREPL)
+	for _, sc := range caps[0].Meta.Scripts {
+		stripped := strings.ReplaceAll(sc.Body, "mcp__yesmem__cap_store", "")
+		if strings.Contains(stripped, "store(") {
+			t.Errorf("DB should not contain standalone generic store() after conversion, got: %s", sc.Body)
+		}
 	}
 }
 
@@ -1287,6 +1328,24 @@ func TestSaveCap_ExplicitEmptyScriptsClearsAll(t *testing.T) {
 	if resp.Error == "" {
 		t.Fatal("expected error for scripts:[] — empty scripts should be rejected")
 	}
+}
+
+func hasScriptRuntime(scripts []ScriptMeta, runtime string) bool {
+	for _, sc := range scripts {
+		if sc.Runtime == runtime && sc.Body != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasScriptBody(scripts []ScriptMeta, substr string) bool {
+	for _, sc := range scripts {
+		if strings.Contains(sc.Body, substr) {
+			return true
+		}
+	}
+	return false
 }
 
 func scriptNames(scripts []ScriptMeta) []string {
