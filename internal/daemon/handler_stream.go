@@ -27,6 +27,17 @@ var (
 	// parentSubagentCounts tracks active subagent_streams per parent session_id.
 	parentSubagentCounts   = make(map[string]int)
 	parentSubagentCountsMu sync.RWMutex
+
+	// threadParent maps a subagent stream's threadID to the parent threadID it
+	// belongs to. Populated via the parent_thread param the proxy passes for
+	// opencode task()-subagents (child sessions stream under their own threadID).
+	threadParent   = make(map[string]string)
+	threadParentMu sync.RWMutex
+
+	// activeSubByParent counts active subagent streams per parent threadID.
+	// Same in-memory lifetime as streamStates — resets on daemon restart.
+	activeSubByParent   = make(map[string]int)
+	parentSubByThreadMu sync.RWMutex
 )
 
 // handleTrackStreamState is called by the proxy at SSE stream boundaries.
@@ -61,6 +72,7 @@ func (h *Handler) handleTrackStreamState(params map[string]any) Response {
 	streamStatesMu.Unlock()
 
 	state.mu.Lock()
+	wasActive := state.Active
 	if streamActive && !state.Active {
 		state.StartedAt = time.Now()
 		state.IsSubagent = isSubagent
@@ -70,6 +82,31 @@ func (h *Handler) handleTrackStreamState(params map[string]any) Response {
 		state.BytesSoFar = bytesSoFar
 	}
 	state.mu.Unlock()
+
+	// Parent-thread attribution for opencode task()-subagents: they stream in
+	// their own child session thread, so the proxy passes the parent threadID.
+	if parentThread, _ := params["parent_thread"].(string); isSubagent && parentThread != "" {
+		threadParentMu.Lock()
+		storedParent, hadStored := threadParent[threadID]
+		if streamActive && !wasActive {
+			threadParent[threadID] = parentThread
+			parentSubByThreadMu.Lock()
+			activeSubByParent[parentThread]++
+			parentSubByThreadMu.Unlock()
+		} else if !streamActive && wasActive {
+			if hadStored {
+				parentThread = storedParent
+			}
+			delete(threadParent, threadID)
+			parentSubByThreadMu.Lock()
+			activeSubByParent[parentThread]--
+			if activeSubByParent[parentThread] <= 0 {
+				delete(activeSubByParent, parentThread)
+			}
+			parentSubByThreadMu.Unlock()
+		}
+		threadParentMu.Unlock()
+	}
 
 	// Subagent counting: update parent's subagent_streams counter.
 	if isSubagent {
@@ -167,6 +204,12 @@ func (h *Handler) getStreamFields(sessionID string) map[string]any {
 	if !ok {
 		return fields
 	}
+
+	// Subagent streams attributed to this agent's thread (opencode task()-subagents).
+	parentSubByThreadMu.RLock()
+	subCount += activeSubByParent[threadID]
+	parentSubByThreadMu.RUnlock()
+	fields["subagent_streams"] = subCount
 
 	streamStatesMu.RLock()
 	state, exists := streamStates[threadID]

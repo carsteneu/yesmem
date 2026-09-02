@@ -73,6 +73,7 @@ type Learning struct {
 	SourceAgent     string     `json:"source_agent,omitempty"`
 	TargetAgent     string     `json:"target_agent,omitempty"`
 	CanonicalProject string    `json:"canonical_project,omitempty"` // parent project basename for worktree→main promotion
+	ProjectSource    string    `json:"project_source,omitempty"`    // attribution basis: explicit|repo|session|content|ambiguous
 	HitCount           int        `json:"hit_count"`
 	FailCount          int        `json:"fail_count"`
 	EmotionalIntensity float64    `json:"emotional_intensity,omitempty"`

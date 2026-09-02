@@ -96,6 +96,12 @@ func (h *Handler) handleForkExtractLearnings(params map[string]any) Response {
 			SourceMsgTo:        sourceMsgTo,
 		}
 
+		// Project attribution: the caller's project is the session-directory
+		// mapping, not explicit user intent — content signals may reassign it.
+		// learner cwd is not the session cwd here, so only content/ambiguous apply.
+		learning.Project, learning.ProjectSource = h.attributeLearningProject(l.Content, l.Entities, "", project, "")
+		learning.CanonicalProject = canonicalProjectFor(learning.Project)
+
 		// Pre-admission dedup: skip near-duplicates, update enrichments
 		pa := extraction.CheckPreAdmission(h.store, learning)
 		switch pa.Action {
@@ -117,8 +123,8 @@ func (h *Handler) handleForkExtractLearnings(params map[string]any) Response {
 			continue
 		}
 
-		// Auto-embed if available
-		h.EmbedLearning(id, l.Content, l.Category, project)
+	// Auto-embed into vector store, tagged with the attributed project
+	h.EmbedLearning(id, l.Content, l.Category, learning.Project)
 
 		// Auto-generate relates_to edges for learnings sharing entities
 		if len(l.Entities) > 0 {

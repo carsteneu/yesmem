@@ -2,7 +2,10 @@ package daemon
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/carsteneu/yesmem/internal/models"
 )
@@ -951,5 +954,179 @@ func TestHandleFlagContradictionHappyPath(t *testing.T) {
 	json.Unmarshal(resp.Result, &result)
 	if result["status"] != "ok" {
 		t.Fatalf("status: got %v, want %q", result["status"], "ok")
+	}
+}
+
+// gitTmpRoot builds a fake main repo + containing worktree so repo.Root(cwd)
+// is deterministic in tests: cwd points at the worktree, Root resolves to main.
+func gitTmpRoot(t *testing.T) (main, worktree string) {
+	t.Helper()
+	main = t.TempDir()
+	if err := os.MkdirAll(filepath.Join(main, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	worktree = filepath.Join(main, ".worktrees", "wt")
+	gitDir := filepath.Join(main, ".git", "worktrees", "wt")
+	if err := os.MkdirAll(gitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(worktree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktree, ".git"), []byte("gitdir: "+gitDir+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return main, worktree
+}
+
+const (
+	attrOpenencode = "/home/test/projects/opencode"
+	attrYesmem     = "/home/test/memory/yesmem"
+	attrDeepseek   = "/home/test/projects/deepseek"
+)
+
+func TestAttributeLearningProjectShortNameSession(t *testing.T) {
+	h, _ := mustHandler(t)
+
+	// A short project name (not a filesystem path) must pass through
+	// uncoalesced — repo.Root on a bare name resolves to whatever repo
+	// hosts the running process, not to the named project.
+	proj, source := h.attributeLearningProject("Cache TTL matters", nil, "", "yesmem", "")
+	if proj != "yesmem" || source != "session" {
+		t.Errorf("short-name session project = (%q, %q), want (yesmem, session)", proj, source)
+	}
+}
+
+func TestAttributeLearningProject(t *testing.T) {
+	h, s := mustHandler(t)
+	for _, p := range []string{attrOpenencode, attrYesmem, attrDeepseek} {
+		if _, err := s.InsertLearning(&models.Learning{
+			Category: "gotcha", Content: "seed " + p, Project: p,
+			Source: "test", CreatedAt: time.Now(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	subjectMain, subjectWorktree := gitTmpRoot(t)
+
+	dup := func(p string) string { return "touch " + p + "/a.go and " + p + "/b.go" }
+
+	cases := []struct {
+		name        string
+		text        string
+		explicit    string
+		session     string
+		cwd         string
+		wantProject string
+		wantSource  string
+	}{
+		{"explicit wins regardless of content", dup(attrYesmem), attrYesmem, "", subjectWorktree, attrYesmem, "explicit"},
+		{"content reassign ≥2 foreign, 0 session", dup(attrYesmem), "", "", subjectWorktree, attrYesmem, "content"},
+		{"ambiguous: two foreign ≥2", dup(attrYesmem) + " plus " + dup(attrDeepseek), "", "", subjectWorktree, subjectMain, "ambiguous"},
+		{"ambiguous: foreign ≥2 and session present", dup(attrYesmem) + " plus " + dup(subjectMain), "", "", subjectWorktree, subjectMain, "ambiguous"},
+		{"repo default without content signal", "some generic note without paths", "", "", subjectWorktree, subjectMain, "repo"},
+		{"single foreign mention stays at repo default", "one mention of " + attrYesmem + "/a.go", "", "", subjectWorktree, subjectMain, "repo"},
+		{"fork content reassign", dup(attrYesmem), "", attrOpenencode, "", attrYesmem, "content"},
+		{"fork session default without signal", "some generic note without paths", "", attrOpenencode, "", attrOpenencode, "session"},
+		{"fork ambiguous keeps session project", dup(attrYesmem) + " plus " + dup(attrDeepseek), "", attrOpenencode, "", attrOpenencode, "ambiguous"},
+		{"worktree token prefix-matches main repo", dup(subjectMain + "/.worktrees/yesloop-x"), "", "", subjectWorktree, subjectMain, "repo"},
+		{"trailing sentence dot still counts", dup(attrYesmem+"/a.go")+". Plus "+attrYesmem+"/b.go.", "", "", subjectWorktree, attrYesmem, "content"},
+		{"known worktree session path counts as main repo", dup(subjectMain+"/.worktrees/wt/ent"), "", subjectMain + "/.worktrees/wt", subjectWorktree, subjectMain, "session"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotProject, gotSource := h.attributeLearningProject(tc.text, nil, tc.explicit, tc.session, tc.cwd)
+			if gotProject != tc.wantProject {
+				t.Errorf("project = %q, want %q", gotProject, tc.wantProject)
+			}
+			if gotSource != tc.wantSource {
+				t.Errorf("source = %q, want %q", gotSource, tc.wantSource)
+			}
+		})
+	}
+}
+
+func TestAttributeLearningProjectEntitiesCounted(t *testing.T) {
+	h, s := mustHandler(t)
+	for _, p := range []string{attrYesmem} {
+		if _, err := s.InsertLearning(&models.Learning{
+			Category: "gotcha", Content: "seed " + p, Project: p,
+			Source: "test", CreatedAt: time.Now(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, worktree := gitTmpRoot(t)
+
+	entities := []string{attrYesmem + "/internal/daemon", attrYesmem + "/internal/proxy"}
+	got, src := h.attributeLearningProject("fix these files", entities, "", "", worktree)
+	if got != attrYesmem || src != "content" {
+		t.Errorf("got (%q, %q), want (%q, content)", got, src, attrYesmem)
+	}
+}
+
+func TestHandleRememberAttributesProjectByContent(t *testing.T) {
+	h, s := mustHandler(t)
+	_, worktree := gitTmpRoot(t)
+	if _, err := s.InsertLearning(&models.Learning{
+		Category: "gotcha", Content: "seed " + attrYesmem, Project: attrYesmem,
+		Source: "test", CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := h.Handle(Request{Method: "remember", Params: map[string]any{
+		"text":     "check " + attrYesmem + "/internal/daemon and " + attrYesmem + "/internal/proxy",
+		"category": "gotcha",
+		"_cwd":     worktree,
+	}})
+	if resp.Error != "" {
+		t.Fatalf("unexpected error: %s", resp.Error)
+	}
+	id, ok := resultMap(t, resp)["id"].(float64)
+	if !ok {
+		t.Fatalf("no id in response: %v", resp.Result)
+	}
+	got, err := s.GetLearning(int64(id))
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Project != attrYesmem {
+		t.Errorf("Project = %q, want %q", got.Project, attrYesmem)
+	}
+	if got.ProjectSource != "content" {
+		t.Errorf("ProjectSource = %q, want content", got.ProjectSource)
+	}
+	if got.CanonicalProject != models.CanonicalProject(attrYesmem) {
+		t.Errorf("CanonicalProject = %q", got.CanonicalProject)
+	}
+}
+
+func TestHandleRememberExplicitProjectSource(t *testing.T) {
+	h, s := mustHandler(t)
+	_, worktree := gitTmpRoot(t)
+
+	resp := h.Handle(Request{Method: "remember", Params: map[string]any{
+		"text":     "some note without path signals",
+		"category": "gotcha",
+		"project":  attrYesmem,
+		"_cwd":     worktree,
+	}})
+	if resp.Error != "" {
+		t.Fatalf("unexpected error: %s", resp.Error)
+	}
+	id := resultMap(t, resp)["id"].(float64)
+	got, err := s.GetLearning(int64(id))
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Project != attrYesmem {
+		t.Errorf("Project = %q, want %q", got.Project, attrYesmem)
+	}
+	if got.ProjectSource != "explicit" {
+		t.Errorf("ProjectSource = %q, want explicit", got.ProjectSource)
+	}
+	if got.CanonicalProject != models.CanonicalProject(attrYesmem) {
+		t.Errorf("CanonicalProject = %q", got.CanonicalProject)
 	}
 }

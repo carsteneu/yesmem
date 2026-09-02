@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Attribution for extraction pipeline learnings
+- Remember() uses repo/content-based project attribution
+- AttributeLearningProject — repo+content based project attribution
+- Add learnings.project_source migration, model field and persistence
+- Repo root detection with worktree→main coalescing
+- Tighten idle reminder cadence — inject every 3 idle turns (user decision)
 - Stagnation tuning — first relay after 1h, 3 refires (4 contacts)
 - SKILL phase 4 regression baseline + phase 5 stage 3 consequence check
 - Regression baseline + stage-3 consequence required fields
@@ -19,10 +25,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Exclude legacy scripts from go build via ignore tag
+- Stateless idle_reminder — turn count via SDK session.messages
+- Bump V 20->21 to bust Bun module cache
+- Bump V 19->20 to bust Bun module cache
 - Exclude PLAN.md from public mirror + scanner allowlist additions
 
 ### Fixed
 
+- Cold-review fixes — punctuation-tolerant tokens, known-path coalescing, fork embed project, error logging
+- Restore handler_fork_test.go tests clobbered by earlier commit
+- Restore handler_learnings_test.go tests clobbered by attribution test addition
+- Idle reminder invisible again — request-only transform patch
+- Idle_reminder via bus event hook + persistent cross-process counter
+- Restore + tighten idle_reminder injection
 - Cold-review veto keyed to dispatch fields, not prose 'blocked'
 - Review fixes — baseline value inline regex, command-copy sync, relay texts name stage 3
 - Stagnation review — escalation test, paused terminal state, CRLF relay, non-vacuous rounding test
@@ -35,6 +51,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Quality stage-2 implementation plan + code-anchor finding mandate
 - L1 fixed note + layer-5 stagnation monitor documentation
 - Layer-5 stagnation monitor implementation plan
+
+### Testing
+
+- Replace hardcoded  fixture paths with username-agnostic /home/test
+- Cover throwing prompt re-arm consumption, align reset stub with daemon contract (review minors)
 
 ## [2.3.15] - 2026-08-26
 

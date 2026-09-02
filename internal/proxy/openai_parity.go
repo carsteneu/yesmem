@@ -825,26 +825,26 @@ func (s *Server) forwardOpenAIWithTracking(w http.ResponseWriter, origReq *http.
 	}
 	w.WriteHeader(resp.StatusCode)
 
-	isSub := isSubagentFromBody(body)
+	isSub, parentThread := s.subagentStreamInfo(origReq, body)
 
 	ct := resp.Header.Get("Content-Type")
 	if !strings.Contains(ct, "text/event-stream") {
 		// Non-SSE: notify stream start
 		if threadID != "" {
-			go s.trackStreamState(threadID, true, 0, isSub, project)
+			go s.trackStreamState(threadID, true, 0, isSub, project, parentThread)
 		}
 
 		bodyBytes, readErr := io.ReadAll(responseBody)
 		if readErr != nil {
 			if threadID != "" {
-				go s.trackStreamState(threadID, false, 0, isSub, project)
+				go s.trackStreamState(threadID, false, 0, isSub, project, parentThread)
 			}
 			return
 		}
 		_, _ = w.Write(bodyBytes)
 
 		if threadID != "" {
-			go s.trackStreamState(threadID, false, int64(len(bodyBytes)), isSub, project)
+			go s.trackStreamState(threadID, false, int64(len(bodyBytes)), isSub, project, parentThread)
 		}
 
 		s.trackOpenAINonStreamingUsage(reqIdx, bodyBytes, threadID, project, estimatedTokens, msgCount)
@@ -869,7 +869,7 @@ func (s *Server) forwardOpenAIWithTracking(w http.ResponseWriter, origReq *http.
 				// Notify stream start on first SSE event
 				if !streamStarted && threadID != "" {
 					streamStarted = true
-					go s.trackStreamState(threadID, true, 0, isSub, project)
+					go s.trackStreamState(threadID, true, 0, isSub, project, parentThread)
 				}
 
 				data := bytes.TrimSpace(bytes.TrimPrefix(trimmedLine, []byte("data: ")))
@@ -880,7 +880,7 @@ func (s *Server) forwardOpenAIWithTracking(w http.ResponseWriter, origReq *http.
 			}
 			if _, writeErr := w.Write(line); writeErr != nil {
 				if threadID != "" {
-					go s.trackStreamState(threadID, false, totalClientBytes, isSub, project)
+					go s.trackStreamState(threadID, false, totalClientBytes, isSub, project, parentThread)
 				}
 				return
 			}
@@ -896,7 +896,7 @@ func (s *Server) forwardOpenAIWithTracking(w http.ResponseWriter, origReq *http.
 
 	// Notify daemon that stream ended
 	if threadID != "" {
-		go s.trackStreamState(threadID, false, totalClientBytes, isSub, project)
+		go s.trackStreamState(threadID, false, totalClientBytes, isSub, project, parentThread)
 	}
 
 	var fwdModel struct {

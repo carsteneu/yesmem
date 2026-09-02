@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/carsteneu/yesmem/internal/models"
+	"github.com/carsteneu/yesmem/internal/textutil"
 )
 
 func TestHandleForkExtractLearnings(t *testing.T) {
@@ -951,5 +953,78 @@ func TestForkExtractLearnings_RecordsCoverage(t *testing.T) {
 	}
 	if s.IsCoveredByFork("coverage-test", 20, 50) {
 		t.Error("superset should not be covered")
+	}
+}
+
+// jsonQuote escapes s as a JSON string value (with surrounding quotes).
+func jsonQuote(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+func TestForkExtractLearningsAttributesProject(t *testing.T) {
+	h, s := mustHandler(t)
+	if _, err := s.InsertLearning(&models.Learning{
+		Category: "gotcha", Content: "seed " + attrYesmem, Project: attrYesmem,
+		Source: "test", CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	content := "touched " + attrYesmem + "/internal/daemon and " + attrYesmem + "/internal/proxy"
+	resp := h.Handle(Request{Method: "fork_extract_learnings", Params: map[string]any{
+		"learnings":  `[{"content":` + jsonQuote(content) + `,"category":"gotcha"}]`,
+		"project":    attrOpenencode,
+		"session_id": "fork-attr-1",
+	}})
+	if resp.Error != "" {
+		t.Fatalf("unexpected error: %s", resp.Error)
+	}
+
+	got, err := s.GetLearningByContentHash(textutil.ContentHash(content))
+	if err != nil || got == nil {
+		t.Fatalf("get by hash: %v (got %v)", err, got)
+	}
+	full, err := s.GetLearning(got.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if full.Project != attrYesmem {
+		t.Errorf("Project = %q, want %q", full.Project, attrYesmem)
+	}
+	if full.ProjectSource != "content" {
+		t.Errorf("ProjectSource = %q, want content", full.ProjectSource)
+	}
+	if full.CanonicalProject != models.CanonicalProject(attrYesmem) {
+		t.Errorf("CanonicalProject = %q", full.CanonicalProject)
+	}
+}
+
+func TestForkExtractLearningsKeepsSessionProject(t *testing.T) {
+	h, s := mustHandler(t)
+
+	content := "generic note without any path signal"
+	resp := h.Handle(Request{Method: "fork_extract_learnings", Params: map[string]any{
+		"learnings":  `[{"content":` + jsonQuote(content) + `,"category":"gotcha"}]`,
+		"project":    attrOpenencode,
+		"session_id": "fork-attr-2",
+	}})
+	if resp.Error != "" {
+		t.Fatalf("unexpected error: %s", resp.Error)
+	}
+
+	got, err := s.GetLearningByContentHash(textutil.ContentHash(content))
+	if err != nil || got == nil {
+		t.Fatalf("get by hash: %v (got %v)", err, got)
+	}
+	full, err := s.GetLearning(got.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if full.Project != attrOpenencode {
+		t.Errorf("Project = %q, want %q", full.Project, attrOpenencode)
+	}
+	if full.ProjectSource != "session" {
+		t.Errorf("ProjectSource = %q, want session", full.ProjectSource)
 	}
 }

@@ -323,6 +323,29 @@ type ProjectSummary struct {
 	LastActive   string `json:"last_active"`
 }
 
+// ListProjectPaths returns distinct absolute project paths from sessions and
+// learnings — the universe of known projects for content-based attribution.
+func (s *Store) ListProjectPaths() ([]string, error) {
+	rows, err := s.readerDB().Query(`
+		SELECT project FROM sessions WHERE project LIKE '/%'
+		UNION
+		SELECT project FROM learnings WHERE project LIKE '/%'`)
+	if err != nil {
+		return nil, fmt.Errorf("list project paths: %w", err)
+	}
+	defer rows.Close()
+
+	var projects []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		projects = append(projects, p)
+	}
+	return projects, rows.Err()
+}
+
 func fmtTime(t time.Time) string {
 	if t.IsZero() {
 		return ""

@@ -517,6 +517,9 @@ var migrations = []string{
 	// it was superseded. v0.67 reactivated self-linked rows but left these fields.
 	`UPDATE learnings SET supersede_reason = NULL, valid_until = NULL
 		WHERE superseded_by IS NULL AND (supersede_reason IS NOT NULL OR valid_until IS NOT NULL)`,
+	// v0.69: project_source records the attribution basis of a learning
+	// (explicit|repo|session|content|ambiguous). Empty for legacy rows.
+	`ALTER TABLE learnings ADD COLUMN project_source TEXT NOT NULL DEFAULT ''`,
 }
 
 // messagesMigrations runs against messages.db (separate from yesmem.db migrations).
@@ -619,6 +622,7 @@ const tableLearnings = `CREATE TABLE IF NOT EXISTS learnings (
 	target_agent        TEXT NOT NULL DEFAULT '',
 	canonical_project   TEXT NOT NULL DEFAULT '',
 	attribution         TEXT NOT NULL DEFAULT '',
+	project_source      TEXT NOT NULL DEFAULT '',      -- v0.69: explicit|repo|session|content|ambiguous
 	staleness_score     REAL,                           -- v0.64: 0.0=valid, 1.0=stale, NULL=unchecked
 	staleness_reason    TEXT DEFAULT '',                -- v0.64: LLM rationale
 	staleness_checked_at TEXT,                          -- v0.64: ISO timestamp of last check

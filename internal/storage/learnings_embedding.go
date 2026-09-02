@@ -40,7 +40,7 @@ func (s *Store) GetPendingLearningsForEmbedding(limit int) ([]models.Learning, e
 		COALESCE(source_file, ''), COALESCE(source_hash, ''), COALESCE(doc_chunk_ref, 0), COALESCE(task_type, ''), COALESCE(turns_at_creation, 0), COALESCE(origin_tool, ''), COALESCE(source_msg_from, -1), COALESCE(source_msg_to, -1),
 		COALESCE(canonical_project, ''),
 		COALESCE(attribution, ''),
-		COALESCE(staleness_score, 0.0), COALESCE(staleness_reason, ''), staleness_checked_at, COALESCE(staleness_type, ''), COALESCE(code_fingerprint, '')
+		COALESCE(staleness_score, 0.0), COALESCE(staleness_reason, ''), staleness_checked_at, COALESCE(staleness_type, ''), COALESCE(code_fingerprint, ''), COALESCE(project_source, '')
 		FROM learnings
 		WHERE (expires_at IS NULL OR expires_at > ?)
 		AND embedding_vector IS NULL
@@ -164,7 +164,7 @@ func (s *Store) GetAllLearningsForEmbedding() ([]models.Learning, error) {
 		COALESCE(source_file, ''), COALESCE(source_hash, ''), COALESCE(doc_chunk_ref, 0), COALESCE(task_type, ''), COALESCE(turns_at_creation, 0), COALESCE(origin_tool, ''), COALESCE(source_msg_from, -1), COALESCE(source_msg_to, -1),
 		COALESCE(canonical_project, ''),
 		COALESCE(attribution, ''),
-		COALESCE(staleness_score, 0.0), COALESCE(staleness_reason, ''), staleness_checked_at, COALESCE(staleness_type, ''), COALESCE(code_fingerprint, '')
+		COALESCE(staleness_score, 0.0), COALESCE(staleness_reason, ''), staleness_checked_at, COALESCE(staleness_type, ''), COALESCE(code_fingerprint, ''), COALESCE(project_source, '')
 		FROM learnings
 		ORDER BY category, created_at DESC`
 
