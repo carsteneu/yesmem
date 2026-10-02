@@ -24,9 +24,10 @@ func (s *Server) runStubCycle(messages []any, req map[string]any, reqIdx int, pr
 
 	// Update narrative before stubbing (skip on retry)
 	if !isRetryReq {
-		s.narrative.Update(messages, reqIdx)
+		narrative := s.getNarrative(threadID)
+		narrative.Update(messages)
 		if len(pivotTexts) > 0 {
-			s.narrative.SetPivotMoments(pivotTexts)
+			narrative.SetPivotMoments(pivotTexts)
 		}
 	}
 
@@ -271,7 +272,7 @@ func (s *Server) runStubCycle(messages []any, req map[string]any, reqIdx int, pr
 		// Fallback: if no collapse needed but still over threshold, use StubifyWithTotal
 		// Use actual-based totalTokens for threshold check instead of re-counting
 		if totalTokens > stubThreshold {
-			s.decay.SetPinnedPaths(s.narrative.ActivePaths())
+			s.decay.SetPinnedPaths(s.getNarrative(threadID).ActivePaths())
 			stubResult = StubifyWithTotal(messages, stubThreshold, s.cfg.KeepRecent, reqIdx, annSnapshot, pivotTexts, estimateFn, totalTokens, s.decay)
 			finalMessages = stubResult.Messages
 			s.logger.Printf("[req %d] STUBIFY fallback: %d stubs, %dk→%dk",
@@ -327,7 +328,7 @@ func (s *Server) runStubCycle(messages []any, req map[string]any, reqIdx int, pr
 	if stubResult.StubCount > 0 && !isRetryReq {
 		topic := extractArchivedTopic(stubResult.Archived, reqIdx)
 		if topic != nil {
-			s.narrative.AddArchivedTopic(*topic)
+			s.getNarrative(threadID).AddArchivedTopic(*topic)
 		}
 	}
 

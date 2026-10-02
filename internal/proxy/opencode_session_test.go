@@ -42,6 +42,49 @@ func opencodeLikeRequest() map[string]any {
 	}
 }
 
+func TestOpencodeSessionID_NewForkSessionIDHeader(t *testing.T) {
+	h := http.Header{}
+	h.Set("x-opencode-session-id", "ses_new")
+	if got := opencodeSessionID(h); got != "ses_new" {
+		t.Fatalf("expected ses_new, got %q", got)
+	}
+}
+
+// TestOpencodeSessionID_ProviderShapes pins the precedence across the three
+// request shapes: opencode-branded (x-opencode-session), other providers on
+// builds >= .173 (x-opencode-session-id), and pre-.173 other providers
+// (x-session-affinity only).
+func TestOpencodeSessionID_ProviderShapes(t *testing.T) {
+	branded := http.Header{}
+	branded.Set("x-opencode-session", "ses_branded")
+	branded.Set("x-opencode-session-id", "ses_universal")
+	branded.Set("x-session-affinity", "ses_affinity")
+	if got := opencodeSessionID(branded); got != "ses_branded" {
+		t.Errorf("opencode-branded provider: got %q, want ses_branded", got)
+	}
+
+	other := http.Header{}
+	other.Set("x-opencode-session-id", "ses_universal")
+	other.Set("x-session-affinity", "ses_affinity")
+	if got := opencodeSessionID(other); got != "ses_universal" {
+		t.Errorf("other provider (.173+): got %q, want ses_universal", got)
+	}
+
+	old := http.Header{}
+	old.Set("x-session-affinity", "ses_affinity")
+	if got := opencodeSessionID(old); got != "ses_affinity" {
+		t.Errorf("pre-.173 other provider: got %q, want ses_affinity", got)
+	}
+}
+
+func TestAnthropicThreadID_ForkSessionIDHeader(t *testing.T) {
+	h := http.Header{}
+	h.Set("x-opencode-session-id", "ses_child")
+	if got := anthropicThreadID(opencodeLikeRequest(), h); got != "opencode:ses_child" {
+		t.Fatalf("expected opencode:ses_child, got %q", got)
+	}
+}
+
 func TestAnthropicThreadID_OpencodeAffinityHeader(t *testing.T) {
 	h := http.Header{}
 	h.Set("x-session-affinity", "ses_abc")

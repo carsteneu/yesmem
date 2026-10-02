@@ -263,7 +263,7 @@ func TestBypass_PassesThroughUnmodified(t *testing.T) {
 		logger:      createTestLogger(),
 		annotations: make(map[string]string),
 		decay:       NewDecayTracker(),
-		narrative:   NewNarrative(),
+		narratives:  make(map[string]*Narrative),
 	}
 
 	// Request with bypass header

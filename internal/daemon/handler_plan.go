@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/carsteneu/yesmem/internal/models"
+	"github.com/carsteneu/yesmem/internal/repo"
 	"github.com/carsteneu/yesmem/internal/storage"
 )
 
@@ -88,9 +90,12 @@ func (h *Handler) handleSetPlan(params map[string]any) Response {
 		UpdatedAt: now,
 	}
 
-	// Build docs hint from indexed reference sources
+	// Build docs hint from indexed reference sources, scoped to the session's
+	// project. set_plan carries no `project` param (the MCP schema exposes only
+	// plan/scope), so fall back to the caller's working directory — otherwise
+	// the hint would degrade to globals-only and drop the session's own docs.
 	if h.store != nil {
-		p.DocsHint = buildDocsHint(h.store)
+		p.DocsHint = buildDocsHint(h.store, docsHintProject(params))
 	}
 
 	planStore.Lock()
@@ -223,9 +228,11 @@ func HasActivePlan(threadID string) bool {
 }
 
 // buildDocsHint queries reference doc sources and builds a formatted reminder
-// for plan checkpoint injection. Returns "" if no reference sources exist.
-func buildDocsHint(store *storage.Store) string {
-	sources, err := store.GetReferenceSources()
+// for plan checkpoint injection. The hint is scoped to `project` (plus global
+// sources); a foreign project's reference docs must never appear here.
+// Returns "" if no reference sources exist for the project.
+func buildDocsHint(store *storage.Store, project string) string {
+	sources, err := store.GetReferenceSources(project)
 	if err != nil || len(sources) == 0 {
 		return ""
 	}
@@ -263,34 +270,69 @@ func buildDocsHint(store *storage.Store) string {
 	return b.String()
 }
 
-// docsHintCache caches the formatted docs hint with a TTL.
-var docsHintCache = struct {
-	sync.RWMutex
+// docsHintTTL bounds how long a cached docs hint is served.
+const docsHintTTL = 5 * time.Minute
+
+// docsHintProject resolves the project to scope a docs hint to: the explicit
+// `project` param, else the caller's working directory. resolveProjectParam
+// only canonicalizes an already-present `project`, so without this fallback
+// callers that never send one (the MCP set_plan path) would scope to "" and
+// lose their own reference docs.
+func docsHintProject(params map[string]any) string {
+	if p := stringOr(params, "project", ""); p != "" {
+		return repo.RootOrSelf(p)
+	}
+	if cwd, _ := params["_cwd"].(string); cwd != "" {
+		return repo.RootOrSelf(models.ProjectShortFromPath(cwd))
+	}
+	return ""
+}
+
+// docsHintEntry is one cached docs hint for a project.
+type docsHintEntry struct {
 	hint    string
 	builtAt time.Time
-}{} // 5min TTL
+}
 
-// handleGetDocsHint returns the cached docs hint, rebuilding if stale (>5min).
-// Used by proxy for subagent injection — project-independent since reference docs are global.
+// docsHintCache caches the formatted docs hint per project with a TTL.
+// Keying by project matters: a single global cache served one project's hint
+// to every other project for the whole TTL window.
+var docsHintCache = struct {
+	sync.RWMutex
+	entries map[string]docsHintEntry
+}{entries: make(map[string]docsHintEntry)}
+
+// handleGetDocsHint returns the cached docs hint for the requested project,
+// rebuilding if stale (>docsHintTTL). Used by proxy for subagent injection.
 func (h *Handler) handleGetDocsHint(params map[string]any) Response {
+	project := docsHintProject(params)
+
 	docsHintCache.RLock()
-	hint := docsHintCache.hint
-	builtAt := docsHintCache.builtAt
+	entry, ok := docsHintCache.entries[project]
 	docsHintCache.RUnlock()
 
-	if time.Since(builtAt) < 5*time.Minute && hint != "" {
-		return jsonResponse(map[string]any{"docs_hint": hint})
+	if ok && time.Since(entry.builtAt) < docsHintTTL && entry.hint != "" {
+		return jsonResponse(map[string]any{"docs_hint": entry.hint})
 	}
 
 	// Rebuild
 	if h.store == nil {
 		return jsonResponse(map[string]any{"docs_hint": ""})
 	}
-	hint = buildDocsHint(h.store)
+	hint := buildDocsHint(h.store, project)
 
 	docsHintCache.Lock()
-	docsHintCache.hint = hint
-	docsHintCache.builtAt = time.Now()
+	if docsHintCache.entries == nil {
+		docsHintCache.entries = make(map[string]docsHintEntry)
+	}
+	// Drop expired entries so the map stays bounded by the projects seen within
+	// one TTL window rather than growing with every project string ever sent.
+	for k, e := range docsHintCache.entries {
+		if time.Since(e.builtAt) >= docsHintTTL {
+			delete(docsHintCache.entries, k)
+		}
+	}
+	docsHintCache.entries[project] = docsHintEntry{hint: hint, builtAt: time.Now()}
 	docsHintCache.Unlock()
 
 	return jsonResponse(map[string]any{"docs_hint": hint})

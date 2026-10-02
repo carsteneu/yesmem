@@ -145,8 +145,11 @@ type Server struct {
 	// Progressive decay tracker
 	decay *DecayTracker
 
-	// Living narrative block
-	narrative *Narrative
+	// Living narrative blocks — one per thread. A single proxy-global narrative
+	// leaked one thread's goal, decisions and phases into every other thread's
+	// briefing; keyed by threadID, same scope as loopStates/frozenStubs.
+	narrativeMu sync.RWMutex
+	narratives  map[string]*Narrative
 
 	// Pivot moments cache (from daemon)
 	pivotMu     sync.RWMutex
@@ -195,7 +198,7 @@ type Server struct {
 
 	// briefingLoader is an optional test-only seam for refreshBriefing and
 	// injectBriefingTurn. Nil in production → both fall back to s.loadBriefing.
-	briefingLoader func(project, projectDir string) briefingData
+	briefingLoader func(project, projectDir, threadID string) briefingData
 
 	// Cognitive signal bus — routes _signal_* tool calls to handlers
 	signalBus *SignalBus
@@ -299,7 +302,7 @@ func Run(cfg Config) error {
 		logger:                createLogger(cfg.DataDir),
 		annotations:           make(map[string]string),
 		decay:                 NewDecayTracker(),
-		narrative:             NewNarrative(),
+		narratives:            make(map[string]*Narrative),
 		stats:                 &ProxyStats{startTime: time.Now()},
 		selfPrimes:            make(map[string]string),
 		lastInjectedIDs:       make(map[string]map[int64]string),

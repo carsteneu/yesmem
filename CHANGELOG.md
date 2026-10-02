@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Remove the orphaned cap reddit_reminder_today (R4-5)
+
+### Changed
+
+- Reword doc comments gofmt would mangle (R3-4)
+- Prepared project-scope data cleanup (apply + rollback)
+
+### Fixed
+
+- Version above the deployed one, honest scope, precise selection
+- Keep the SQL error visible, and close the review's edge cases
+- Use cap_name, target caps.db, and fail loudly on SQL errors
+- Identity-gate the R4-5 assertion, widen the restore search, fail closed
+- Harden the R4-5 delete gate and snapshot selection
+- Round 4 review fixes
+- Key subagent detection on the fork's namespaced parent header (R4-1..R4-3)
+- Close the read/write asymmetry + migration edge cases (R3 re-review)
+- Review round 3 fixes (R3-2 consistency, R3-3, R3-6, tests)
+- Stop the cinnamon skill docs from being global (R3-3)
+- Accept upstream opencode parent-session header (R3-6)
+- Canonicalize worktree callers to their main repo (R3-2)
+- Map the stranded yesmem-projects-ghost doc rows (R3-1)
+- Second review round — restore set_plan docs hint, harden script
+- Address cold-review findings
+- Scope active-caps catalog to the requesting project
+- Scope briefing doc index and docs hint to the project
+- Scope narrative per thread, not per proxy
+
+## [2.3.18] - 2026-10-01
+
+### Added
+
 - Stale-index background refresh with per-HEAD guard, Layer-1 cache invalidates on CBM mtime change
 - Cbm-gc CLI + daily daemon GC task for orphaned worktree index DBs
 - Permanent CBM daemon keeper (spike: attach instead of spawn)
@@ -42,6 +74,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Short socket dir in TestPermissionKick_Gates too
+- MacOS CI — short unix socket paths, skip /proc tests off Linux
 - Review hardening — CBM daemon output parsed across all lines, promotion garbage label, symlink-safe git swap recovery
 - Remove .git worktree swap (CBM 0.10.8 needs none), add legacy crash recovery at daemon boot
 - Keeper verifies permanent CBM daemon, promotes session-managed with 30s backoff
@@ -7037,7 +7071,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add comprehensive tests for generator and storage
 
 
-[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.3.16...HEAD
+[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.3.18...HEAD
+[2.3.18]: https://github.com/carsteneu/yesmem/compare/v2.3.16...v2.3.18
 [2.3.16]: https://github.com/carsteneu/yesmem/compare/v2.3.15...v2.3.16
 [2.3.15]: https://github.com/carsteneu/yesmem/compare/v2.3.14...v2.3.15
 [2.3.14]: https://github.com/carsteneu/yesmem/compare/v2.3.13...v2.3.14

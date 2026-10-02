@@ -10,7 +10,26 @@ import (
 	"strings"
 )
 
-// Root returns the main repository root for dir, or "" if dir is not inside a
+// RootOrSelf returns the main repository root for an absolute directory, or
+// the input unchanged when it is not an absolute path or not inside a git
+// working tree. Short project names are never filesystem paths and pass
+// through untouched. Used to canonicalize a caller's project before exact
+// project matching, so worktree sessions match their main repo's scoped rows.
+//
+// It resolves to the NEAREST enclosing .git, so a nested repo (or a repo laid
+// out inside another, e.g. a dotfiles repo at $HOME) collapses onto its outer
+// root. That merges two project identities; in this repo every project root has
+// no enclosing .git and no inner-scoped rows exist, so the collapse is inert.
+func RootOrSelf(dir string) string {
+	if !strings.HasPrefix(dir, "/") {
+		return dir
+	}
+	if r := Root(dir); r != "" {
+		return r
+	}
+	return dir
+}
+
 // git working tree. Worktrees (.git is a file with "gitdir: <main>/.git/worktrees/<name>")
 // resolve to the main repository path. Limitation: gitdirs not laid out as
 // <main>/.git/worktrees/<name> (bare repos, submodules) resolve to the gitdir's

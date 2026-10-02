@@ -121,7 +121,9 @@ func composeBriefingText(base string, n *Narrative) string {
 }
 
 // loadBriefing fetches the briefing text and code map from the daemon via generate_briefing RPC.
-func (s *Server) loadBriefing(project, projectDir string) briefingData {
+// The rendered narrative is appended from threadID's own narrative — never
+// another thread's.
+func (s *Server) loadBriefing(project, projectDir, threadID string) briefingData {
 	if project == "" {
 		s.logger.Printf("[briefing] skipped: no project name")
 		return briefingData{}
@@ -140,11 +142,19 @@ func (s *Server) loadBriefing(project, projectDir string) briefingData {
 	}
 	if json.Unmarshal(result, &resp) != nil {
 		text := strings.Trim(string(result), "\"")
-		composed := composeBriefingText(text, s.narrative)
+		// Guard the empty threadID: getNarrative("") would be a shared entry,
+		// letting unrelated sessions cross-contaminate narratives.
+		if threadID == "" {
+			return briefingData{}
+		}
+		composed := composeBriefingText(text, s.getNarrative(threadID))
 		s.logger.Printf("[briefing] loaded (raw): %db (composed %db w/ narrative)", len(text), len(composed))
 		return briefingData{Text: composed}
 	}
-	composedText := composeBriefingText(resp.Text, s.narrative)
+	composedText := resp.Text
+	if threadID != "" {
+		composedText = composeBriefingText(resp.Text, s.getNarrative(threadID))
+	}
 	if composedText != "" {
 		s.logger.Printf("[briefing] loaded: %db composed (base %db) + %db code_map for project=%s", len(composedText), len(resp.Text), len(resp.CodeMap), project)
 	} else {
@@ -155,11 +165,11 @@ func (s *Server) loadBriefing(project, projectDir string) briefingData {
 
 // loadBriefingData loads via the briefingLoader test seam when set, otherwise
 // from the daemon.
-func (s *Server) loadBriefingData(project, projectDir string) briefingData {
+func (s *Server) loadBriefingData(project, projectDir, threadID string) briefingData {
 	if s.briefingLoader != nil {
-		return s.briefingLoader(project, projectDir)
+		return s.briefingLoader(project, projectDir, threadID)
 	}
-	return s.loadBriefing(project, projectDir)
+	return s.loadBriefing(project, projectDir, threadID)
 }
 
 // refreshBriefing forces a briefing reload for one thread only. Called during
@@ -167,7 +177,7 @@ func (s *Server) loadBriefingData(project, projectDir string) briefingData {
 // we reload its briefing+codemap so the next request rebuilds its cached
 // prefix from scratch. Other threads sharing this project are untouched.
 func (s *Server) refreshBriefing(threadID, project, projectDir string) {
-	if data := s.loadBriefingData(project, projectDir); data.Text != "" {
+	if data := s.loadBriefingData(project, projectDir, threadID); data.Text != "" {
 		s.setCachedBriefing(threadID, project, data.Text, data.CodeMap)
 		s.logger.Printf("[briefing] refreshed during stub-cycle: tid=%s %db text + %db codemap", threadID, len(data.Text), len(data.CodeMap))
 	}
@@ -190,7 +200,7 @@ func (s *Server) injectBriefingTurn(req map[string]any, reqIdx int, proj, thread
 	// Per-thread scoping prevents sawtooth refreezes on one thread from
 	// invalidating another thread's cached message prefix.
 	if !ok && proj != "" && threadID != "" {
-		data := s.loadBriefingData(proj, extractWorkingDirectory(req))
+		data := s.loadBriefingData(proj, extractWorkingDirectory(req), threadID)
 		s.setCachedBriefing(threadID, proj, data.Text, data.CodeMap)
 		text = data.Text
 	}

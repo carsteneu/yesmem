@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/carsteneu/yesmem/internal/models"
+	"github.com/carsteneu/yesmem/internal/repo"
 )
 
 // docChunkVecCache caches doc chunk embeddings in memory for fast cosine search.
@@ -105,9 +107,12 @@ type DocChunkResult struct {
 
 // UpsertDocSource inserts or replaces a doc source keyed on (name, project).
 func (s *Store) UpsertDocSource(ds *DocSource) (int64, error) {
+	// Canonicalize the caller's project (git worktree -> main repo root) so a
+	// write lands on the same key every project-scoped read resolves to (R3-2).
+	project := repo.RootOrSelf(ds.Project)
 	// Check if exists first to preserve ID on update
 	var existingID int64
-	err := s.readerDB().QueryRow(`SELECT id FROM doc_sources WHERE name = ? AND project = ?`, ds.Name, ds.Project).Scan(&existingID)
+	err := s.readerDB().QueryRow(`SELECT id FROM doc_sources WHERE name = ? AND project = ?`, ds.Name, project).Scan(&existingID)
 	if err == nil {
 		// Update existing:
 		// - TriggerExtensions="" (absent param) → preserve existing value
@@ -132,7 +137,7 @@ func (s *Store) UpsertDocSource(ds *DocSource) (int64, error) {
 		docType = "reference"
 	}
 	result, err := s.db.Exec(`INSERT INTO doc_sources (name, version, path, url, project, chunk_count, is_skill, original_path, full_content, trigger_extensions, doc_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		ds.Name, ds.Version, ds.Path, ds.URL, ds.Project, ds.ChunkCount, ds.IsSkill, ds.OriginalPath, ds.FullContent, ds.TriggerExtensions, docType)
+		ds.Name, ds.Version, ds.Path, ds.URL, project, ds.ChunkCount, ds.IsSkill, ds.OriginalPath, ds.FullContent, ds.TriggerExtensions, docType)
 	if err != nil {
 		return 0, fmt.Errorf("insert doc_source: %w", err)
 	}
@@ -141,6 +146,7 @@ func (s *Store) UpsertDocSource(ds *DocSource) (int64, error) {
 
 // GetDocSource retrieves a single doc source by name and project.
 func (s *Store) GetDocSource(name, project string) (*DocSource, error) {
+	project = repo.RootOrSelf(project)
 	ds := &DocSource{}
 	var lastSync, createdAt string
 	var path, url, originalPath sql.NullString
@@ -174,6 +180,7 @@ func (s *Store) SetDocSourceOriginalPath(sourceID int64, path string) {
 
 // GetSkillContent returns the full_content for a skill source.
 func (s *Store) GetSkillContent(name, project string) (string, error) {
+	project = repo.RootOrSelf(project)
 	var content string
 	err := s.readerDB().QueryRow(`SELECT COALESCE(full_content, '') FROM doc_sources WHERE name = ? AND project = ? AND is_skill = 1`, name, project).Scan(&content)
 	if err != nil {
@@ -184,6 +191,7 @@ func (s *Store) GetSkillContent(name, project string) (string, error) {
 
 // GetRulesContent returns the condensed rules block for a project (for proxy re-injection).
 func (s *Store) GetRulesContent(project string) string {
+	project = repo.RootOrSelf(project)
 	var content string
 	s.readerDB().QueryRow(`SELECT COALESCE(full_content, '') FROM doc_sources WHERE is_rules = 1 AND project = ? LIMIT 1`, project).Scan(&content)
 	return content
@@ -191,6 +199,7 @@ func (s *Store) GetRulesContent(project string) string {
 
 // GetRulesHash returns the stored content hash for change detection.
 func (s *Store) GetRulesHash(project string) string {
+	project = repo.RootOrSelf(project)
 	var hash string
 	s.readerDB().QueryRow(`SELECT COALESCE(version, '') FROM doc_sources WHERE is_rules = 1 AND project = ? LIMIT 1`, project).Scan(&hash)
 	return hash
@@ -221,6 +230,7 @@ func (s *Store) SaveRulesContent(sourceID int64, condensed, hash string) error {
 
 // ListSkillNames returns minimal info for all skills in a project.
 func (s *Store) ListSkillNames(project string) ([]SkillInfo, error) {
+	project = repo.RootOrSelf(project)
 	rows, err := s.readerDB().Query(`SELECT name, COALESCE(full_content, '') FROM doc_sources WHERE is_skill = 1 AND project = ? ORDER BY name`, project)
 	if err != nil {
 		return nil, fmt.Errorf("list skill names: %w", err)
@@ -256,16 +266,46 @@ func ExtractFrontmatterField(content, field string) string {
 	return ""
 }
 
+const docSourceCols = `SELECT id, name, version, path, url, project, chunk_count, last_sync, created_at, COALESCE(is_skill, 0), COALESCE(original_path, ''), COALESCE(full_content, ''), COALESCE(trigger_extensions, ''), COALESCE(doc_type, 'reference') FROM doc_sources`
+
 // ListDocSources returns all doc sources, optionally filtered by project.
+// An empty project returns EVERY source across all projects — that is the
+// "list everything" contract used by the CLI and list-docs. Callers that want
+// project-scoped visibility must use ListDocSourcesForProject.
 func (s *Store) ListDocSources(project string) ([]DocSource, error) {
-	var rows *sql.Rows
-	var err error
-	const listCols = `SELECT id, name, version, path, url, project, chunk_count, last_sync, created_at, COALESCE(is_skill, 0), COALESCE(original_path, ''), COALESCE(full_content, ''), COALESCE(trigger_extensions, ''), COALESCE(doc_type, 'reference') FROM doc_sources`
 	if project == "" {
-		rows, err = s.readerDB().Query(listCols + ` ORDER BY name`)
-	} else {
-		rows, err = s.readerDB().Query(listCols+` WHERE project = ? ORDER BY name`, project)
+		return s.queryDocSources(docSourceCols + ` ORDER BY name`)
 	}
+	// A git worktree caller resolves to its main repo so repo-scoped rows match.
+	return s.queryDocSources(docSourceCols+` WHERE project = ? ORDER BY name`, repo.RootOrSelf(project))
+}
+
+// ListDocSourcesForProject returns global doc sources (empty project) plus those
+// scoped to the given project. Project matching accepts both the canonical
+// absolute path and the legacy bare-basename form, via exact string equality
+// only — never a suffix match, so a foreign project cannot bleed in.
+func (s *Store) ListDocSourcesForProject(project string) ([]DocSource, error) {
+	// A session inside a git worktree reports the worktree path; resolve it to
+	// its main repository so repo-scoped sources still match (R3-2).
+	project = repo.RootOrSelf(project)
+	where := ` WHERE project = '' OR project IS NULL`
+	args := []any{}
+	if project != "" {
+		where += ` OR project = ?`
+		args = append(args, project)
+		if base := filepath.Base(project); base != project {
+			where += ` OR project = ?`
+			args = append(args, base)
+		}
+	}
+	// Project-specific rows sort before globals of the same name so a
+	// name-deduplicating caller prefers the project's own source.
+	order := ` ORDER BY name, CASE WHEN project = '' OR project IS NULL THEN 1 ELSE 0 END`
+	return s.queryDocSources(docSourceCols+where+order, args...)
+}
+
+func (s *Store) queryDocSources(query string, args ...any) ([]DocSource, error) {
+	rows, err := s.readerDB().Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list doc_sources: %w", err)
 	}
@@ -347,7 +387,7 @@ func (s *Store) ListTriggerExtensions(project string) ([]string, error) {
 	args := []any{}
 	if project != "" {
 		query += ` AND project = ?`
-		args = append(args, project)
+		args = append(args, repo.RootOrSelf(project))
 	}
 
 	rows, err := s.readerDB().Query(query, args...)
@@ -419,6 +459,7 @@ type DeleteDocSourceResult struct {
 }
 
 func (s *Store) DeleteDocSource(name, project string) (*DeleteDocSourceResult, error) {
+	project = repo.RootOrSelf(project)
 	var sourceID int64
 	var isSkill sql.NullBool
 	var originalPath, sourcePath sql.NullString
@@ -967,10 +1008,24 @@ func (s *Store) loadChunkVecCache() []cachedChunkVec {
 	return entries
 }
 
-// GetReferenceSources returns all doc sources with doc_type='reference'.
-// Used by plan checkpoint to build docs-available reminder.
-func (s *Store) GetReferenceSources() ([]DocSource, error) {
-	rows, err := s.readerDB().Query(`SELECT name, version, COALESCE(example_query, '') FROM doc_sources WHERE doc_type = 'reference' AND is_skill = 0 AND is_rules = 0 GROUP BY name ORDER BY name`)
+// GetReferenceSources returns reference doc sources for a project: global
+// (empty project) sources plus those scoped to the given project, matched by
+// canonical absolute path or legacy bare basename (exact equality only).
+// Used by plan checkpoint to build the project-scoped docs-available reminder.
+func (s *Store) GetReferenceSources(project string) ([]DocSource, error) {
+	project = repo.RootOrSelf(project)
+	where := ` WHERE doc_type = 'reference' AND is_skill = 0 AND is_rules = 0 AND (project = '' OR project IS NULL`
+	args := []any{}
+	if project != "" {
+		where += ` OR project = ?`
+		args = append(args, project)
+		if base := filepath.Base(project); base != project {
+			where += ` OR project = ?`
+			args = append(args, base)
+		}
+	}
+	where += `) GROUP BY name ORDER BY name`
+	rows, err := s.readerDB().Query(`SELECT name, version, COALESCE(example_query, '') FROM doc_sources`+where, args...)
 	if err != nil {
 		return nil, fmt.Errorf("get reference sources: %w", err)
 	}

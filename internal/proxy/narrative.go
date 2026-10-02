@@ -40,12 +40,40 @@ func NewNarrative() *Narrative {
 	return &Narrative{}
 }
 
+// getNarrative returns the per-thread narrative, lazily creating it. Narratives
+// must never be shared across threads: a single proxy-global narrative leaked
+// one thread's goal, decisions and phases into every other thread's briefing.
+// Scope matches the other per-thread maps (loopStates, frozenStubs, briefingCache).
+func (s *Server) getNarrative(threadID string) *Narrative {
+	s.narrativeMu.RLock()
+	n := s.narratives[threadID]
+	s.narrativeMu.RUnlock()
+	if n != nil {
+		return n
+	}
+	s.narrativeMu.Lock()
+	defer s.narrativeMu.Unlock()
+	if s.narratives == nil {
+		s.narratives = make(map[string]*Narrative)
+	}
+	if n = s.narratives[threadID]; n != nil {
+		return n
+	}
+	n = NewNarrative()
+	s.narratives[threadID] = n
+	return n
+}
+
 // Update processes a new request's messages and updates the narrative state.
-func (n *Narrative) Update(messages []any, requestIdx int) {
+// requestCount is owned by this Narrative (i.e. by a single thread): it is
+// incremented here, never taken from the proxy-wide request index, so traffic
+// on other threads cannot advance or renumber this thread's narrative.
+func (n *Narrative) Update(messages []any) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	n.requestCount = requestIdx
+	n.requestCount++
+	requestIdx := n.requestCount
 
 	// Extract goal from first user message (only once)
 	if n.goal == "" && len(messages) > 0 {

@@ -1,11 +1,99 @@
 package storage
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/carsteneu/yesmem/internal/models"
 )
+
+// makeWorktree creates a git-worktree-shaped directory under main and returns
+// its path, so repo.Root resolves it back to main.
+func makeWorktree(t *testing.T, main, name string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(main, ".git", "worktrees", name), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wt := filepath.Join(main, ".worktrees", name)
+	if err := os.MkdirAll(wt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: "+filepath.Join(main, ".git", "worktrees", name)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return wt
+}
+
+// TestListDocSourcesForProject_WorktreeCaller verifies a session running in a
+// git worktree sees exactly its main repo's scoped doc sources (R3-2), in both
+// directions, plus the global ones.
+func TestListDocSourcesForProject_WorktreeCaller(t *testing.T) {
+	s := mustOpen(t)
+	mainA, mainB := t.TempDir(), t.TempDir()
+	wtA := makeWorktree(t, mainA, "feat")
+	wtB := makeWorktree(t, mainB, "feat")
+
+	mustUpsertDocSource(t, s, &DocSource{Name: "repo-a-doc", Project: mainA})
+	mustUpsertDocSource(t, s, &DocSource{Name: "repo-b-doc", Project: mainB})
+	mustUpsertDocSource(t, s, &DocSource{Name: "global-doc", Project: ""})
+
+	a := docSourceNames(t, s, wtA)
+	if !a["repo-a-doc"] || a["repo-b-doc"] || !a["global-doc"] {
+		t.Errorf("worktree A must see its own + global docs only, got %v", a)
+	}
+
+	b := docSourceNames(t, s, wtB)
+	if !b["repo-b-doc"] || b["repo-a-doc"] || !b["global-doc"] {
+		t.Errorf("worktree B must see its own + global docs only, got %v", b)
+	}
+}
+
+// TestDocSourceWriteReadSymmetry_WorktreeCaller verifies the canonicalization is
+// symmetric: a write from a worktree caller is stored under the repo root and
+// found again from the same worktree path (R3-2 read/write symmetry).
+func TestDocSourceWriteReadSymmetry_WorktreeCaller(t *testing.T) {
+	s := mustOpen(t)
+	main := t.TempDir()
+	wt := makeWorktree(t, main, "feat")
+
+	mustUpsertDocSource(t, s, &DocSource{Name: "sym", Project: wt})
+
+	// Stored under the repo root, not the worktree path.
+	if _, err := s.GetDocSource("sym", main); err != nil {
+		t.Fatalf("row must be stored under the repo root: %v", err)
+	}
+	// And readable from the worktree path.
+	if _, err := s.GetDocSource("sym", wt); err != nil {
+		t.Fatalf("row must be readable from the worktree path: %v", err)
+	}
+	// A foreign repo's worktree must not see it.
+	other := makeWorktree(t, t.TempDir(), "feat")
+	if _, err := s.GetDocSource("sym", other); err == nil {
+		t.Error("foreign worktree must not resolve the row")
+	}
+}
+
+func mustUpsertDocSource(t *testing.T, s *Store, ds *DocSource) {
+	t.Helper()
+	if _, err := s.UpsertDocSource(ds); err != nil {
+		t.Fatalf("upsert doc source %q: %v", ds.Name, err)
+	}
+}
+
+func docSourceNames(t *testing.T, s *Store, project string) map[string]bool {
+	t.Helper()
+	got, err := s.ListDocSourcesForProject(project)
+	if err != nil {
+		t.Fatalf("ListDocSourcesForProject(%q): %v", project, err)
+	}
+	names := make(map[string]bool, len(got))
+	for _, ds := range got {
+		names[ds.Name] = true
+	}
+	return names
+}
 
 func TestUpsertDocSource_InsertAndUpdate(t *testing.T) {
 	s := mustOpen(t)
@@ -1057,7 +1145,7 @@ func TestGetReferenceSources(t *testing.T) {
 	s.DB().Exec(`INSERT INTO doc_sources (name, version, doc_type, example_query, project) VALUES ('test-style', '1.0', 'style', '', '')`)
 	s.DB().Exec(`INSERT INTO doc_sources (name, version, doc_type, example_query, project) VALUES ('test-noquery', '3.0', 'reference', '', '')`)
 
-	sources, err := s.GetReferenceSources()
+	sources, err := s.GetReferenceSources("")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1081,5 +1169,74 @@ func TestGetReferenceSources(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected test-lib with example_query 'http Handler'")
+	}
+}
+
+// TestListDocSourcesForProject guards against cross-project doc-source leaks:
+// the briefing's documentation index must show global + own sources only,
+// never another project's docs.
+func TestListDocSourcesForProject(t *testing.T) {
+	s := mustOpen(t)
+
+	s.UpsertDocSource(&DocSource{Name: "global-doc", Project: ""})
+	s.UpsertDocSource(&DocSource{Name: "own-doc", Project: "/home/me/proj-a"})
+	s.UpsertDocSource(&DocSource{Name: "legacy-own", Project: "proj-a"})
+	s.UpsertDocSource(&DocSource{Name: "foreign-doc", Project: "/home/me/proj-b"})
+
+	got, err := s.ListDocSourcesForProject("/home/me/proj-a")
+	if err != nil {
+		t.Fatalf("ListDocSourcesForProject: %v", err)
+	}
+	names := map[string]bool{}
+	for _, ds := range got {
+		names[ds.Name] = true
+	}
+	if !names["global-doc"] {
+		t.Error("global doc must be visible")
+	}
+	if !names["own-doc"] {
+		t.Error("project-path doc must be visible")
+	}
+	if !names["legacy-own"] {
+		t.Error("legacy basename doc must be visible")
+	}
+	if names["foreign-doc"] {
+		t.Error("foreign project's doc must NOT be visible")
+	}
+
+	// Empty project -> globals only.
+	globals, err := s.ListDocSourcesForProject("")
+	if err != nil {
+		t.Fatalf("globals: %v", err)
+	}
+	for _, ds := range globals {
+		if ds.Project != "" {
+			t.Errorf("empty project must only return global rows, got %q", ds.Project)
+		}
+	}
+}
+
+// TestGetReferenceSources_ProjectScoped guards the docs-hint leak: only global
+// and own-project reference docs may be returned.
+func TestGetReferenceSources_ProjectScoped(t *testing.T) {
+	s := mustOpen(t)
+
+	s.DB().Exec(`INSERT INTO doc_sources (name, version, doc_type, example_query, project) VALUES ('global-ref', '1.0', 'reference', '', '')`)
+	s.DB().Exec(`INSERT INTO doc_sources (name, version, doc_type, example_query, project) VALUES ('own-ref', '1.0', 'reference', '', '/home/me/proj-a')`)
+	s.DB().Exec(`INSERT INTO doc_sources (name, version, doc_type, example_query, project) VALUES ('foreign-ref', '1.0', 'reference', '', '/home/me/proj-b')`)
+
+	got, err := s.GetReferenceSources("/home/me/proj-a")
+	if err != nil {
+		t.Fatalf("GetReferenceSources: %v", err)
+	}
+	names := map[string]bool{}
+	for _, ds := range got {
+		names[ds.Name] = true
+	}
+	if !names["global-ref"] || !names["own-ref"] {
+		t.Errorf("expected global + own refs, got %v", names)
+	}
+	if names["foreign-ref"] {
+		t.Error("foreign reference doc must not leak")
 	}
 }
