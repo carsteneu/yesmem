@@ -242,6 +242,12 @@ func injectCapabilitiesTurnImpl(
 	if parentThreadID != "" {
 		qp["parent_thread_id"] = parentThreadID
 	}
+	// Project scope: the daemon filters out caps scoped to other projects.
+	// Derived from the request's working directory so the catalog stays
+	// project-specific even when the proxy has no explicit project arg.
+	if project := daemonProject(extractProjectName(req), extractWorkingDirectory(req)); project != "" {
+		qp["project"] = project
+	}
 	raw, err := queryFn("get_active_caps", qp)
 	var caps []CapInjection
 	var decodeErr error
@@ -431,7 +437,12 @@ func (s *Server) injectOpencodeCapabilitiesCatalog(req map[string]any, threadID,
 	if threadID == "" {
 		return
 	}
-	raw, err := s.queryDaemon("get_active_caps", map[string]any{"thread_id": threadID})
+	qp := map[string]any{"thread_id": threadID}
+	// Project scope: without it the daemon returns every project's caps.
+	if project != "" {
+		qp["project"] = project
+	}
+	raw, err := s.queryDaemon("get_active_caps", qp)
 	if err != nil {
 		return
 	}

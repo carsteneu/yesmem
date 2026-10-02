@@ -2,11 +2,88 @@ package daemon
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/carsteneu/yesmem/internal/models"
 )
+
+// makeWorktreeDir creates a git-worktree-shaped dir under main so repo.Root
+// resolves it back to main.
+func makeWorktreeDir(t *testing.T, main, name string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(main, ".git", "worktrees", name), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wt := filepath.Join(main, ".worktrees", name)
+	if err := os.MkdirAll(wt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: "+filepath.Join(main, ".git", "worktrees", name)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return wt
+}
+
+// TestHandleGetActiveCaps_WorktreeCaller verifies a session in a git worktree
+// sees its main repo's project-scoped auto-active caps (R3-2), and a foreign
+// repo's worktree sees only its own — in both directions, so the project filter
+// cannot pass vacuously.
+func TestHandleGetActiveCaps_WorktreeCaller(t *testing.T) {
+	h, _ := mustHandler(t)
+	mainA, mainB := t.TempDir(), t.TempDir()
+	wtA := makeWorktreeDir(t, mainA, "feat")
+	wtB := makeWorktreeDir(t, mainB, "feat")
+
+	// Both caps are auto-active, so visibility is decided by the project filter
+	// alone — not by which thread activated what.
+	seedCapAutoActive(t, h, "repo_a_cap", mainA)
+	seedCapAutoActive(t, h, "repo_b_cap", mainB)
+
+	aCaps := unmarshalCaps(t, h.handleGetActiveCaps(map[string]any{"thread_id": "tA", "project": wtA}))
+	if !hasCap(aCaps, "repo_a_cap") || hasCap(aCaps, "repo_b_cap") {
+		t.Errorf("worktree A must see only its repo's cap, got %v", capNames(aCaps))
+	}
+
+	bCaps := unmarshalCaps(t, h.handleGetActiveCaps(map[string]any{"thread_id": "tB", "project": wtB}))
+	if !hasCap(bCaps, "repo_b_cap") || hasCap(bCaps, "repo_a_cap") {
+		t.Errorf("worktree B must see only its repo's cap, got %v", capNames(bCaps))
+	}
+}
+
+func hasCap(caps []capResult, name string) bool {
+	for _, c := range caps {
+		if c.Meta.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func capNames(caps []capResult) []string {
+	names := make([]string, 0, len(caps))
+	for _, c := range caps {
+		names = append(names, c.Meta.Name)
+	}
+	return names
+}
+
+func seedCapAutoActive(t *testing.T, h *Handler, name, project string) {
+	t.Helper()
+	meta := CapMeta{Name: name, Description: "Test: " + name, HandlerBash: "echo", Version: 1, Tested: true, AutoActive: true}
+	ctx, err := meta.ToJSON()
+	if err != nil {
+		t.Fatalf("marshal meta: %v", err)
+	}
+	if _, err := h.store.InsertLearning(&models.Learning{
+		Content: name + " — Test: " + name, Category: "cap", Source: "user_stated",
+		Project: project, Context: ctx, TriggerRule: "cap:" + name,
+	}); err != nil {
+		t.Fatalf("insert cap: %v", err)
+	}
+}
 
 func seedCap(t *testing.T, h *Handler, name, project, handlerBash string, tags []string) int64 {
 	return seedCapFull(t, h, name, project, handlerBash, "", "", tags)
@@ -818,6 +895,65 @@ func TestHandleGetActive_ThreadIsolation(t *testing.T) {
 	caps := unmarshalCaps(t, resp)
 	if len(caps) != 0 {
 		t.Errorf("thread t2 should have 0 active caps, got %d", len(caps))
+	}
+}
+
+// TestHandleGetActiveCaps_ProjectScoping guards the cross-project caps leak:
+// auto-active and session caps scoped to a foreign project must not appear in
+// another project's catalog; global and own-project caps must.
+func TestHandleGetActiveCaps_ProjectScoping(t *testing.T) {
+	h, _ := mustHandler(t)
+
+	seedCap(t, h, "global_cap", "", "echo", nil)
+	seedCap(t, h, "own_cap", "/home/me/proj-a", "echo", nil)
+	seedCap(t, h, "foreign_cap", "/home/me/proj-b", "echo", nil)
+
+	// A foreign auto-active cap (independent of any activation row).
+	meta := CapMeta{Name: "foreign_auto", Description: "auto", HandlerBash: "echo", Version: 1, Tested: true, AutoActive: true}
+	ctx, err := meta.ToJSON()
+	if err != nil {
+		t.Fatalf("marshal meta: %v", err)
+	}
+	if _, err := h.store.InsertLearning(&models.Learning{
+		Content: "foreign_auto", Category: "cap", Source: "user_stated",
+		Project: "/home/me/proj-b", Context: ctx, TriggerRule: "cap:foreign_auto",
+	}); err != nil {
+		t.Fatalf("insert auto cap: %v", err)
+	}
+
+	// Activate both project-resolvable caps on thread "t" (each under its own
+	// project so the activation scope check passes).
+	h.handleActivateCap(map[string]any{"name": "global_cap", "thread_id": "t"})
+	h.handleActivateCap(map[string]any{"name": "own_cap", "thread_id": "t", "project": "/home/me/proj-a"})
+
+	resp := h.handleGetActiveCaps(map[string]any{"thread_id": "t", "project": "/home/me/proj-a"})
+	caps := unmarshalCaps(t, resp)
+	names := map[string]bool{}
+	for _, c := range caps {
+		names[c.Meta.Name] = true
+	}
+	if !names["global_cap"] {
+		t.Error("global cap must be visible")
+	}
+	if !names["own_cap"] {
+		t.Error("own-project cap must be visible")
+	}
+	if names["foreign_auto"] {
+		t.Error("foreign auto-active cap must not leak")
+	}
+
+	// Without a project the caller must still see its own activated caps
+	// (activation is thread-scoped) but still no foreign auto-active cap.
+	respNoProj := h.handleGetActiveCaps(map[string]any{"thread_id": "t"})
+	noProj := map[string]bool{}
+	for _, c := range unmarshalCaps(t, respNoProj) {
+		noProj[c.Meta.Name] = true
+	}
+	if !noProj["own_cap"] {
+		t.Error("session-activated cap must survive an unknown caller project")
+	}
+	if noProj["foreign_auto"] {
+		t.Error("foreign auto-active cap must not leak without a project")
 	}
 }
 

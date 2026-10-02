@@ -16,7 +16,7 @@ func TestHealthEndpoint_ReturnsJSON(t *testing.T) {
 		logger:      log.New(io.Discard, "", 0),
 		annotations: make(map[string]string),
 		decay:       NewDecayTracker(),
-		narrative:   NewNarrative(),
+		narratives:  make(map[string]*Narrative),
 		stats:       &ProxyStats{startTime: time.Now()},
 	}
 

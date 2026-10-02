@@ -9,6 +9,7 @@ import (
 
 	"github.com/carsteneu/yesmem/internal/capfile"
 	"github.com/carsteneu/yesmem/internal/models"
+	"github.com/carsteneu/yesmem/internal/repo"
 	"github.com/carsteneu/yesmem/internal/storage"
 	"github.com/carsteneu/yesmem/internal/textutil"
 )
@@ -339,7 +340,7 @@ func (h *Handler) handleActivateCap(params map[string]any) Response {
 	if threadID == "" {
 		return errorResponse("activate_cap: 'thread_id' is required")
 	}
-	project := stringOr(params, "project", "")
+	project := repo.RootOrSelf(stringOr(params, "project", ""))
 
 	caps, err := h.store.GetActiveLearnings("cap", "", "", "", 0)
 	if err != nil {
@@ -442,13 +443,43 @@ func (h *Handler) handleDeactivateCap(params map[string]any) Response {
 	})
 }
 
+// capProjectVisible reports whether a cap scoped to capProject is visible to a
+// caller whose project is projectFull (canonical absolute path) or projectShort
+// (bare basename). Global caps (project=="") are visible everywhere; a
+// project-scoped cap is visible only in its own project. Comparison is exact
+// path-or-basename equality — never a suffix match — so a cap scoped to a
+// foreign project cannot leak into another project's catalog.
+func capProjectVisible(capProject, projectFull, projectShort string) bool {
+	if capProject == "" {
+		return true
+	}
+	if projectFull != "" && capProject == projectFull {
+		return true
+	}
+	if projectShort != "" && capProject == projectShort {
+		return true
+	}
+	return false
+}
+
 // handleGetActiveCaps returns the caps currently active for
 // the given thread, each with its full meta. Intended for the proxy's
 // schema-injection pipeline — not exposed as a user-facing MCP tool.
+// Results are scoped to the caller's project: project-scoped caps of other
+// projects are filtered out, so a session never sees a foreign project's caps.
 func (h *Handler) handleGetActiveCaps(params map[string]any) Response {
 	threadID := h.resolveSessionID(params, "thread_id")
 	if threadID == "" {
 		return errorResponse("get_active_caps: 'thread_id' is required")
+	}
+
+	// Project scope of the requesting session. The proxy sends the canonical
+	// absolute path; a bare basename is accepted as a legacy fallback. A git
+	// worktree path resolves to its main repo so repo-scoped caps still match.
+	projectFull := repo.RootOrSelf(stringOr(params, "project", ""))
+	projectShort := projectFull
+	if strings.HasPrefix(projectFull, "/") {
+		projectShort = filepath.Base(projectFull)
 	}
 
 	active, err := h.store.GetSessionCaps(threadID)
@@ -479,7 +510,13 @@ func (h *Handler) handleGetActiveCaps(params map[string]any) Response {
 		}
 		byName[m.Name] = &caps[i]
 		metaByName[m.Name] = m
-		if m.AutoActive {
+		// Auto-active caps are injected without explicit activation, so they
+		// must be project-scoped: another project's auto-active cap must not
+		// appear. Explicitly activated (session) caps stay resolvable via
+		// byName regardless of project — activation is thread-scoped, and
+		// filtering them here would silently drop a session's own caps when a
+		// caller cannot supply its project.
+		if m.AutoActive && capProjectVisible(caps[i].Project, projectFull, projectShort) {
 			autoActiveNames = append(autoActiveNames, m.Name)
 		}
 	}

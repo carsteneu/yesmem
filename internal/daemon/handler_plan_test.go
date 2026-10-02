@@ -3,6 +3,8 @@ package daemon
 import (
 	"strings"
 	"testing"
+
+	"github.com/carsteneu/yesmem/internal/storage"
 )
 
 // --- Plan CRUD ---
@@ -23,6 +25,38 @@ func TestHandleSetPlan(t *testing.T) {
 	m := resultMap(t, resp)
 	if m["status"] != "active" {
 		t.Errorf("expected active, got %q", m["status"])
+	}
+}
+
+// TestHandleSetPlan_DocsHintScopedFromCWD guards the set_plan docs hint: the
+// MCP schema sends no `project`, so without the _cwd fallback the hint would
+// scope to "" (globals-only) and drop the session's own reference docs.
+func TestHandleSetPlan_DocsHintScopedFromCWD(t *testing.T) {
+	h, store := mustHandler(t)
+	defer cleanupPlans()
+
+	store.UpsertDocSource(&storage.DocSource{Name: "own-ref", Project: "/home/me/proj-a", DocType: "reference", ExampleQuery: "a"})
+	store.UpsertDocSource(&storage.DocSource{Name: "foreign-ref", Project: "/home/me/proj-b", DocType: "reference", ExampleQuery: "b"})
+
+	resp := h.handleSetPlan(map[string]any{
+		"plan":      "⬜ Step 1",
+		"scope":     "session",
+		"thread_id": "thread-docs-cwd",
+		"_cwd":      "/home/me/proj-a",
+	})
+	if resp.Error != "" {
+		t.Fatalf("set plan error: %s", resp.Error)
+	}
+
+	planStore.RLock()
+	hint := planStore.plans["thread-docs-cwd"].DocsHint
+	planStore.RUnlock()
+
+	if !strings.Contains(hint, "own-ref") {
+		t.Errorf("plan docs hint missing own project doc: %q", hint)
+	}
+	if strings.Contains(hint, "foreign-ref") {
+		t.Errorf("plan docs hint leaked a foreign project doc: %q", hint)
 	}
 }
 
@@ -263,6 +297,31 @@ func TestHandleGetDocsHint_Empty(t *testing.T) {
 	resp := h.handleGetDocsHint(map[string]any{})
 	if resp.Error != "" {
 		t.Fatalf("error: %s", resp.Error)
+	}
+}
+
+// TestHandleGetDocsHint_ProjectScoped guards the cross-project docs-hint leak:
+// each project's hint — including its cache entry — must be independent.
+func TestHandleGetDocsHint_ProjectScoped(t *testing.T) {
+	h, store := mustHandler(t)
+
+	store.UpsertDocSource(&storage.DocSource{Name: "projA-lib", Project: "/home/me/proj-a", DocType: "reference", ExampleQuery: "a query"})
+	store.UpsertDocSource(&storage.DocSource{Name: "projB-lib", Project: "/home/me/proj-b", DocType: "reference", ExampleQuery: "b query"})
+
+	hintA, _ := resultMap(t, h.handleGetDocsHint(map[string]any{"project": "/home/me/proj-a"}))["docs_hint"].(string)
+	if !strings.Contains(hintA, "projA-lib") {
+		t.Errorf("proj-a hint missing own doc: %q", hintA)
+	}
+	if strings.Contains(hintA, "projB-lib") {
+		t.Errorf("proj-a hint leaked proj-b doc: %q", hintA)
+	}
+
+	hintB, _ := resultMap(t, h.handleGetDocsHint(map[string]any{"project": "/home/me/proj-b"}))["docs_hint"].(string)
+	if !strings.Contains(hintB, "projB-lib") {
+		t.Errorf("proj-b hint missing own doc: %q", hintB)
+	}
+	if strings.Contains(hintB, "projA-lib") {
+		t.Errorf("proj-b hint leaked proj-a doc (cache not project-keyed): %q", hintB)
 	}
 }
 

@@ -161,7 +161,7 @@ func TestInvalidateThreadCaches_RefreshesBriefingWhenProjectSet(t *testing.T) {
 
 	calls := 0
 	var gotProj, gotDir string
-	s.briefingLoader = func(proj, projectDir string) briefingData {
+	s.briefingLoader = func(proj, projectDir, threadID string) briefingData {
 		calls++
 		gotProj, gotDir = proj, projectDir
 		return briefingData{Text: "NEW-text", CodeMap: "NEW-cm"}
@@ -188,7 +188,7 @@ func TestInvalidateThreadCaches_SkipsBriefingWhenProjectEmpty(t *testing.T) {
 	}
 
 	calls := 0
-	s.briefingLoader = func(proj, projectDir string) briefingData {
+	s.briefingLoader = func(proj, projectDir, threadID string) briefingData {
 		calls++
 		return briefingData{}
 	}
@@ -207,7 +207,7 @@ func TestInvalidateThreadCaches_PreservesBriefingOnEmptyLoaderResult(t *testing.
 	}
 	s.setCachedBriefing("t-3", "yesmem", "OLD-text", "OLD-cm")
 
-	s.briefingLoader = func(proj, projectDir string) briefingData {
+	s.briefingLoader = func(proj, projectDir, threadID string) briefingData {
 		return briefingData{}
 	}
 

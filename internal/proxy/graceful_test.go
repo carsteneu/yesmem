@@ -33,7 +33,7 @@ func TestGracefulShutdown_DrainsInFlight(t *testing.T) {
 		logger:                log.New(io.Discard, "", 0),
 		annotations:           make(map[string]string),
 		decay:                 NewDecayTracker(),
-		narrative:             NewNarrative(),
+		narratives:            make(map[string]*Narrative),
 		stats:                 &ProxyStats{startTime: time.Now()},
 		selfPrimes:            make(map[string]string),
 		responseTimes:         make(map[string]time.Time),

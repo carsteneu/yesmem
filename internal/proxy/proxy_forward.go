@@ -553,17 +553,65 @@ func (s *Server) trackStreamState(threadID string, active bool, bytesSoFar int64
 	})
 }
 
+// parentHeaderNames lists the subagent parent-session headers in precedence
+// order. x-opencode-parent-session-id is primary: since the 1.18.34 fork merge
+// (builds >= 1.18.34-patched.173, Learning #96632) the fork sends that header
+// (upstream #52370) and no longer sends X-Opencode-Agent-Type /
+// X-Opencode-Parent-Session. The remaining names are backward compat for older
+// fork builds only.
+var parentHeaderNames = []string{"X-Opencode-Parent-Session-Id", "X-Parent-Session-Id", "X-Opencode-Parent-Session"}
+
 // subagentStreamInfo resolves stream-tracking attribution for a request.
-// Claude Code subagents are detected via metadata.user_id in the body;
-// opencode task()-subagents via request headers set by the opencode fork
-// (X-Opencode-Agent-Type / X-Opencode-Parent-Session).
+// Claude Code subagents are detected via metadata.user_id in the body.
+// opencode subagents are detected via headers, from either fork generation:
+//   - builds >= .173: x-opencode-parent-session-id (no agent-type header)
+//   - builds < .173: X-Opencode-Agent-Type: subagent + X-Opencode-Parent-Session
+//
+// A parent-session header is only sent when a parent session exists, so its
+// mere presence implies a subagent; the legacy agent-type header is honoured on
+// its own so a parent-header-less old fork still counts.
 func (s *Server) subagentStreamInfo(r *http.Request, body []byte) (isSub bool, parentThread string) {
-	isSub = isSubagentFromBody(body)
-	if !strings.EqualFold(r.Header.Get("X-Opencode-Agent-Type"), "subagent") {
-		return isSub, ""
+	if isSubagentFromBody(body) {
+		return true, ""
 	}
-	parentThread = "opencode:" + r.Header.Get("X-Opencode-Parent-Session")
-	return true, parentThread
+	// Legacy fork (< .173): explicit agent-type.
+	if strings.EqualFold(headerCI(r.Header, "X-Opencode-Agent-Type"), "subagent") {
+		if parent := firstHeader(r, parentHeaderNames...); parent != "" {
+			return true, "opencode:" + parent
+		}
+		return true, ""
+	}
+	if parent := firstHeader(r, parentHeaderNames...); parent != "" {
+		return true, "opencode:" + parent
+	}
+	return false, ""
+}
+
+// firstHeader returns the first non-empty value among the given header names.
+func firstHeader(r *http.Request, names ...string) string {
+	for _, n := range names {
+		if v := headerCI(r.Header, n); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// headerCI reads a header, falling back to a case-insensitive map scan.
+// net/http canonicalizes the names of headers it parses, so Header.Get already
+// matches what the fork sends over the wire; the scan covers requests whose
+// Header map was built programmatically with non-canonical keys (tests, and any
+// future in-process caller). Multi-value semantics match Header.Get: first value.
+func headerCI(h http.Header, name string) string {
+	if v := h.Get(name); v != "" {
+		return v
+	}
+	for k, vs := range h {
+		if len(vs) > 0 && vs[0] != "" && strings.EqualFold(k, name) {
+			return vs[0]
+		}
+	}
+	return ""
 }
 
 // isSubagentFromBody checks whether the request body indicates a subagent.

@@ -46,9 +46,8 @@ func (s *Server) ensureOpenAIRuntimeState() {
 	if s.decay == nil {
 		s.decay = NewDecayTracker()
 	}
-	if s.narrative == nil {
-		s.narrative = NewNarrative()
-	}
+	// s.narratives is lazily created by getNarrative under narrativeMu; do not
+	// initialize it here under s.mu (mismatched lock).
 	if s.cacheGate == nil {
 		s.cacheGate = NewCacheGate(cacheGapForTTL(s.cfg.CacheTTL))
 	}
@@ -217,7 +216,7 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 	//   InjectDelegationContract → only in Claude profile (mentions Opus/Sonnet/Haiku)
 
 	// Inject opencode capability catalog (active caps with execute_cap instructions)
-	s.injectOpencodeCapabilitiesCatalog(req, ctx.ThreadID, ctx.Project)
+	s.injectOpencodeCapabilitiesCatalog(req, ctx.ThreadID, daemonProject(ctx.Project, ctx.ProjectDir))
 
 	messages, _ = req["messages"].([]any)
 	overhead := s.measureOverhead(req)
@@ -277,7 +276,7 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 	// Briefing as system block, gated per-model via FeatureGates.
 	if isFeatureEnabled(&s.cfg, model, "briefing") && len(messages) <= 6 {
 		cwd := extractWorkingDirectory(req)
-		if data := s.loadBriefing(ctx.Project, cwd); data.Text != "" {
+		if data := s.loadBriefing(ctx.Project, cwd, ctx.ThreadID); data.Text != "" {
 			briefingText = data.Text
 			AppendSystemBlock(req, "yesmem-briefing", data.Text)
 			s.logger.Printf("[req %d] %sOpenAI pipeline: briefing injected (%db) project=%s%s",

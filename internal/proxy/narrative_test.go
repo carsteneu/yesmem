@@ -138,13 +138,68 @@ func TestNarrative_Update_ExtractsGoal(t *testing.T) {
 		map[string]any{"role": "assistant", "content": "Sure, let me help."},
 	}
 
-	n.Update(msgs, 1)
+	n.Update(msgs)
 
 	if n.goal == "" {
 		t.Error("goal should be extracted from first user message")
 	}
 	if !strings.Contains(n.goal, "proxy server") {
 		t.Errorf("goal should contain 'proxy server', got: %q", n.goal)
+	}
+}
+
+// TestNarrative_PerThreadIsolation guards the cross-project narrative leak: a
+// single proxy-global narrative let one thread's goal/decisions appear in every
+// other thread's briefing. Each thread must own an independent Narrative.
+func TestNarrative_PerThreadIsolation(t *testing.T) {
+	s := &Server{}
+
+	n1 := s.getNarrative("thread-1")
+	n1.Update([]any{map[string]any{"role": "user", "content": "Build the alpha parser."}})
+	n2 := s.getNarrative("thread-2")
+	n2.Update([]any{map[string]any{"role": "user", "content": "Fix the beta exporter."}})
+
+	if n1 == n2 {
+		t.Fatal("distinct threads must not share one narrative instance")
+	}
+	r1 := n1.Render()
+	r2 := n2.Render()
+	if !strings.Contains(r1, "alpha parser") {
+		t.Errorf("thread-1 narrative missing its own goal: %q", r1)
+	}
+	if strings.Contains(r1, "beta exporter") {
+		t.Errorf("thread-1 narrative leaked thread-2 goal: %q", r1)
+	}
+	if !strings.Contains(r2, "beta exporter") {
+		t.Errorf("thread-2 narrative missing its own goal: %q", r2)
+	}
+	if strings.Contains(r2, "alpha parser") {
+		t.Errorf("thread-2 narrative leaked thread-1 goal: %q", r2)
+	}
+}
+
+// TestNarrative_GetNarrativeStablePerThread verifies getNarrative returns the
+// same instance for repeated calls with the same thread id.
+func TestNarrative_GetNarrativeStablePerThread(t *testing.T) {
+	s := &Server{}
+	if s.getNarrative("tid") != s.getNarrative("tid") {
+		t.Error("getNarrative must return the same instance for the same thread")
+	}
+}
+
+// TestComposeBriefingText_UsesThreadNarrative verifies the briefing composition
+// pulls the requesting thread's narrative, never a foreign thread's.
+func TestComposeBriefingText_UsesThreadNarrative(t *testing.T) {
+	s := &Server{}
+	s.getNarrative("thread-a").Update([]any{map[string]any{"role": "user", "content": "alpha work."}})
+	s.getNarrative("thread-b").Update([]any{map[string]any{"role": "user", "content": "beta work."}})
+
+	gotA := composeBriefingText("BASE", s.getNarrative("thread-a"))
+	if !strings.Contains(gotA, "alpha work") {
+		t.Errorf("composed briefing missing own narrative: %q", gotA)
+	}
+	if strings.Contains(gotA, "beta work") {
+		t.Errorf("composed briefing leaked foreign narrative: %q", gotA)
 	}
 }
 

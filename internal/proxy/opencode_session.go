@@ -4,13 +4,19 @@ import "net/http"
 
 // opencodeSessionID returns opencode's native session ID from request headers.
 // opencode sets x-opencode-session for opencode-branded providers and
-// x-session-affinity for all others (anthropic, openai, deepseek, ...);
-// see packages/opencode/src/session/llm/request.ts in the opencode repo.
+// x-session-affinity for all others (anthropic, openai, deepseek, ...). Since
+// the 1.18.34 fork merge (builds >= 1.18.34-patched.173, Learning #96632) every
+// request additionally carries x-opencode-session-id (upstream #52370), which is
+// preferred over the affinity fallback. See
+// packages/opencode/src/session/llm/request.ts in the opencode repo.
 func opencodeSessionID(h http.Header) string {
-	if sid := h.Get("x-opencode-session"); sid != "" {
+	if sid := headerCI(h, "x-opencode-session"); sid != "" {
 		return sid
 	}
-	return h.Get("x-session-affinity")
+	if sid := headerCI(h, "x-opencode-session-id"); sid != "" {
+		return sid
+	}
+	return headerCI(h, "x-session-affinity")
 }
 
 // anthropicThreadID resolves the thread ID for /v1/messages requests.

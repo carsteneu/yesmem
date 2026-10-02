@@ -14,6 +14,7 @@ import (
 
 	"github.com/carsteneu/yesmem/internal/extraction"
 	"github.com/carsteneu/yesmem/internal/ingest"
+	"github.com/carsteneu/yesmem/internal/repo"
 	"github.com/carsteneu/yesmem/internal/storage"
 )
 
@@ -29,7 +30,9 @@ func (h *Handler) handleDocsSearch(params map[string]any) Response {
 	}
 	source := stringOr(params, "source", "")
 	section := stringOr(params, "section", "")
-	project := stringOr(params, "project", "")
+	// Canonicalize the caller project (git worktree -> main repo) so the
+	// project filtering and boost below match repo-scoped sources.
+	project := repo.RootOrSelf(stringOr(params, "project", ""))
 	since, _ := params["since"].(string)
 	before, _ := params["before"].(string)
 	limit := intOr(params, "limit", 5)
@@ -340,7 +343,7 @@ func (h *Handler) handleContextualDocs(params map[string]any) Response {
 		return jsonResponse(map[string]any{"results": []any{}, "total": 0})
 	}
 
-	project := stringOr(params, "project", "")
+	project := repo.RootOrSelf(stringOr(params, "project", ""))
 	limit := intOr(params, "limit", 3)
 
 	var sourceIDs []int64

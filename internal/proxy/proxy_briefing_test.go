@@ -148,7 +148,7 @@ func TestBriefingCache_InvalidatePerThread(t *testing.T) {
 func TestRefreshBriefing_UpdatesOnlyThatThread(t *testing.T) {
 	s := &Server{
 		logger: log.New(io.Discard, "", 0),
-		briefingLoader: func(project, projectDir string) briefingData {
+		briefingLoader: func(project, projectDir, threadID string) briefingData {
 			return briefingData{Text: "fresh-" + project, CodeMap: "fresh-cm-" + project}
 		},
 	}
@@ -176,7 +176,7 @@ func TestComposeBriefingText_AppendsRenderedNarrative(t *testing.T) {
 	n := NewNarrative()
 	n.Update([]any{
 		map[string]any{"role": "user", "content": "implement feature X"},
-	}, 1)
+	})
 
 	narr := n.Render()
 	if narr == "" {
@@ -239,7 +239,7 @@ func TestInjectBriefingTurn_RetriesAfterFailedLoad(t *testing.T) {
 	calls := 0
 	s := &Server{
 		logger: log.New(io.Discard, "", 0),
-		briefingLoader: func(project, projectDir string) briefingData {
+		briefingLoader: func(project, projectDir, threadID string) briefingData {
 			calls++
 			if calls == 1 {
 				return briefingData{} // simulated daemon timeout
@@ -283,7 +283,7 @@ func TestInjectBriefingTurn_SuccessfulLoadDoesNotExpire(t *testing.T) {
 	calls := 0
 	s := &Server{
 		logger: log.New(io.Discard, "", 0),
-		briefingLoader: func(project, projectDir string) briefingData {
+		briefingLoader: func(project, projectDir, threadID string) briefingData {
 			calls++
 			return briefingData{Text: "BRIEF-TEXT"}
 		},
@@ -309,7 +309,7 @@ func TestInjectBriefingTurn_CodeMapOnlyEntryDoesNotExpire(t *testing.T) {
 	calls := 0
 	s := &Server{
 		logger: log.New(io.Discard, "", 0),
-		briefingLoader: func(project, projectDir string) briefingData {
+		briefingLoader: func(project, projectDir, threadID string) briefingData {
 			calls++
 			return briefingData{CodeMap: "CM-ONLY"}
 		},

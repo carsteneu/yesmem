@@ -733,31 +733,25 @@ func extractPulse(content string) string {
 	return ""
 }
 
-// loadDocSources fetches registered documentation sources for this project.
+// loadDocSources fetches documentation sources visible to this project:
+// project-scoped sources plus truly global ones (empty project). It must never
+// fall back to "all sources" — that leaked every other project's docs into the
+// briefing's documentation index.
 func (g *Generator) loadDocSources(projectShort string) []DocSourceSummary {
 	if projectShort == "" {
 		return nil
 	}
-	// Load project-specific + global (project='') doc sources
-	sources, err := g.store.ListDocSources(projectShort)
-	globalSources, _ := g.store.ListDocSources("")
-	for _, gs := range globalSources {
-		found := false
-		for _, s := range sources {
-			if s.Name == gs.Name {
-				found = true
-				break
-			}
-		}
-		if !found {
-			sources = append(sources, gs)
-		}
-	}
+	sources, err := g.store.ListDocSourcesForProject(projectShort)
 	if err != nil || len(sources) == 0 {
 		return nil
 	}
 	var result []DocSourceSummary
+	seen := make(map[string]bool, len(sources))
 	for _, s := range sources {
+		if seen[s.Name] {
+			continue
+		}
+		seen[s.Name] = true
 		result = append(result, DocSourceSummary{
 			Name:        s.Name,
 			Version:     s.Version,

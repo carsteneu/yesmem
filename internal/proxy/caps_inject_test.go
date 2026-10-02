@@ -141,6 +141,30 @@ func TestRenderCapabilitiesBlock_NoAdapterForBashOnly(t *testing.T) {
 	}
 }
 
+// TestInjectCapabilitiesTurnImpl_PassesProjectScope verifies the proxy sends
+// the request's project so the daemon can filter out foreign projects' caps.
+func TestInjectCapabilitiesTurnImpl_PassesProjectScope(t *testing.T) {
+	var gotProject any
+	queryFn := func(method string, params map[string]any) (json.RawMessage, error) {
+		if method == "get_active_caps" {
+			gotProject = params["project"]
+		}
+		return json.RawMessage(`[]`), nil
+	}
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": "# Environment\n - Primary working directory: /home/me/proj-a\n"},
+		},
+		"messages": []any{
+			map[string]any{"role": "user", "content": "hi"},
+		},
+	}
+	injectCapabilitiesTurnImpl(req, "tid", "", queryFn, nil, nil)
+	if gotProject != "/home/me/proj-a" {
+		t.Errorf("expected project scope /home/me/proj-a, got %v", gotProject)
+	}
+}
+
 func TestInjectCapabilitiesTurnImpl_InsertsAfterBriefingAndCodeMap(t *testing.T) {
 	queryFn := func(method string, params map[string]any) (json.RawMessage, error) {
 		return json.RawMessage(`[{"id":1,"source":"user_stated","meta":{"cap_name":"git_log","cap_description":"Show git log","cap_scripts":[{"name":"git_log","kind":"tool","runtime":"bash","body":"git log","schema":"{}"}]}}]`), nil
