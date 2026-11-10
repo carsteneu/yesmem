@@ -127,6 +127,7 @@ func writePlanClaimReport(t *testing.T, store *storage.Store, repo, section, rep
 // die Agentenzeile ist ein korrekter Bericht dort unverifiable.
 func TestVerifyClaimsJudgesThePlanOfItsAgent(t *testing.T) {
 	h, store, repo, head, section := planClaimSetup(t)
+	skipWithoutBubblewrap(t)
 	seedPlan(t, store, "opencode:ses_planclaim", `[{"content":"do the work","status":"completed"}]`)
 	writePlanClaimReport(t, store, repo, section, planClaimReport(head, repo))
 

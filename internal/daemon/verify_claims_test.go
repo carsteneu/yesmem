@@ -94,6 +94,7 @@ func verifyClaimsCall(t *testing.T, h *Handler, params map[string]any) map[strin
 // honest one accepted, and a structurally unprovable deploy tolerated instead
 // of freezing the agent for it.
 func TestVerifyClaimsOperation(t *testing.T) {
+	skipWithoutBubblewrap(t)
 	h, _ := mustHandler(t)
 	repo, head, _ := claimsRepo(t)
 
@@ -169,6 +170,7 @@ func TestVerifyClaimsRefutesADirtyWorktree(t *testing.T) {
 // through the same read-only path keeps the operation usable from the gate
 // without the gate passing text around.
 func TestVerifyClaimsReadsAReportSection(t *testing.T) {
+	skipWithoutBubblewrap(t)
 	h, s := mustHandler(t)
 	repo, head, _ := claimsRepo(t)
 	if err := s.ScratchpadWrite(repo, "yesloop-x-verify",

@@ -153,8 +153,7 @@ var (
 	doneGateVerifyStatesMu sync.Mutex
 )
 
-// maxStoredVerdicts bounds the registry. One entry is written per verification,
-// not per tick, but a daemon running for weeks would still accumulate them. The
+// maxStoredVerdicts bounds the registry. One entry is written per verification,// not per tick, but a daemon running for weeks would still accumulate them. The
 // oldest judgement is dropped first, which costs a re-run of the pre-check and
 // never an unverified DONE.
 const maxStoredVerdicts = 256
@@ -734,6 +733,13 @@ func (h *Handler) gateDoneVerify(agent storage.Agent, content string) bool {
 	if repo == "" || agent.Project == "" || agent.Section == "" {
 		return false
 	}
+
+	// One gate per agent at a time. Two ticks can land on the same report, and
+	// without this the slower one announces a block after the faster one has
+	// already escalated: the agent then reads a fourth request after the case
+	// left the loop, which is exactly what the escalation exists to prevent.
+	unlock := lockDoneGateRun(agent.ID)
+	defer unlock()
 
 	report, readErr := h.verifyReport(agent)
 	// A row that still carries the escalation is not re-entered: the state map is in

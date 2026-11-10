@@ -690,13 +690,42 @@ func refuseOwnedEnvKey(key string) *Verdict {
 var maskedHostDirs = []string{"/tmp", "/var/tmp", "/run", "/proc", "/sys", "/dev"}
 
 // maskedHostPath reports whether clean lies at or under a masked host root.
+//
+// Both forms are judged. The paths reaching this check are resolved, while the
+// roots are written the way the environment names them, and on macOS /tmp and
+// /var/tmp are symlinks into /private: comparing the resolved path against the
+// literal root let a profile re-expose a masked tree.
 func maskedHostPath(clean string) bool {
+	forms := []string{filepath.Clean(clean)}
+	if resolved := resolveIfExists(clean); resolved != "" && resolved != forms[0] {
+		forms = append(forms, resolved)
+	}
 	for _, root := range maskedHostDirs {
-		if clean == root || strings.HasPrefix(clean, root+string(os.PathSeparator)) {
-			return true
+		rootForms := []string{root}
+		if resolved := resolveIfExists(root); resolved != "" && resolved != root {
+			rootForms = append(rootForms, resolved)
+		}
+		for _, rf := range rootForms {
+			for _, f := range forms {
+				if f == rf || strings.HasPrefix(f, rf+string(os.PathSeparator)) {
+					return true
+				}
+			}
 		}
 	}
 	return false
+}
+
+// resolveIfExists returns the path with every symlink resolved, or "" when it
+// cannot be resolved. A path that does not exist keeps its literal form: the
+// caller decides what "unknown" means, and here the literal root already
+// covers it.
+func resolveIfExists(path string) string {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return ""
+	}
+	return filepath.Clean(resolved)
 }
 
 // sensitiveHomeDirs are the directories under a home that hold credentials
