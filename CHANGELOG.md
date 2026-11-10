@@ -5,7 +5,7 @@ All notable changes to YesMem are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.5.1] - 2026-11-10
 
 ### Added
 
@@ -94,6 +94,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- V2.5.1
 - State the master plus overlay split for project rules
 - Align the acceptance line with the loop contract, restore the phase-1 rule, keep triggers dot-free
 - Name the campaign tools, keep the pin provenance in the pointer
@@ -114,6 +115,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Testing
 
+- Wait for the recorder before judging the last message
 - Let the sandbox check name the failure it sees
 - Pin the full trigger set and the deliberate absence of the yesloop trigger
 - The campaign skill survives catalogue discovery, not just its file
@@ -11031,7 +11033,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add comprehensive tests for generator and storage
 
 
-[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.5.0...HEAD
+[2.5.1]: https://github.com/carsteneu/yesmem/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/carsteneu/yesmem/compare/v2.4.2...v2.5.0
 [2.4.2]: https://github.com/carsteneu/yesmem/compare/v2.3.19...v2.4.2
 [2.3.19]: https://github.com/carsteneu/yesmem/compare/v2.3.18...v2.3.19
