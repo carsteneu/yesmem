@@ -696,17 +696,9 @@ var maskedHostDirs = []string{"/tmp", "/var/tmp", "/run", "/proc", "/sys", "/dev
 // /var/tmp are symlinks into /private: comparing the resolved path against the
 // literal root let a profile re-expose a masked tree.
 func maskedHostPath(clean string) bool {
-	forms := []string{filepath.Clean(clean)}
-	if resolved := resolveIfExists(clean); resolved != "" && resolved != forms[0] {
-		forms = append(forms, resolved)
-	}
 	for _, root := range maskedHostDirs {
-		rootForms := []string{root}
-		if resolved := resolveIfExists(root); resolved != "" && resolved != root {
-			rootForms = append(rootForms, resolved)
-		}
-		for _, rf := range rootForms {
-			for _, f := range forms {
+		for _, rf := range pathForms(root) {
+			for _, f := range pathForms(clean) {
 				if f == rf || strings.HasPrefix(f, rf+string(os.PathSeparator)) {
 					return true
 				}
@@ -716,16 +708,50 @@ func maskedHostPath(clean string) bool {
 	return false
 }
 
-// resolveIfExists returns the path with every symlink resolved, or "" when it
-// cannot be resolved. A path that does not exist keeps its literal form: the
-// caller decides what "unknown" means, and here the literal root already
-// covers it.
-func resolveIfExists(path string) string {
-	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil {
+// resolveDeep returns path with every symlink resolved, following the deepest
+// existing ancestor and keeping the remainder. A cache root that does not exist
+// yet is still judged against the tree it would land in.
+func resolveDeep(path string) string {
+	clean := filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
+		return resolved
+	}
+	parent := filepath.Dir(clean)
+	if parent == clean {
 		return ""
 	}
-	return filepath.Clean(resolved)
+	resolvedParent := resolveDeep(parent)
+	if resolvedParent == "" {
+		return ""
+	}
+	return filepath.Join(resolvedParent, filepath.Base(clean))
+}
+
+// pathForms returns the literal and the resolved form of a path, so a check can
+// compare either side in whichever form it arrives.
+func pathForms(path string) []string {
+	clean := filepath.Clean(path)
+	forms := []string{clean}
+	if resolved := resolveDeep(clean); resolved != "" && resolved != clean {
+		forms = append(forms, resolved)
+	}
+	return forms
+}
+
+// maskedContains reports whether a masked host root sits strictly below clean.
+// Both sides are judged in both forms: on macOS the mask names /var while the
+// paths reaching this check are already resolved to /private/var.
+func maskedContains(clean string) (string, bool) {
+	for _, root := range maskedHostDirs {
+		for _, rf := range pathForms(root) {
+			for _, cf := range pathForms(clean) {
+				if strings.HasPrefix(rf, cf+string(os.PathSeparator)) {
+					return root, true
+				}
+			}
+		}
+	}
+	return "", false
 }
 
 // sensitiveHomeDirs are the directories under a home that hold credentials
@@ -799,12 +825,10 @@ func refuseUnsafeMount(path, runDir, repo string, toolchainNamed bool) *Verdict 
 		}
 		return &problem
 	}
-	for _, masked := range maskedHostDirs {
-		if strings.HasPrefix(masked, clean+string(os.PathSeparator)) {
-			return reject(fmt.Sprintf(
-				"the language profile mounts %q, which contains the masked tree %q; "+
-					"a read-only bind above it would put that tree back", path, masked))
-		}
+	if root, ok := maskedContains(clean); ok {
+		return reject(fmt.Sprintf(
+			"the language profile mounts %q, which contains the masked tree %q; "+
+				"a read-only bind above it would put that tree back", path, root))
 	}
 	if insideDir(clean, repo) {
 		return reject(fmt.Sprintf(
@@ -924,12 +948,10 @@ func refuseUnsafeCache(path, runDir, repo string, owned bool) *Verdict {
 			"the language profile's cache root %q lies in a tree the sandbox masks; "+
 				"binding it writable would hand the run the host's temp files", path))
 	}
-	for _, masked := range maskedHostDirs {
-		if strings.HasPrefix(masked, clean+string(os.PathSeparator)) {
-			return reject(fmt.Sprintf(
-				"the language profile's cache root %q contains the masked tree %q; "+
-					"a writable bind above it would open that tree", path, masked))
-		}
+	if root, ok := maskedContains(clean); ok {
+		return reject(fmt.Sprintf(
+			"the language profile's cache root %q contains the masked tree %q; "+
+				"a writable bind above it would open that tree", path, root))
 	}
 	if !owned && insideDir(clean, repo) {
 		return reject(fmt.Sprintf(
