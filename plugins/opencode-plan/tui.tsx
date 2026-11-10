@@ -10,7 +10,7 @@
 import { Plugin } from "@opencode/plugin/tui"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { type Plan, planOverflow, planRows, planSummary } from "./plan_block"
+import { type Plan, planRows, planSummary } from "./plan_block"
 import { readStatusFile } from "./status_file"
 
 type StatusFile = {
@@ -83,13 +83,12 @@ export default Plugin.define({
                         : theme.text.base
                   }
                 >
-                  {row.depth > 0 ? "  " : ""}
+                  {row.depth > 0 ? "  ".repeat(row.depth) : ""}
                   {row.marker} {row.text}
                   {row.reason ? ` (${row.reason})` : ""}
                 </text>
               ))}
             </box>
-            {planOverflow(plan) > 0 ? <text fg={theme.text.faint}>+{planOverflow(plan)} more</text> : null}
           </box>
         )
       },

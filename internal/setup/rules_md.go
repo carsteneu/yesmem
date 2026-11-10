@@ -1,12 +1,18 @@
 package setup
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/carsteneu/yesmem/internal/buildinfo"
 	yesmemSkills "github.com/carsteneu/yesmem/skills"
 	"gopkg.in/yaml.v3"
 )
@@ -64,11 +70,18 @@ var rulesmdBestPractices = []string{
 	"Bash commands: always single-line, chain with && or ;. No heredoc, no multiline.",
 	"API calls & Bash: always set timeouts, never longer than 20 seconds.",
 	"Never manually copy binaries (e.g., `cp yesmem ~/.local/bin/`). Always use `make deploy` instead.",
-	"Block destructive Bash: no `rm -rf` outside scratch/temp dirs, no `git push --force` to protected branches, no `DROP TABLE` or schema migration without backup check.",
+	"Block destructive Bash: no `rm -rf` at all, no exception (the guard refuses it in code before any model is asked); a plain delete inside the project needs one refusal plus a repeated attempt whose comment carries an approval word (`# Freigabe: <who>`); no `git push --force` to protected branches, no `DROP TABLE` or schema migration without backup check.",
 	"",
 	"## Memory & Search",
 	"Memory queries (search, hybrid_search, deep_search) must use German language — the knowledge base is primarily German text.",
 	"",
+	"## Approval & Destructive Actions",
+	"Never deploy without explicit approval: make the change ready and tested, then ask.",
+	"Never post comments on issues, pull requests or public platforms without asking first.",
+	"Read a file before editing it; never propose changes to code you have not read.",
+	"Never add, remove or downgrade a dependency without explicit approval.",
+	"Never disable a check to make a command pass: no --no-verify, no skipped tests, no loosened gate.",
+	"Never merge a pull request via CLI or API; the user merges.",
 }
 
 // skillCatalogEntry represents one skill in the RULES.md YAML catalog.
@@ -98,12 +111,20 @@ func loadSkillCatalog() ([]skillCatalogEntry, error) {
 	entries, err := yesmemSkills.BundledSkills.ReadDir("bundled-skills")
 	if err == nil {
 		for _, e := range entries {
-			if !e.IsDir() { continue }
+			if !e.IsDir() {
+				continue
+			}
 			data, err := yesmemSkills.BundledSkills.ReadFile("bundled-skills/" + e.Name() + "/SKILL.md")
-			if err != nil { continue }
+			if err != nil {
+				continue
+			}
 			fm, err := parseSkillFrontmatter(string(data))
-			if err != nil || fm.Name == "" { continue }
-			if seen[fm.Name] { continue }
+			if err != nil || fm.Name == "" {
+				continue
+			}
+			if seen[fm.Name] {
+				continue
+			}
 			seen[fm.Name] = true
 			catalog = append(catalog, skillCatalogEntry{
 				ID: baseID, Skill: fm.Name, Priority: "MUST",
@@ -119,12 +140,20 @@ func loadSkillCatalog() ([]skillCatalogEntry, error) {
 		extDir := filepath.Join(superpowersRoot, "skills")
 		if dirs, err := os.ReadDir(extDir); err == nil {
 			for _, d := range dirs {
-				if !d.IsDir() { continue }
+				if !d.IsDir() {
+					continue
+				}
 				data, err := os.ReadFile(filepath.Join(extDir, d.Name(), "SKILL.md"))
-				if err != nil { continue }
+				if err != nil {
+					continue
+				}
 				fm, err := parseSkillFrontmatter(string(data))
-				if err != nil || fm.Name == "" { continue }
-				if seen[fm.Name] { continue }
+				if err != nil || fm.Name == "" {
+					continue
+				}
+				if seen[fm.Name] {
+					continue
+				}
 				seen[fm.Name] = true
 				catalog = append(catalog, skillCatalogEntry{
 					ID: baseID, Skill: fm.Name, Priority: "MUST",
@@ -140,12 +169,20 @@ func loadSkillCatalog() ([]skillCatalogEntry, error) {
 		userSkillsDir := filepath.Join(home, ".claude", "skills")
 		if dirs, err := os.ReadDir(userSkillsDir); err == nil {
 			for _, d := range dirs {
-				if !d.IsDir() { continue }
+				if !d.IsDir() {
+					continue
+				}
 				data, err := os.ReadFile(filepath.Join(userSkillsDir, d.Name(), "SKILL.md"))
-				if err != nil { continue }
+				if err != nil {
+					continue
+				}
 				fm, err := parseSkillFrontmatter(string(data))
-				if err != nil || fm.Name == "" { continue }
-				if seen[fm.Name] { continue }
+				if err != nil || fm.Name == "" {
+					continue
+				}
+				if seen[fm.Name] {
+					continue
+				}
 				seen[fm.Name] = true
 				catalog = append(catalog, skillCatalogEntry{
 					ID: baseID, Skill: fm.Name, Priority: "MUST",
@@ -266,34 +303,34 @@ func extractTriggers(desc string) []string {
 	// Extract action-related words from description
 	descLower := strings.ToLower(desc)
 	keywordPairs := map[string][]string{
-		"brainstorming":              {"neue Funktion", "neues Feature", "neue Komponente", "Funktionalität hinzufügen", "Verhalten ändern", "kreative Arbeit", "Design", "Architektur-Änderung", "new feature", "new component", "adding functionality", "modifying behavior", "creative work", "design decision", "before implementing"},
-		"test-driven-development":    {"Feature implementieren", "Bugfix", "Bug", "neues Feature", "Implementierung", "Code-Änderung", "fix", "beheben", "implementing", "write code", "TDD"},
-		"systematic-debugging":       {"Bug", "Fehler", "Test schlägt fehl", "test failure", "unerwartet", "crash", "broken", "funktioniert nicht", "Fehlermeldung", "debug", "debugging"},
+		"brainstorming":                  {"neue Funktion", "neues Feature", "neue Komponente", "Funktionalität hinzufügen", "Verhalten ändern", "kreative Arbeit", "Design", "Architektur-Änderung", "new feature", "new component", "adding functionality", "modifying behavior", "creative work", "design decision", "before implementing"},
+		"test-driven-development":        {"Feature implementieren", "Bugfix", "Bug", "neues Feature", "Implementierung", "Code-Änderung", "fix", "beheben", "implementing", "write code", "TDD"},
+		"systematic-debugging":           {"Bug", "Fehler", "Test schlägt fehl", "test failure", "unerwartet", "crash", "broken", "funktioniert nicht", "Fehlermeldung", "debug", "debugging"},
 		"verification-before-completion": {"fertig", "done", "complete", "commit", "PR", "Pull Request", "merge", "deploy", "passing", "fixed", "verified"},
-		"writing-plans":             {"Plan", "mehrschrittig", "Architektur", "Spezifikation", "mehrere Schritte", "Multi-Step", "Implementierungsplan", "spec"},
-		"yesmem-orientation":        {"where were we?", "what's open?", "wo waren wir?", "neue Session", "Projektwechsel", "zurück nach Pause", "Session-Start", "project state"},
-		"yesmem-search":             {"past work", "architecture question", "prior decision", "how does X work", "remember this approach", "earlier discussion", "previous session", "search memory"},
-		"yesmem-remember":           {"remember this", "merk dir", "gotcha", "decision made", "correction", "discovery", "learned something"},
-		"yesmem-config":             {"pin this", "merk dir als Regel", "persistent instructions", "persona", "config change", "token_threshold"},
-		"yesmem-cap-builder":        {"save_cap", "cap_store", "make this reusable", "build-tool", "CAP.md", "reusable tool"},
-		"yesmem-docs":               {"API behavior", "function signature", "idiomatic pattern", "docs_search", "check documentation", "indexed docs"},
-		"yesmem-agents":             {"/schwarm", "parallel work", "agent coordination", "multi-agent", "swarm", "spawn agent"},
-		"yesmem-sessions":           {"last week", "yesterday session", "past conversation", "letzte Session", "last time we", "session history"},
-		"subagent-driven-development": {"implementation plan", "independent tasks", "dispatch agent", "parallel agents"},
-		"dispatching-parallel-agents": {"parallel tasks", "independent work", "no shared state", "no dependencies", "run concurrently"},
-		"executing-plans":            {"execution plan", "review checkpoints", "written plan", "implement plan"},
+		"writing-plans":                  {"Plan", "mehrschrittig", "Architektur", "Spezifikation", "mehrere Schritte", "Multi-Step", "Implementierungsplan", "spec"},
+		"yesmem-orientation":             {"where were we?", "what's open?", "wo waren wir?", "neue Session", "Projektwechsel", "zurück nach Pause", "Session-Start", "project state"},
+		"yesmem-search":                  {"past work", "architecture question", "prior decision", "how does X work", "remember this approach", "earlier discussion", "previous session", "search memory"},
+		"yesmem-remember":                {"remember this", "merk dir", "gotcha", "decision made", "correction", "discovery", "learned something"},
+		"yesmem-config":                  {"pin this", "merk dir als Regel", "persistent instructions", "persona", "config change", "token_threshold"},
+		"yesmem-cap-builder":             {"save_cap", "cap_store", "make this reusable", "build-tool", "CAP.md", "reusable tool"},
+		"yesmem-docs":                    {"API behavior", "function signature", "idiomatic pattern", "docs_search", "check documentation", "indexed docs"},
+		"yesmem-agents":                  {"/schwarm", "parallel work", "agent coordination", "multi-agent", "swarm", "spawn agent"},
+		"yesmem-sessions":                {"last week", "yesterday session", "past conversation", "letzte Session", "last time we", "session history"},
+		"subagent-driven-development":    {"implementation plan", "independent tasks", "dispatch agent", "parallel agents"},
+		"dispatching-parallel-agents":    {"parallel tasks", "independent work", "no shared state", "no dependencies", "run concurrently"},
+		"executing-plans":                {"execution plan", "review checkpoints", "written plan", "implement plan"},
 		"finishing-a-development-branch": {"branch is ready to merge", "merge into main", "create a pull request", "finish the branch", "prepare merge", "branch is done and staged", "ready for merge or pr"},
-		"receiving-code-review":      {"code review feedback", "review comments", "PR feedback", "review suggestion", "unclear feedback"},
-		"requesting-code-review":     {"review my code", "check my work", "before merging", "verify requirements", "code review please"},
-		"using-git-worktrees":        {"feature isolation", "isolated workspace", "git worktree", "new branch work", "parallel branch"},
-		"using-superpowers":          {"starting conversation", "new session", "first message", "begin work", "fresh start"},
-		"writing-skills":             {"create skill", "write skill", "edit skill", "new skill", "update skill", "verify skill"},
-		"reddit_fetch":               {"reddit post", "reddit URL", "reddit thread", "fetch reddit", "r/"},
-		"sync-to-public":             {"sync public", "push to github", "public repo", "create PR", "pr erstellen", "pull request"},
+		"receiving-code-review":          {"code review feedback", "review comments", "PR feedback", "review suggestion", "unclear feedback"},
+		"requesting-code-review":         {"review my code", "check my work", "before merging", "verify requirements", "code review please"},
+		"using-git-worktrees":            {"feature isolation", "isolated workspace", "git worktree", "new branch work", "parallel branch"},
+		"using-superpowers":              {"starting conversation", "new session", "first message", "begin work", "fresh start"},
+		"writing-skills":                 {"create skill", "write skill", "edit skill", "new skill", "update skill", "verify skill"},
+		"reddit_fetch":                   {"reddit post", "reddit URL", "reddit thread", "fetch reddit", "r/"},
+		"sync-to-public":                 {"sync public", "push to github", "public repo", "create PR", "pr erstellen", "pull request"},
 	}
 
-	for _, keywords := range keywordPairs {
-		for _, kw := range keywords {
+	for _, key := range sortedKeys(keywordPairs) {
+		for _, kw := range keywordPairs[key] {
 			if strings.Contains(descLower, kw) {
 				triggers = append(triggers, kw)
 			}
@@ -311,6 +348,18 @@ func extractTriggers(desc string) []string {
 	}
 
 	return unique
+}
+
+// sortedKeys gives the keyword table a fixed iteration order. Map iteration is randomised, and the rendered
+// catalogue is what the provenance digest hashes: an unordered walk writes a different file on every run, so a
+// refresh could never recognise its own output as current.
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // projectTypeRules maps dependency files to language-specific rules.
@@ -342,10 +391,11 @@ var projectTypeRules = map[string][]string{
 	},
 }
 
-// detectProjectType scans projectDir for known dependency files.
+// detectProjectType scans projectDir for known dependency files, in a fixed order so the seeded deviation
+// file reads the same on every run.
 func detectProjectType(projectDir string) []string {
 	var types []string
-	for file := range projectTypeRules {
+	for _, file := range sortedKeys(projectTypeRules) {
 		if _, err := os.Stat(filepath.Join(projectDir, file)); err == nil {
 			types = append(types, file)
 		}
@@ -353,17 +403,162 @@ func detectProjectType(projectDir string) []string {
 	return types
 }
 
-// GenerateRULESmd creates or updates RULES.md in projectDir.
-// If the file already exists, it is not overwritten (user may have customized it).
-// Returns the path of the written file, or "" if skipped.
-func GenerateRULESmd(home, projectDir string) (string, error) {
-	rulesPath := filepath.Join(projectDir, "RULES.md")
+// rulesmdDecisionPolicy is the master's Decision Policy: what the model reads to know which rules may block,
+// and what the guard parses to narrow the enforceable set. Its citations have to stay on the generated
+// numbering — 1 commits, 2 secrets, 25 destructive commands, 32 PR merge — because a citation outside the
+// catalogue is discarded as an invention (internal/guard/policy.go, downgradeUnknownCitation).
+const rulesmdDecisionPolicy = `## Decision Policy
 
-	// Don't overwrite existing RULES.md — it's project-specific and user-owned.
-	if _, err := os.Stat(rulesPath); err == nil {
+The guard sees one tool call and no conversation context, so it cannot tell whether the user authorised the
+action this turn. Only a rule that is decidable from the call's own arguments may therefore block:
+
+- **BLOCK** on rule 1 (an LLM signature in a commit message), rule 2 (a secret in the call), rule 25 (a
+  destructive command), rule 32 (a pull request merged through a CLI or an API).
+- **SUGGEST** where authorisation or external state decides: auto-commit under rule 1, the test suite before a
+  push under rule 3, branch protection under rule 4, the commit message format under rule 5.
+- **PASS** when no rule applies.
+
+`
+
+// rulesmdProvenanceRecord matches the marker line: the version that wrote the file and what its body hashed to.
+// The version is not read by this package — it names the renderer for an operator looking at the file, and the
+// digest alone decides whether the file may be replaced. Without the marker "unchanged generated" and "edited by
+// the operator" are indistinguishable, so the master could only ever be written once and never receive a new
+// standard rule (#121017, #121015).
+var rulesmdProvenanceRecord = regexp.MustCompile(`^<!-- yesmem-rules version=\S* body=sha256:([0-9a-f]{64}) -->$`)
+
+// rulesmdProvenance is the marker's content.
+type rulesmdProvenance struct {
+	Body string
+}
+
+// rulesmdBodyDigest hashes the rendered body, everything the marker does not itself contain.
+func rulesmdBodyDigest(body string) string {
+	sum := sha256.Sum256([]byte(body))
+	return hex.EncodeToString(sum[:])
+}
+
+// rulesmdMarker renders the provenance line. A version carrying whitespace would break the marker's grammar and
+// silently turn the master into a file nobody may refresh, so the value is folded first.
+func rulesmdMarker(body string) string {
+	version := strings.Join(strings.Fields(buildinfo.Version), "-")
+	return "<!-- yesmem-rules version=" + version + " body=sha256:" + rulesmdBodyDigest(body) + " -->\n"
+}
+
+// splitRulesmdProvenance separates the marker from the body.
+func splitRulesmdProvenance(content string) (rulesmdProvenance, string, bool) {
+	marker, body, found := strings.Cut(content, "\n")
+	if !found {
+		return rulesmdProvenance{}, "", false
+	}
+	match := rulesmdProvenanceRecord.FindStringSubmatch(marker)
+	if match == nil {
+		return rulesmdProvenance{}, "", false
+	}
+	return rulesmdProvenance{Body: match[1]}, body, true
+}
+
+// provablyUnchangedGenerated reports whether the file still holds exactly the body the generator wrote.
+func provablyUnchangedGenerated(content string) bool {
+	provenance, body, found := splitRulesmdProvenance(content)
+	if !found {
+		return false
+	}
+	return rulesmdBodyDigest(body) == provenance.Body
+}
+
+// installRULESmd writes the installation's own copy into dataDir, the file the guard enforces from
+// (guard.LoadInstalledRules) and the one place the standard rules are maintained.
+//
+// An existing copy is replaced only when its provenance proves that nobody edited it since it was generated.
+// Everything else is the operator's — a narrowed Decision Policy, an added rule, a file from before the marker
+// existed — and a narrowing in particular must survive every re-run (#121015).
+func installRULESmd(dataDir string) (string, error) {
+	rulesPath := filepath.Join(dataDir, "RULES.md")
+	body := renderRulesmdBody()
+	fresh := rulesmdMarker(body) + body
+
+	existing, err := os.ReadFile(rulesPath)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return rulesPath, writeRulesmdFile(rulesPath, fresh)
+	case err != nil:
+		// Unreadable is not absent. The file is the operator's until its provenance says otherwise, and a read
+		// error must not turn into a write.
 		return "", nil
 	}
+	if string(existing) == fresh {
+		return "", nil
+	}
+	if !provablyUnchangedGenerated(string(existing)) {
+		return "", nil
+	}
+	return rulesPath, writeRulesmdFile(rulesPath, fresh)
+}
 
+// seedProjectRules writes the project's deviation file when the checkout has a language to declare. It is
+// deliberately narrow: a project with a complete RULES.md of its own already carries the catalogue the model
+// is judged against, and a deviation file the project maintains itself is never a wizard artifact.
+func seedProjectRules(projectDir string) (string, error) {
+	if projectDir == "" {
+		return "", nil
+	}
+	for _, owned := range []string{"RULES.md", "PROJECT_RULES.md"} {
+		// Lstat, not Stat: a symlink is present, and writing through it is not this function's business.
+		if _, err := os.Lstat(filepath.Join(projectDir, owned)); err == nil {
+			return "", nil
+		}
+	}
+	types := detectProjectType(projectDir)
+	if len(types) == 0 {
+		return "", nil
+	}
+	path := filepath.Join(projectDir, "PROJECT_RULES.md")
+	return path, writeRulesmdFile(path, renderProjectRulesmd(types))
+}
+
+// renderProjectRulesmd states the detected language rules the way a deviation file has to read: no numbers
+// anywhere, so a citation of a numbered rule keeps naming the standard set.
+func renderProjectRulesmd(types []string) string {
+	var sb strings.Builder
+	sb.WriteString(`# Project rules for this checkout
+
+The standard rules live in the installation's RULES.md. This file states only where this project differs from
+them. Nothing here is numbered on purpose: a numbered rule in this file would be a rule the standard set does
+not carry, and the guard's catalogue would start citing it.
+
+## Language rules detected from this checkout
+
+`)
+	for _, t := range types {
+		for _, rule := range projectTypeRules[t] {
+			sb.WriteString("- " + rule + "\n")
+		}
+	}
+	sb.WriteString(`
+Add this project's own deviations below. State the reason next to each one, in one line.
+`)
+	return sb.String()
+}
+
+// writeRulesmdFile writes a rendered document, creating its directory first. A destination that is a symlink is
+// refused: os.Stat follows the link, so a checkout could ship PROJECT_RULES.md as a dangling symlink to a file the
+// operator has not created yet, and the write would land there instead.
+func writeRulesmdFile(rulesPath, content string) error {
+	if info, err := os.Lstat(rulesPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a symlink, refusing to write through it", rulesPath)
+	}
+	if err := os.MkdirAll(filepath.Dir(rulesPath), 0755); err != nil {
+		return fmt.Errorf("create dir for RULES.md: %w", err)
+	}
+	if err := os.WriteFile(rulesPath, []byte(content), 0644); err != nil {
+		return fmt.Errorf("write RULES.md: %w", err)
+	}
+	return nil
+}
+
+// renderRulesmdBody renders the standard set: header, numbered rules, Decision Policy, skill catalogue.
+func renderRulesmdBody() string {
 	var sb strings.Builder
 
 	// Header
@@ -384,26 +579,15 @@ func GenerateRULESmd(home, projectDir string) (string, error) {
 		ruleNum++
 	}
 
-	// Project-type specific rules
-	types := detectProjectType(projectDir)
-	if len(types) > 0 {
-		sb.WriteString("\n## Project-Specific\n")
-		for _, t := range types {
-			rules, ok := projectTypeRules[t]
-			if !ok {
-				continue
-			}
-			for _, rule := range rules {
-				fmt.Fprintf(&sb, "%d. %s\n", ruleNum, rule)
-				ruleNum++
-			}
-		}
-	}
+	// The policy sits after the numbered set so the catalogue stays contiguous, and PromptRules lifts it into
+	// its own block either way (#107412).
+	sb.WriteString("\n")
+	sb.WriteString(rulesmdDecisionPolicy)
 
 	// Skill Catalog
 	catalog, err := loadSkillCatalog()
 	if err == nil && len(catalog) > 0 {
-		sb.WriteString("\n## Skill Catalog\n")
+		sb.WriteString("## Skill Catalog\n")
 		sb.WriteString("# Generated from bundled skills. Triggers match user intent.\n")
 		sb.WriteString("rules:\n")
 
@@ -417,15 +601,7 @@ func GenerateRULESmd(home, projectDir string) (string, error) {
 		}
 	}
 
-	// Write file
-	if err := os.MkdirAll(filepath.Dir(rulesPath), 0755); err != nil {
-		return "", fmt.Errorf("create dir for RULES.md: %w", err)
-	}
-	if err := os.WriteFile(rulesPath, []byte(sb.String()), 0644); err != nil {
-		return "", fmt.Errorf("write RULES.md: %w", err)
-	}
-
-	return rulesPath, nil
+	return sb.String()
 }
 
 // marshalTriggersYAML returns a YAML-safe string representation of a trigger list.

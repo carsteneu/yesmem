@@ -53,6 +53,7 @@ func (s *Store) createSchema() error {
 		tableCompactedBlocks,
 		tableProxyState,
 		tableConsolidationState,
+		tableDONEHolds,
 		tableLearningClusters,
 		tableKnowledgeGaps,
 		tableContradictions,

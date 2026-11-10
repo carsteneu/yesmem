@@ -386,7 +386,7 @@ func TestLos38k_IdleGuardMidPipelineRelayIsNotTheSixPhaseQuestion(t *testing.T) 
 	if body == "" {
 		t.Fatal("no relay reached the agent socket")
 	}
-	if strings.Contains(strings.ToLower(body), "completed all 6 phases") {
+	if strings.Contains(strings.ToLower(body), "completed all 7 phases") {
 		t.Errorf("a Phase 3 agent must not get the six-phase question, got: %s", body)
 	}
 	if !strings.Contains(body, "Continue the phase you are working on") {
@@ -406,7 +406,7 @@ func TestLos38k_IdleGuardRefireKeepsThePhaseCorrectText(t *testing.T) {
 
 	first, relays := driveLos38kIntoProgression(t, h, s, id,
 		"### Phase 3: EXECUTE\n**Status:** IN PROGRESS\nMilestone 1 laeuft")
-	if strings.Contains(strings.ToLower(first), "completed all 6 phases") {
+	if strings.Contains(strings.ToLower(first), "completed all 7 phases") {
 		t.Fatalf("precondition: the first delivery was already the six-phase question: %s", first)
 	}
 
@@ -416,7 +416,7 @@ func TestLos38k_IdleGuardRefireKeepsThePhaseCorrectText(t *testing.T) {
 	if refire == "" {
 		t.Fatal("the refire never reached the agent socket")
 	}
-	if strings.Contains(strings.ToLower(refire), "completed all 6 phases") {
+	if strings.Contains(strings.ToLower(refire), "completed all 7 phases") {
 		t.Errorf("the refire of a mid-pipeline agent must keep the mid-pipeline text, got: %s", refire)
 	}
 
@@ -467,7 +467,7 @@ func TestLos38k_IdleGuardReportedPhaseSixGetsTheSixPhaseQuestion(t *testing.T) {
 
 	first, relays := driveLos38kIntoProgression(t, h, s, id,
 		"### Phase 3: EXECUTE\n**Status:** IN PROGRESS\nMilestone 1 laeuft")
-	if strings.Contains(strings.ToLower(first), "completed all 6 phases") {
+	if strings.Contains(strings.ToLower(first), "completed all 7 phases") {
 		t.Fatalf("precondition: the first delivery was already the six-phase question: %s", first)
 	}
 

@@ -5,19 +5,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carsteneu/yesmem/internal/config"
 	"github.com/carsteneu/yesmem/internal/storage"
 )
 
 // los38dDoneClaim is a scratchpad that carries a DONE-claim: the structural
-// Phase 6 indicator is what puts an agent into the done-verify protocol.
+// Phase 7 indicator is what puts an agent into the done-verify protocol.
 const los38dDoneClaim = "### Phase 1: ANALYZE\n**Status:** IN PROGRESS\n\n" +
-	"### Phase 6: FINISH\n**send_to orchestrator:** yes\n"
+	"### Phase 7: FINISH\n**send_to orchestrator:** yes\n"
 
-// los38dProvenDone is a scratchpad that satisfies isVerified: six completed
+// los38dProvenDone is a scratchpad that satisfies isVerified: seven completed
 // phases, the BEWEISEN marker and the send_to evidence line.
 func los38dProvenDone() string {
 	s := ""
-	for i := 1; i <= 6; i++ {
+	for i := 1; i <= donePhaseCount; i++ {
 		s += fmt.Sprintf("### Phase %d: X\n**Status:** COMPLETE\n\n", i)
 	}
 	return s + "BEWEISEN\nsend_to orchestrator: yes\n"
@@ -414,6 +415,10 @@ func TestLos38D_DoneGuardKeepsRelayHistoryAcrossFreeze(t *testing.T) {
 func TestLos38D_DoneGuardRecoverySurvivesChild(t *testing.T) {
 	resetDoneGuardState()
 	h, s := mustHandler(t)
+	// Covers the format guard's recovery against a running child. The
+	// verification stage that a compliant DONE claim enters is
+	// done_gate_verify_test.go's subject.
+	h.SetDoneVerifyConfig(&config.DoneVerifyConfig{Enabled: false})
 	stubOpencodeChildActive(t, true)
 
 	makeDoneGuardAgent(t, h, s, "dg-recv38d", "sess-dg-recv38d", validV3Content)

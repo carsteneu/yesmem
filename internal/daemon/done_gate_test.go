@@ -92,7 +92,11 @@ security: ses_secfix
 
 **REVIEW→VERIFY cycles used:** 1/3
 
-### Phase 6: FINISH
+### Phase 6: DAEMON-VERIFY
+**Status:** COMPLETE
+**Vorab-Prüfung:** yesmem verify-claims → exit 0 (accepted), Urteil liegt für diesen Bericht
+
+### Phase 7: FINISH
 **Status:** COMPLETE
 **Deploy required:** yes (Go code change)
 **Deploy executed:** yes — make build → binary updated
@@ -193,8 +197,8 @@ func TestValidatePhaseBlocks_ValidV3_Passes(t *testing.T) {
 	if !result.Compliant {
 		t.Errorf("valid v3 content should be compliant, got:\n%s", result.String())
 	}
-	if result.PhaseCount != 6 {
-		t.Errorf("expected 6 phases, got %d", result.PhaseCount)
+	if result.PhaseCount != 7 {
+		t.Errorf("expected 7 phases, got %d", result.PhaseCount)
 	}
 }
 
@@ -203,21 +207,21 @@ func TestValidatePhaseBlocks_Empty(t *testing.T) {
 	if result.Compliant {
 		t.Error("empty content should not be compliant")
 	}
-	if len(result.MissingPhases) != 6 {
-		t.Errorf("expected 6 missing phases for empty content, got %v", result.MissingPhases)
+	if len(result.MissingPhases) != 7 {
+		t.Errorf("expected 7 missing phases for empty content, got %v", result.MissingPhases)
 	}
 }
 
 func TestValidatePhaseBlocks_PartialProgress(t *testing.T) {
-	// Agent still working (Phase 3 IN PROGRESS) — missing phases 4-6 is
-	// a validation failure, but the heartbeat integration will only escalate
-	// when ALL 6 phases are present (agent claimed DONE).
+	// Agent still working (Phase 3 IN PROGRESS): missing phases 4-7 is a
+	// validation failure, but the heartbeat only escalates once the agent has
+	// claimed the end of the pipeline.
 	result := ValidatePhaseBlocks(partialContent)
 	if result.Compliant {
-		t.Error("partial content should NOT be compliant (missing phases 4-6)")
+		t.Error("partial content should NOT be compliant (missing phases 4-7)")
 	}
-	if len(result.MissingPhases) != 3 {
-		t.Errorf("expected 3 missing phases (4,5,6), got %v", result.MissingPhases)
+	if len(result.MissingPhases) != 4 {
+		t.Errorf("expected 4 missing phases (4,5,6,7), got %v", result.MissingPhases)
 	}
 	// The IN PROGRESS phase should validate with just **Status:**
 	// (no field errors for Phase 3 since it only requires **Status:**)
@@ -406,8 +410,8 @@ consequence: ses_consfix
 
 func TestCountCompletedPhases_AllComplete(t *testing.T) {
 	count := CountCompletedPhases(validV3Content)
-	if count != 6 {
-		t.Errorf("expected 6 completed phases, got %d", count)
+	if count != 7 {
+		t.Errorf("expected 7 completed phases, got %d", count)
 	}
 }
 
@@ -483,7 +487,11 @@ consequence: ses_consfix
 security: ses_secfix
 **Findings:** none
 
-### Phase 6: FINISH
+### Phase 6: DAEMON-VERIFY
+**Status:** COMPLETE
+**Vorab-Prüfung:** yesmem verify-claims -> exit 0 (accepted)
+
+### Phase 7: FINISH
 **Status:** COMPLETE
 **Deploy required:** no
 **send_to orchestrator:** yes`, phase1, phase2, phase4)

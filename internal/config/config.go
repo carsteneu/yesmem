@@ -40,6 +40,7 @@ type Config struct {
 	CapsDir               string                    `yaml:"caps_dir"`
 	SecretsSanitization   SecretsSanitizationConfig `yaml:"secrets_sanitization"`
 	RuleGuard             RuleGuardConfig           `yaml:"rule_guard"`
+	DoneVerify            DoneVerifyConfig          `yaml:"done_verify"`
 	// ExcludeProjects lists project directories whose sessions are never indexed.
 	// Sessions with Project matching any of these paths are silently skipped.
 	// Example: ["/home", "/tmp"] prevents home-directory and temp-directory sessions.
@@ -87,6 +88,26 @@ type SecretsSanitizationConfig struct {
 // that only the plugin knows about.
 type RuleGuardConfig struct {
 	Model string `yaml:"model"`
+}
+
+// DoneVerifyConfig is the DONE gate's verification of a completion report.
+//
+// Enabled is the global switch and defaults to on: the gate is the layer that
+// stops a report from being believed, so shipping it off would leave every loop
+// as trusting as before. Budget is the default run budget of a direct
+// verify_claims call, which is the only place a verification runs; MaxWait is how
+// long such a call waits for the single verification slot before it reports that
+// another run is still working.
+//
+// Model is part of the schema for symmetry with rule_guard and so
+// `config set done_verify.model` reaches the file instead of creating a key
+// only one reader knows. The verifier itself is deterministic and calls no
+// model; an operator setting the key changes nothing about a run.
+type DoneVerifyConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Model   string `yaml:"model"`
+	Budget  string `yaml:"budget"`
+	MaxWait string `yaml:"max_wait"`
 }
 
 // UnmarshalYAML keeps a hand-edited rule_guard section loadable. Before the key
@@ -922,6 +943,11 @@ func Default() *Config {
 			TokenGrowthTrigger: 20000,
 			MaxForksPerSession: 50,
 			MaxCostPerSession:  5.0,
+		},
+		DoneVerify: DoneVerifyConfig{
+			Enabled: true,
+			Budget:  "5m",
+			MaxWait: "10m",
 		},
 	}
 }

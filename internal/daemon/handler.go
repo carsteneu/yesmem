@@ -13,6 +13,7 @@ import (
 
 	"github.com/carsteneu/yesmem/internal/bloom"
 	"github.com/carsteneu/yesmem/internal/codescan"
+	"github.com/carsteneu/yesmem/internal/config"
 	"github.com/carsteneu/yesmem/internal/embedding"
 	"github.com/carsteneu/yesmem/internal/extraction"
 	"github.com/carsteneu/yesmem/internal/indexer"
@@ -175,6 +176,15 @@ type Handler struct {
 	httpAuthToken               string             // bearer token for HTTP API authentication
 	redactor                    sanitize.Sanitizer // optional; nil = passthrough
 	ocDBPath                    string             // opencode session DB for Phase 5 evidence checks — set by daemon from config
+
+	// doneVerify is the DONE gate's verification configuration. Nil means the
+	// documented default, which is enabled.
+	doneVerify   *config.DoneVerifyConfig
+	doneVerifyMu sync.Mutex
+	// verifySlot admits one verification at a time: the DONE gate no longer runs
+	// one, but two direct verify_claims calls would otherwise run two test suites
+	// side by side.
+	verifySlot chan struct{}
 
 	// Optional: vector search, published at startup through the setters in
 	// handler_hybrid.go (guarded by embedMu, see embedWiring)
@@ -574,7 +584,7 @@ func newProductionHandler(store *storage.Store, bloomMgr *bloom.Manager, claudeP
 
 // NewHandler creates a request handler with access to all daemon resources.
 func NewHandler(store *storage.Store, bloomMgr *bloom.Manager) *Handler {
-	h := &Handler{store: store, bloom: bloomMgr, pidMap: make(map[string]int), windowMap: make(map[string]string), terminalMap: make(map[string]string), headlessSessions: make(map[string]string), activeRuns: make(map[string]int), autoCorrectCooldown: make(map[string]time.Time), startedAt: time.Now()}
+	h := &Handler{store: store, bloom: bloomMgr, pidMap: make(map[string]int), windowMap: make(map[string]string), terminalMap: make(map[string]string), headlessSessions: make(map[string]string), activeRuns: make(map[string]int), autoCorrectCooldown: make(map[string]time.Time), startedAt: time.Now(), verifySlot: make(chan struct{}, 1)}
 	h.initIdleState()
 	return h
 }
@@ -783,6 +793,14 @@ func (h *Handler) Handle(req Request) Response {
 	case "get_repl_pattern_suggestion":
 		// Internal: called by the proxy via RPC, not exposed as an MCP tool.
 		return h.handleGetReplPatternSuggestion(req.Params)
+	case "guard_check":
+		// The opencode plugin's judgement call. Everything about it lives in internal/guard, the same core the
+		// Claude Code hook runs: the plugin only wires the event and renders the answer.
+		return h.handleGuardCheck(req.Params)
+	case "verify_claims":
+		// The verification as an operation: a report in, a judgement out. The
+		// DONE gate is one caller; a harness or a human may be another.
+		return h.handleVerifyClaims(req.Params)
 	case "dismiss_repl_pattern":
 		return h.handleDismissReplPattern(h.resolveProjectParam(req.Params))
 	case "dismiss_code_nav":

@@ -370,6 +370,16 @@ func (h *Handler) handleSendTo(params map[string]any) Response {
 		log.Printf("[send_to] target %q resolved to %q", target, resolved)
 	}
 
+	// The delivery side of the DONE contract runs before anything is stored: a
+	// DONE payload leaves the daemon only when the verdict for exactly this report
+	// is already in the registry. Every other message pays one prefix test here and
+	// continues unchanged, because send_to is infrastructure first.
+	delivery := h.settleDONEDelivery(resolved, caller, content)
+	if delivery.held {
+		return delivery.response
+	}
+	content = delivery.content
+
 	// ACK-on-ACK prevention, and the implicit ack below, run on the identity the
 	// caller can be held to (implicitAckIdentity): both pair an inbox with the
 	// sender, so a guessed sender must not take part in either. With the global
@@ -1045,6 +1055,13 @@ func (h *Handler) handleBroadcast(params map[string]any) Response {
 	// "broadcast_sent" (YM-300).
 	if unresolved, _ := params["_project_unresolved"].(string); unresolved != "" {
 		return unresolvedProjectResponse(unresolved)
+	}
+	// A DONE is a handover to one orchestrator and is held until its report has a
+	// verdict. A broadcast has no single reader to hold and no report to check, so
+	// publishing the same payload would walk around the hold instead of through
+	// it. The channel is refused by name, and the refusal names the one it needs.
+	if isDONEPayload(content) {
+		return errorResponse("broadcast refuses a DONE payload: a DONE is a handover to the orchestrator and stays held until its report has a verdict; use send_to")
 	}
 	msgID, err := h.store.SendBroadcast(sender, project, content)
 	if err != nil {

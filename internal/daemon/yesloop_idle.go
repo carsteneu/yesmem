@@ -73,11 +73,11 @@ const (
 	// yesloopIdleWorkingMax, so a streak of this length produced no completed turn
 	// at all (5.2/5.3 review). A read that reports a settled turn ends the streak.
 	yesloopIdleTurnEpisodeMax = 40 * time.Minute
-	// yesloopIdlePauseMarker starts the progress text of an idle escalation. It
-	// lets the relay path recognise its own pause: relaying to an
-	// idle-guard-paused agent is the orchestrator's answer to that escalation
-	// (#82787's counterpart, YM-225).
-	yesloopIdlePauseMarker = "yesloop-idle escalation:"
+	// yesloopIdleMarker starts the note an idle escalation leaves. It lets the
+	// relay path recognise the pause the old code wrote with the same marker:
+	// relaying to such a row is the orchestrator's answer to that escalation
+	// (#82787's counterpart, YM-225), and those rows have no other release.
+	yesloopIdleMarker = "yesloop-idle escalation:"
 	// yesloopIdleMaxRelays is the ceiling on relays per budget window. Refires are
 	// counted per rung and restarted whenever the agent shows work, so without a
 	// ceiling an agent that keeps producing something is relayed for as long as
@@ -275,9 +275,9 @@ func hasProvenMarker(content string) bool {
 // asks for it, and paused exactly the agents that did what they were told
 // (review round 2).
 var (
-	phaseHeaderMarkRes = func() [7]*regexp.Regexp {
-		var out [7]*regexp.Regexp
-		for n := 1; n <= 6; n++ {
+	phaseHeaderMarkRes = func() [donePhaseCount + 1]*regexp.Regexp {
+		var out [donePhaseCount + 1]*regexp.Regexp
+		for n := 1; n <= donePhaseCount; n++ {
 			out[n] = regexp.MustCompile(fmt.Sprintf(`(?m)^#{1,6}[ \t]*(?i:phase)[ \t]*%d\b[^\n]*\[[xX]\][ \t]*$`, n))
 		}
 		return out
@@ -289,7 +289,7 @@ var (
 	dedicatedMarkRe = regexp.MustCompile(`(?m)^[ \t]*(?:[-*+][ \t]+)?\[[xX]\][ \t]*(?:[-:][ \t]*)?(?:\b(?i:phase)[ \t]*\d+\b|\b(?i:` + phaseNamesAlternation() + `)\b)?[ \t]*$`)
 )
 
-// phaseNamesAlternation lists the six phase names for the marker regex.
+// phaseNamesAlternation lists the phase names of the contract for the marker regex.
 func phaseNamesAlternation() string {
 	names := make([]string, 0, len(phaseValidations))
 	for _, pv := range phaseValidations {
@@ -354,7 +354,9 @@ func (h *Handler) checkOneAgent(agent storage.Agent, client *opencode.Client) {
 	// the agent DONE_VERIFIED (or escalated it) while the row still says running,
 	// and relaying the idle protocol into that agent contradicts the daemon's own
 	// verdict (live 2026-10-15: DONE_VERIFIED at 23:36, idle relays from 23:42).
-	if doneVerifySettled(agent) {
+	// The verification stage's verdict counts the same way: an accepted report
+	// releases the agent, and a blocked one holds it on purpose.
+	if doneVerifySettled(agent) || h.doneGateVerifySettled(agent) {
 		return
 	}
 
@@ -456,10 +458,10 @@ type idleAction struct {
 	// re-validates it under the lock: the decision and the relay are no longer
 	// atomic, and a relay from the orchestrator that landed in between already
 	// answered the agent.
-	relayAfter  time.Time
-	pauseReason string
-	stopNote    string
-	completed   bool
+	relayAfter       time.Time
+	escalationReason string
+	stopNote         string
+	completed        bool
 }
 
 // decideIdleAction drives the state machine. It is pure state work: every input
@@ -582,7 +584,7 @@ func (h *Handler) decideIdleAction(agent storage.Agent, content string, streamAc
 		return a
 
 	case yesloopIdleStateRemarkRequest:
-		if content != "" && countMarkedDonePhases(content) >= 6 && phase5ColdReviewPresent(content) {
+		if content != "" && countMarkedDonePhases(content) >= donePhaseCount && phase5ColdReviewPresent(content) {
 			h.transitionTo(agent, state, yesloopIdleStateCommitRequest, content)
 			return idleAction{relay: 3, relayAfter: state.lastRelayAt}
 		}
@@ -619,18 +621,20 @@ func (h *Handler) decideIdleAction(agent storage.Agent, content string, streamAc
 // — a socket write, a DB write, a status push — and must stay outside the
 // idle-state lock (YM-253).
 func (h *Handler) runIdleAction(agent storage.Agent, a idleAction) {
-	if a.pauseReason != "" {
-		// The pause is the one action that is not re-validated like the relay. An
-		// orchestrator relay that landed between decision and execution already
-		// put the agent back under supervision (resetIdleProtocol deletes the
-		// state), and pausing it now would contradict that answer.
+	if a.escalationReason != "" {
+		// The escalation is a nudge. The protocol check stays: an orchestrator
+		// relay that landed between decision and execution already answered it,
+		// and a second notice for an answered escalation is noise.
 		if !h.idleProtocolPresent(agent.ID) {
 			log.Printf("[yesloop-idle] agent %s (%s) escalation skipped: the protocol moved after the decision", safeAgentText(agent.ID), safeAgentText(agent.Section))
 			return
 		}
-		h.pauseAgent(agent.ID, fmt.Sprintf("%s %s", yesloopIdlePauseMarker, a.pauseReason))
-		h.notifyOrchestrator(agent, fmt.Sprintf("DEAD_AGENT: Agent %s (%s) idle escalation - %s%s",
-			safeAgentText(agent.ID), safeAgentText(agent.Section), a.pauseReason, orchestratorPauseHint))
+		if !h.nudgeAgent(agent.ID, fmt.Sprintf("%s %s", yesloopIdleMarker, a.escalationReason)) {
+			skipNudgeNote("yesloop-idle", agent.ID, agent.Section)
+			return
+		}
+		h.notifyOrchestrator(agent, nudgeNotice(fmt.Sprintf("Agent %s (%s) idle escalation: %s",
+			safeAgentText(agent.ID), safeAgentText(agent.Section), a.escalationReason)))
 		return
 	}
 	if a.completed {
@@ -1021,9 +1025,9 @@ func (h *Handler) sessionActivity(agent storage.Agent, since time.Time, client *
 	return idleSessionReading{activity: activity, known: true}
 }
 
-// maybeRefire checks if a re-fire is needed and escalates to DEAD_AGENT if
-// max re-fires are exceeded. The pause and the DEAD_AGENT notice are returned as
-// an action instead of executed here: this runs under the idle-state lock.
+// maybeRefire checks if a re-fire is needed and escalates when max re-fires are
+// exceeded. The nudge and its notice are returned as an action instead of
+// executed here: this runs under the idle-state lock.
 func (h *Handler) maybeRefireLocked(agent storage.Agent, state *yesloopIdleState, relayNum int, reason string) idleAction {
 	if time.Since(state.lastRelayAt) < yesloopIdleRefireInterval {
 		return idleAction{}
@@ -1034,7 +1038,7 @@ func (h *Handler) maybeRefireLocked(agent storage.Agent, state *yesloopIdleState
 		reason = h.undeliverableReason(agent, state, reason)
 		log.Printf("[yesloop-idle] agent %s (%s) ESCALATION: %s (refireCount=%d, max=%d)",
 			safeAgentText(agent.ID), safeAgentText(agent.Section), reason, state.refireCount, yesloopIdleMaxRefires)
-		return idleAction{pauseReason: reason}
+		return idleAction{escalationReason: reason}
 	}
 	return idleAction{relay: relayNum, relayAfter: state.lastRelayAt}
 }
@@ -1158,11 +1162,11 @@ func phase5ColdReviewPresent(content string) bool {
 func idleRelayMessage(relayNum int) string {
 	switch relayNum {
 	case 1:
-		return "Have you completed all 6 phases? If not do it now. For each phase prove you have done each. IF you have proven, mark each phase as done: put [x] at the end of the phase header line, or on its own line inside the phase block with just the marker and optionally the phase number or phase name, for example [x] Phase 1 or [x] ANALYZE. The Status line from the phase template with the value COMPLETE also counts. MANDATORY: Make sure that you have also done phase 5 with all code reviews including Sub-phase 5.2 cold review, 5.3 consequence check and 5.4 security review via task subagents. REVIEW BLOCKED without subagent trace is not acceptable. Mandatory: only mark as PROVEN if it IS proven."
+		return "Have you completed all 7 phases? If not do it now. For each phase prove you have done each. IF you have proven, mark each phase as done: put [x] at the end of the phase header line, or on its own line inside the phase block with just the marker and optionally the phase number or phase name, for example [x] Phase 1 or [x] ANALYZE. The Status line from the phase template with the value COMPLETE also counts. MANDATORY: Make sure that you have also done phase 5 with all code reviews including Sub-phase 5.2 cold review, 5.3 consequence check and 5.4 security review via task subagents. REVIEW BLOCKED without subagent trace is not acceptable. Mandatory: only mark as PROVEN if it IS proven."
 	case 2:
-		return "Mark all 6 phases as done in scratchpad: put [x] at the end of the phase header line, or on a dedicated marker line inside the phase block. The Status line from the phase template with the value COMPLETE also counts."
+		return "Mark all 7 phases as done in scratchpad: put [x] at the end of the phase header line, or on a dedicated marker line inside the phase block. The Status line from the phase template with the value COMPLETE also counts."
 	case 3:
-		return "If 1 through 6 are ok commit and send_to to caller."
+		return "If 1 through 7 are ok commit and send_to to caller."
 	}
 	return ""
 }
@@ -1185,7 +1189,7 @@ func idleRelayOneText(content, reportedPhase string) string {
 
 // phaseSixReportRe matches the phase an agent reports once it has reached the end
 // of the pipeline ("Phase 6/6 FINISH").
-var phaseSixReportRe = regexp.MustCompile(`(?i)\bphase[ \t]*6\b`)
+var phaseSixReportRe = regexp.MustCompile(`(?i)\bphase[ \t]*(6|7)\b`)
 
 // idleMidPipelineRelayMessage is the first rung's wording for an agent that is
 // still inside the pipeline. It asks for the work in the phase the agent is in
@@ -1286,12 +1290,8 @@ func (h *Handler) sendIdleRelay(agent storage.Agent, relayNum int, text string, 
 	yesloopIdleAgentsMu.Unlock()
 }
 
-// idlePausePrefix is the progress text an idle escalation leaves on the row:
-// pauseAgent writes "paused: " in front of the reason.
-func idlePausePrefix() string { return "paused: " + yesloopIdlePauseMarker }
-
-// resetIdleProtocol forgets an agent's idle bookkeeping. A relay that lifts an
-// idle-guard pause answers the escalation, and the state machine must not stay
+// resetIdleProtocol forgets an agent's idle bookkeeping. A relay that lifts a
+// retired guard pause answers the escalation, and the state machine must not stay
 // at DONE — there the guard ignores the agent until its stream becomes active
 // again, which is exactly the supervision the agent was just returned to
 // (YM-225). The next tick starts a fresh idle window.
@@ -1302,11 +1302,15 @@ func resetIdleProtocol(agentID string) {
 }
 
 // notifyOrchestrator sends a status message to the agent's caller_session.
-func (h *Handler) notifyOrchestrator(agent storage.Agent, content string) {
+// notifyOrchestrator sends one notice to the agent's caller and reports whether
+// the call itself was accepted. A caller without an address cannot be told
+// anything, and a store that refuses the message has told nobody: the caller of
+// this function decides whether that is a retry (the hold watchdog) or a log.
+func (h *Handler) notifyOrchestrator(agent storage.Agent, content string) bool {
 	if agent.CallerSession == "" {
-		return
+		return false
 	}
-	h.Handle(Request{
+	resp := h.Handle(Request{
 		Method: "send_to",
 		Params: map[string]any{
 			"target":   agent.CallerSession,
@@ -1315,4 +1319,5 @@ func (h *Handler) notifyOrchestrator(agent storage.Agent, content string) {
 			"sender":   daemonSender("yesloop"),
 		},
 	})
+	return resp.Error == ""
 }

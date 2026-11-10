@@ -119,9 +119,10 @@ func TestDoneVerify_BewiesenMarker_PlusDoneSendTo_TransitionsToVerified(t *testi
 	}
 }
 
-// TestDoneVerify_3Refires_EscalatesToOrchestrator: after 3 refires without progress,
-// agent is paused + orchestrator notified.
-func TestDoneVerify_3Refires_EscalatesToOrchestrator(t *testing.T) {
+// TestDoneVerify_3Refires_NudgesTheOrchestrator: after 3 refires without progress
+// the layer reports once and lets the agent run. The seven-phase DONE gate is
+// what actually decides a DONE, so this layer must not hold the row.
+func TestDoneVerify_3Refires_NudgesTheOrchestrator(t *testing.T) {
 	resetDoneVerifyState()
 	h, s := mustHandler(t)
 
@@ -151,23 +152,16 @@ func TestDoneVerify_3Refires_EscalatesToOrchestrator(t *testing.T) {
 	}
 	forceRefireReady("stuck")
 
-	// Refire 3 — should escalate
+	// Refire 3 — should nudge
 	h.checkYesloopDoneVerify()
 
-	if !hasDoneVerifyState("stuck", yesloopDoneVerifyStateDeadAgentEscalation) {
-		t.Error("after 3 refires without progress, agent should escalate to DEAD_AGENT")
+	if !hasDoneVerifyState("stuck", yesloopDoneVerifyStateNudged) {
+		t.Error("after 3 refires without progress, the layer should reach its nudge state")
 	}
 
-	agent, err := s.AgentGet("stuck")
-	if err != nil {
-		t.Fatalf("AgentGet: %v", err)
-	}
-	if agent.Status != "paused" {
-		t.Errorf("after escalation, agent status should be paused, got %s", agent.Status)
-	}
-	if !strings.Contains(agent.Progress, "yesloop-done-verify") {
-		t.Errorf("progress should mention yesloop-done-verify, got %s", agent.Progress)
-	}
+	// The layer reports once and lets the agent run: the seven-phase DONE gate
+	// decides a DONE, not this ladder.
+	assertGuardNudged(t, s, "stuck", "yesloop-done-verify")
 }
 
 // TestDoneVerify_NonYesloopSection_NoFire: agents without yesloop- prefix are ignored.
@@ -277,10 +271,10 @@ func TestDoneVerify_RelayMessage_MentionsSecurityReview(t *testing.T) {
 	}
 }
 
-// TestDoneVerify_EscalationPayload_HasHint: the DEAD_AGENT notification sent
-// to the orchestrator on done-verify escalation must include the pause-hint
-// so the orchestrator uses relay_agent, not resume_agent (Learning #81175).
-func TestDoneVerify_EscalationPayload_HasHint(t *testing.T) {
+// The done-verify notice is a nudge: it names the finding and asks nothing. There
+// is no hold to lift, so the relay hint would point the orchestrator at an agent
+// that was never stopped (Learning #81175).
+func TestDoneVerify_NudgePayload_AsksNothingOfTheOrchestrator(t *testing.T) {
 	resetDoneVerifyState()
 	h, s := mustHandler(t)
 
@@ -296,27 +290,11 @@ func TestDoneVerify_EscalationPayload_HasHint(t *testing.T) {
 	forceRefireReady("hint-dv")
 	h.checkYesloopDoneVerify() // refire 3 → escalation
 
-	if !hasDoneVerifyState("hint-dv", yesloopDoneVerifyStateDeadAgentEscalation) {
-		t.Fatal("expected DEAD_AGENT_ESCALATION state")
+	if !hasDoneVerifyState("hint-dv", yesloopDoneVerifyStateNudged) {
+		t.Fatal("expected the terminal nudge state")
 	}
 
-	msgs, err := s.GetChannelMessages([]string{"caller-hint-dv"})
-	if err != nil {
-		t.Fatalf("GetChannelMessages: %v", err)
-	}
-	if len(msgs) == 0 {
-		t.Fatal("expected at least one DEAD_AGENT message to caller")
-	}
-	var found bool
-	for _, m := range msgs {
-		if strings.Contains(m.Content, orchestratorPauseHint) {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("no DEAD_AGENT message contained the pause hint %q", orchestratorPauseHint)
-	}
+	assertGuardNudged(t, s, "hint-dv", "yesloop-done-verify")
 }
 
 // --- L6: hasDoneClaim DONE-claim scope (Phase 6 block only) ---
@@ -406,7 +384,7 @@ func forceRefireReady(agentID string) {
 	st.lastRelayAt = time.Now().Add(-(yesloopDoneVerifyRefireInterval + time.Second))
 }
 
-// buildDoneVerifyCompleteContent returns scratchpad content with all 6 phases
+// buildDoneVerifyCompleteContent returns scratchpad content with all 7 phases
 // marked COMPLETE, send_to orchestrator evidence, and the BEWEISEN marker.
 func buildDoneVerifyCompleteContent() string {
 	return `### Phase 1: ANALYZE
@@ -432,12 +410,16 @@ func buildDoneVerifyCompleteContent() string {
 task() dispatched: yes
 **Security:** none
 
-### Phase 6: FINISH
+### Phase 6: DAEMON-VERIFY
+**Status:** COMPLETE
+**Vorab-Prüfung:** verify-claims -> exit 0 (accepted)
+
+### Phase 7: FINISH
 **Status:** COMPLETE
 **Deploy executed:** yes
 **send_to orchestrator:** yes
 
-BEWEISEN: alle 5 Phasen durch, Phase 6 finish mit commit.
+BEWEISEN: alle 7 Phasen durch, Phase 7 finish mit commit.
 `
 }
 
@@ -477,6 +459,31 @@ func TestDoneVerify_VerdictDoesNotSurviveARecycledAgentID(t *testing.T) {
 	}
 	if doneVerifySettled(*newRow) {
 		t.Error("a new agent inherited the verdict of the row that used its id before")
+	}
+}
+
+// A nudge is not a verdict: it says "claimed DONE without proof", and an agent
+// that then goes quiet is exactly what the idle ladder is for. Only a verified
+// completion may silence it.
+func TestDoneVerify_NudgeDoesNotSettleTheIdleLayer(t *testing.T) {
+	resetDoneVerifyState()
+	resetIdleState()
+	h, s := mustHandler(t)
+	makeYesloopAgent(t, h, s, "nudged-1", "sess-nudged-dv", testPID, false, 11*time.Minute)
+
+	row, err := s.AgentGet("nudged-1")
+	if err != nil {
+		t.Fatalf("AgentGet: %v", err)
+	}
+	yesloopDoneVerifyAgentsMu.Lock()
+	yesloopDoneVerifyAgents["nudged-1"] = &yesloopDoneVerifyState{
+		state:     yesloopDoneVerifyStateNudged,
+		createdAt: row.CreatedAt,
+	}
+	yesloopDoneVerifyAgentsMu.Unlock()
+
+	if doneVerifySettled(*row) {
+		t.Error("a nudge must not silence the idle guard: the agent claimed DONE without proof and still needs supervision")
 	}
 }
 

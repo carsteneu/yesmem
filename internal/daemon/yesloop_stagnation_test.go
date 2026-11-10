@@ -119,9 +119,9 @@ func TestStagnation_SkipsDoneAndInactive(t *testing.T) {
 	resetYesloopStagnationState()
 	h, s := mustHandler(t)
 
-	// All 6 phases COMPLETE → DONE territory, skip.
+	// All 7 phases COMPLETE → DONE territory, skip.
 	doneContent := ""
-	for i := 1; i <= 6; i++ {
+	for i := 1; i <= donePhaseCount; i++ {
 		doneContent += fmt.Sprintf("### Phase %d: X\n**Status:** COMPLETE\n\n", i)
 	}
 	makeStagnationAgent(t, h, s, "stag-done", doneContent)
@@ -205,37 +205,66 @@ func TestStagnation_EscalatesAfterRefires(t *testing.T) {
 	yesloopStagnationAgentsMu.Unlock()
 	h.checkYesloopStagnation()
 
-	agent, err = s.AgentGet("stag-esc")
-	if err != nil {
-		t.Fatalf("AgentGet: %v", err)
-	}
-	if agent.Status != "paused" {
-		t.Errorf("after escalation agent status should be paused, got %s", agent.Status)
-	}
-	if !strings.Contains(agent.Progress, "yesloop-stagnation") {
-		t.Errorf("progress should mention yesloop-stagnation, got %s", agent.Progress)
-	}
+	// The escalation is a nudge: the agent keeps running and the finding sits on
+	// the row.
+	assertGuardNudged(t, s, "stag-esc", "yesloop-stagnation")
 
 	yesloopStagnationAgentsMu.Lock()
 	state := yesloopStagnationAgents["stag-esc"].state
 	yesloopStagnationAgentsMu.Unlock()
-	if state != stagnationStatePaused {
-		t.Errorf("expected terminal paused state, got state=%d", state)
+	if state != stagnationStateNudged {
+		t.Errorf("expected the terminal nudge state, got state=%d", state)
+	}
+}
+
+// The guard writes its note into the very column its signal reads, so the
+// terminal state has to survive that write. Otherwise the nudge re-arms itself and
+// the same standstill produces a new notice every window.
+func TestStagnation_NudgeSurvivesItsOwnNote(t *testing.T) {
+	resetYesloopStagnationState()
+	h, s := mustHandler(t)
+	makeStagnationAgent(t, h, s, "stag-once", "### Phase 1: ANALYZE\n**Status:** IN PROGRESS\nworking\n")
+
+	driveStagnationToNudge(t, h)
+
+	row := assertGuardNudged(t, s, "stag-once", "yesloop-stagnation")
+
+	// The next tick must keep the terminal state despite the note in progress.
+	h.checkYesloopStagnation()
+	yesloopStagnationAgentsMu.Lock()
+	state := yesloopStagnationAgents["stag-once"].state
+	yesloopStagnationAgentsMu.Unlock()
+	if state != stagnationStateNudged {
+		t.Errorf("the guard's own note must not re-arm the ladder, state = %d", state)
 	}
 
-	msgs, err := s.GetChannelMessages([]string{"caller-stag-esc"})
+	// And a second nudge cycle must not start from a stale window either: the
+	// timestamp did not move, so nothing new is claimed.
+	after, err := s.AgentGet("stag-once")
 	if err != nil {
-		t.Fatalf("GetChannelMessages: %v", err)
+		t.Fatalf("AgentGet: %v", err)
 	}
-	var found bool
-	for _, m := range msgs {
-		if strings.Contains(m.Content, orchestratorPauseHint) {
-			found = true
-			break
+	if after.Status != "running" || after.Progress != row.Progress {
+		t.Errorf("a tick after the nudge must change nothing, status = %q progress = %q", after.Status, after.Progress)
+	}
+}
+
+// driveStagnationToNudge walks the ladder from a fresh state to its nudge: one
+// registration tick, the initial relay, then the refires past the cap.
+func driveStagnationToNudge(t *testing.T, h *Handler) {
+	t.Helper()
+	h.checkYesloopStagnation() // register snapshot
+	yesloopStagnationAgentsMu.Lock()
+	yesloopStagnationAgents["stag-once"].lastChangedAt = time.Now().Add(-3 * time.Hour)
+	yesloopStagnationAgentsMu.Unlock()
+	h.checkYesloopStagnation() // initial relay
+	for i := 0; i < 4; i++ {
+		yesloopStagnationAgentsMu.Lock()
+		if st, ok := yesloopStagnationAgents["stag-once"]; ok {
+			st.lastRelayAt = time.Now().Add(-31 * time.Minute)
 		}
-	}
-	if !found {
-		t.Errorf("no DEAD_AGENT message contained the pause hint; got %+v", msgs)
+		yesloopStagnationAgentsMu.Unlock()
+		h.checkYesloopStagnation()
 	}
 }
 

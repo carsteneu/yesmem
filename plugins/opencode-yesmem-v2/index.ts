@@ -12,6 +12,7 @@
 // See README.md for the mapping table and the documented gaps.
 
 import { fileURLToPath } from "node:url"
+import { homedir } from "node:os"
 import { Plugin } from "@opencode/plugin/effect"
 import { Error as ToolError } from "@opencode/plugin/promise/tool"
 import { Effect, Stream } from "effect"
@@ -28,6 +29,9 @@ import { shellEnvironment, type ShellCreateEvent } from "./shell"
 import { catalogCandidates, skillNudge } from "./skill_nudge"
 
 const pluginDirectory = fileURLToPath(new URL(".", import.meta.url))
+// The guard's standard rules live here since setup stopped writing a full copy into the project, and the catalogue
+// the nudge matches against lives in them.
+const installationDirectory = `${process.env.HOME || homedir()}/.claude/yesmem`
 
 export default Plugin.define({
   id: "opencode.yesmem",
@@ -36,16 +40,19 @@ export default Plugin.define({
       const directory = String(context.location.directory)
       const rpc = new YesMemRPC()
       const codeNav = codeNavGuard(rpc, directory)
-      const guard = ruleGuard(directory)
+      const guard = ruleGuard(rpc, directory)
       const learn = failureLearn(rpc, directory)
       const resolve = autoResolve(rpc, directory)
       const session = sessionTracker(rpc)
       const shell = shellEnvironment(rpc, rpc.socket)
       const skills = skillNudge(
+        rpc,
+        directory,
         catalogCandidates({
           override: process.env.YESMEM_SKILL_CATALOG,
           pluginDirectory,
           projectDirectory: directory,
+          installationDirectory,
         }),
       )
       const ledger = ledgerNudge(rpc)

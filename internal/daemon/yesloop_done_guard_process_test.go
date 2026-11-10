@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/carsteneu/yesmem/internal/config"
 	"github.com/carsteneu/yesmem/internal/storage"
 )
 
@@ -65,6 +66,9 @@ func TestDoneGuard_ProcesslessAgentIsNotUnpaused(t *testing.T) {
 func TestDoneGuard_LiveAgentIsStillUnpaused(t *testing.T) {
 	resetDoneGuardState()
 	h, s := mustHandler(t)
+	// Covers the process gate: a paused row whose process is still alive must
+	// not be treated as gone. The verification stage is out of scope here.
+	h.SetDoneVerifyConfig(&config.DoneVerifyConfig{Enabled: false})
 	makeDoneGuardAgent(t, h, s, "dg-live-1", "sess-dg-live-1", validV3Content)
 	s.AgentUpdate("dg-live-1", map[string]any{
 		"status":   "paused",

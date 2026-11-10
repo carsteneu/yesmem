@@ -33,8 +33,8 @@ PLUGIN_DIR := plugins/opencode-yesmem-v2
 # ci_build_surface_los60e_test.go fails when the two selections differ, when a
 # package of RACE_PKGS is missing from either side, or when a name in RACE_RUN
 # no longer exists as a test function.
-RACE_PKGS := ./internal/proxy ./internal/storage ./internal/daemon ./internal/hooks
-RACE_RUN := TestLLMWiringIsRaceFreeAndVisible|TestEmbedWiringIsRaceFreeAndVisible|TestVectorSearchWithoutWiring|TestStartEmbedWorkerPublishesQueue|TestConsolidationRunnerPersistsBaselineAndCoalescesConcurrentRuns|TestResolveProjectParam_GenerationRaceGuard|TestResolveProjectParam_GenerationConcurrentAccess|TestAttemptRestart_RaceGuard|TestLos58e_TwoConcurrentSpawnsKeepTheirOwnSession|TestAgentNextIDConcurrent_Unique|TestCapStoreConcurrent_NoDeadlock|TestCapsUpsert_CrossGoroutineReadAfterWrite|TestCapsClaimAndRead_ClaimsAtomic|TestDeleteDocSource_IsAtomic|TestEnsureUniqueMessageSequenceUnderConcurrentCallers|TestEnsureUniqueMessageSequenceWaitsForAConcurrentRepair|TestReplaceMessagesBySessionIsAtomic|TestGetPendingRecoveryIsAtomicUnderConcurrency|TestIncrementTurnCount_Concurrent|TestEvaluateGuard_CacheHit|TestDaemonCall_Success|TestDaemonCall_Unreachable|TestRunSessionEnd_CallsDaemon|TestRunSessionEnd_DaemonUnreachable
+RACE_PKGS := ./internal/proxy ./internal/storage ./internal/daemon ./internal/hooks ./internal/guard
+RACE_RUN := TestLLMWiringIsRaceFreeAndVisible|TestEmbedWiringIsRaceFreeAndVisible|TestVectorSearchWithoutWiring|TestStartEmbedWorkerPublishesQueue|TestConsolidationRunnerPersistsBaselineAndCoalescesConcurrentRuns|TestResolveProjectParam_GenerationRaceGuard|TestResolveProjectParam_GenerationConcurrentAccess|TestAttemptRestart_RaceGuard|TestLos58e_TwoConcurrentSpawnsKeepTheirOwnSession|TestAgentNextIDConcurrent_Unique|TestCapStoreConcurrent_NoDeadlock|TestCapsUpsert_CrossGoroutineReadAfterWrite|TestCapsClaimAndRead_ClaimsAtomic|TestDeleteDocSource_IsAtomic|TestEnsureUniqueMessageSequenceUnderConcurrentCallers|TestEnsureUniqueMessageSequenceWaitsForAConcurrentRepair|TestReplaceMessagesBySessionIsAtomic|TestGetPendingRecoveryIsAtomicUnderConcurrency|TestIncrementTurnCount_Concurrent|TestCallModelCachesTheAnswer|TestDaemonCall_Success|TestDaemonCall_Unreachable|TestRunSessionEnd_CallsDaemon|TestRunSessionEnd_DaemonUnreachable
 
 .PHONY: build install deploy deploy-safe restart-services test test-go test-plugin test-race benchmark clean update vet
 
@@ -146,7 +146,7 @@ test-plugin:
 # See RACE_PKGS/RACE_RUN above for what this covers and why it filters.
 test-race:
 	CGO_ENABLED=1 go test -race -count=1 -timeout 900s ./internal/proxy
-	CGO_ENABLED=1 go test -race -count=1 -timeout 900s -run '$(RACE_RUN)' ./internal/storage ./internal/daemon ./internal/hooks
+	CGO_ENABLED=1 go test -race -count=1 -timeout 900s -run '$(RACE_RUN)' ./internal/storage ./internal/daemon ./internal/hooks ./internal/guard
 
 clean:
 	rm -f $(BINARY)

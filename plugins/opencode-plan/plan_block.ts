@@ -26,10 +26,9 @@ export type PlanRow = {
   depth: number
 }
 
-// The sidebar is narrow and must not grow with the plan: a long outline is cut
-// off and the remainder is reported as a count.
-export const PLAN_MAX_ROWS = 12
-
+// The sidebar scrolls, so the plan does not have to fit: every row renders and
+// the host's scrollbox takes the overflow. A cap here would hide steps that the
+// plan is the only record of.
 // A single step is shown truncated; the full text stays available through
 // get_plan, and the sidebar is a glance, not a document.
 export const PLAN_MAX_TEXT = 200
@@ -69,7 +68,9 @@ export function markerFor(status: PlanItemStatus): string {
 // for a value that came out of a hand-written file.
 export function clampDepth(depth: unknown): number {
   const value = typeof depth === "number" && Number.isFinite(depth) ? Math.trunc(depth) : 0
-  return Math.min(1, Math.max(0, value))
+  // Three levels is the contract: phase, step, detail. Deeper values are clamped
+  // rather than dropped, so a plan written by an older or newer client still renders.
+  return Math.min(2, Math.max(0, value))
 }
 
 export function flattenText(text: unknown, max: number): string {
@@ -100,23 +101,16 @@ export function planItems(plan: unknown): PlanItem[] {
 }
 
 export function planRows(plan: unknown): PlanRow[] {
-  return planItems(plan)
-    .slice(0, PLAN_MAX_ROWS)
-    .map((item) => {
-      const status = normalizeStatus(item.status)
-      return {
-        marker: markerFor(status),
-        text: flattenText(item.content, PLAN_MAX_TEXT),
-        reason: flattenText(item.reason, PLAN_MAX_REASON),
-        status,
-        depth: clampDepth(item.depth),
-      }
-    })
-}
-
-// planOverflow is how many steps the row cap cut off.
-export function planOverflow(plan: unknown): number {
-  return Math.max(0, planItems(plan).length - PLAN_MAX_ROWS)
+  return planItems(plan).map((item) => {
+    const status = normalizeStatus(item.status)
+    return {
+      marker: markerFor(status),
+      text: flattenText(item.content, PLAN_MAX_TEXT),
+      reason: flattenText(item.reason, PLAN_MAX_REASON),
+      status,
+      depth: clampDepth(item.depth),
+    }
+  })
 }
 
 // planSummary is the same one-liner the ledger injects: progress, the next

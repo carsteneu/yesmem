@@ -50,7 +50,7 @@ From an opencode or claude-code session:
 /yesresearch <topic> [path/to/master-plan.md]
 ```
 
-The user's session only does setup: create worktree, write master plan, write orchestrator briefing to scratchpad, spawn the orchestrator agent. The orchestrator then owns all 6 phases and spawns its own Bereichs-Agents.
+The user's session only does setup: create worktree, write master plan, write orchestrator briefing to scratchpad, spawn the orchestrator agent. The orchestrator then owns all 7 phases and spawns its own Bereichs-Agents.
 
 ```
 yesmem_spawn_agent(

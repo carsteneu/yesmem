@@ -94,14 +94,15 @@ func (h *Handler) checkOneDoneGuardAgent(agent storage.Agent, result ValidationR
 	// check is worthless if it is skipped exactly for the agents the bind fix
 	// exists for. A failure downgrades to a non-compliant result that feeds the
 	// same refire/pause machine as a format failure, naming the invalid field.
+	var verifyHandled bool
 	if result.Compliant && len(result.Phase5Evidence) > 0 {
 		agent = *h.ensureOpencodeSession(&agent)
 	}
-	if result.Compliant && agent.OpencodeSessionID != "" && len(result.Phase5Evidence) > 0 {
-		if evErrs := VerifySubagentEvidence(h.ocDBPath, agent.OpencodeSessionID, result.Phase5Evidence); len(evErrs) > 0 {
+	if result.Compliant && len(result.Phase5Evidence) > 0 {
+		if evErrs := h.verifyPhaseEvidence(agent, result.Phase5Evidence); len(evErrs) > 0 {
 			result = ValidationResult{
 				Compliant:      false,
-				PhaseCount:     6,
+				PhaseCount:     donePhaseCount,
 				FieldErrors:    evErrs,
 				Phase5Evidence: result.Phase5Evidence,
 			}
@@ -113,6 +114,14 @@ func (h *Handler) checkOneDoneGuardAgent(agent storage.Agent, result ValidationR
 	// compliant (and the recovery) path. An opencode agent whose session id is
 	// not bound yet has no child signal at all, so it is bound on demand here —
 	// rate-limited per agent, like the evidence check above.
+	if result.Compliant {
+		// The format is fine, so the report is the only thing left to doubt: the
+		// verification stage takes over here and holds the agent until its
+		// verdict. It is called before the state lock, because it reads the
+		// scratchpad, writes the agent row and enqueues a job. False means the
+		// claim is out of scope, and the recovery path runs unchanged.
+		verifyHandled = h.gateVerifyCompliantDone(agent)
+	}
 	if !result.Compliant {
 		agent = *h.ensureOpencodeSession(&agent)
 	}
@@ -131,6 +140,12 @@ func (h *Handler) checkOneDoneGuardAgent(agent storage.Agent, result ValidationR
 			log.Printf("[done-guard] agent %s (%s) now compliant — clearing refire state",
 				safeAgentText(agent.ID), safeAgentText(agent.Section))
 			delete(yesloopDoneGuardAgents, agent.ID)
+		}
+		if verifyHandled {
+			// The verification state machine owns the agent from here: releasing
+			// it belongs to the verdict, not to the format check.
+			yesloopDoneGuardAgentsMu.Unlock()
+			return
 		}
 		if agent.Status == "paused" && strings.HasPrefix(agent.Progress, "paused: DONE-GUARD:") {
 			log.Printf("[done-guard] agent %s (%s) RECOVERED: scratchpad now compliant — unpausing (was: %s)",

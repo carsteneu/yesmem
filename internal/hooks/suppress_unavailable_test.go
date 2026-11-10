@@ -72,3 +72,24 @@ func TestMaybeSuppressUnavailableSkill_ExtractsSkillBeforeColon(t *testing.T) {
 		t.Errorf("available skill was dropped")
 	}
 }
+
+// The core turns a block it will not enforce into a SUGGEST whose text starts with a skill name and carries
+// the violation. That is a notice about rules, not a skill the model chose: dropping it as a ghost skill
+// would silence exactly the text the downgrade exists for.
+func TestMaybeSuppressUnavailableSkill_KeepsADowngradedBlocksNotice(t *testing.T) {
+	available := map[string]bool{"yesmem-config": true}
+	d := GuardDecision{
+		Decision:   "SUGGEST",
+		Suggestion: "yesmem-remember: mandatory check — Rule 42: never commit secrets",
+		Violations: []string{"Rule 42: never commit secrets"},
+	}
+
+	got := maybeSuppressUnavailableSkill(d, available)
+
+	if got.Decision != "SUGGEST" {
+		t.Fatalf("decision = %q, want the notice kept even though the skill is not installed", got.Decision)
+	}
+	if got.Suggestion == "" {
+		t.Fatal("suggestion = empty, want the citation to reach the model")
+	}
+}

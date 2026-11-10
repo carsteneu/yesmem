@@ -93,6 +93,16 @@ NEVER write to `/tmp/` or `~/.claude/yesmem/tmp/` in autonomous operations. `/tm
 
 Use `<worktree>/.yesmem/tmp/` instead. Project-local, always writable from any agent context, cleaned up with worktree removal. `mkdir -p .yesmem/tmp` at session start.
 
+## Orchestrator-Pflichten (aus den früheren Pins 43, 49, 68, 101 und 108)
+
+- **Spawn-Briefing.** Jeder Spawn beginnt mit dem Briefing und dem exakten Wortlaut YOU ARE A YESLOOP-AGENT. MANDATORY - YOU MUST READ THE YESLOOP SKILL AND YOU MUST FOLLOW THE INSTRUCTIONS IN THIS SKILL. Der Orchestrator liest diese Skill selbst vor jedem Spawn.
+- **DONE prüfen.** Vor Abnahme und Merge: Tests selbst laufen lassen, Diff lesen, Phase 5 mit Cold Review und Behauptungs-Inventar (jede Erfolgsbehauptung trägt eine proof-Zeile). Unbewiesene Behauptungen werden als UNVERIFIED markiert.
+- **Modell.** Beim Spawn immer das Standardmodell, keine Modellwahl und keine Rückfrage beim Nutzer. Grund (Carsten, 02.09.2026): das Standardmodell bringt den Loop am zuverlässigsten zu Ende.
+- **Schließen.** Ein abgenommener Agent wird geschlossen (yesmem_stop_agent), nicht liegengelassen. Phase 6 FINISH beendet weder Prozess noch PTY-Brücke noch Socket, und ein späteres Resume kann eine zweite Session auf denselben Worktree setzen.
+- **Kein Selbst-Merge, kein Selbst-Deploy.** Merge nach main und Deploy sind Orchestrator-Sache, Nie-Agenten-Sache.
+- **Einordnung.** Code-Änderungen über etwa 10 Zeilen, über mehr als eine Datei oder mit Wirkung auf Verhalten, Architektur oder Deploy laufen über yesloop im Worktree. Inline bleiben Einzeiler, Tippfehler, reine Doku ohne Verhaltenswirkung und Lesearbeit. Ein Agent innerhalb einer yesloop wendet die Regel nicht auf sich selbst an.
+
+
 ## Execution Modes
 
 **tui-agent** (DEFAULT) — Spawned via yesmem_spawn_agent → gnome-terminal, visible, non-blocking.
@@ -101,7 +111,7 @@ Use `<worktree>/.yesmem/tmp/` instead. Project-local, always writable from any a
 
 ## Definition of DONE
 
-DONE is a contract, not a feeling. Status is DONE only when ALL six phase sections exist in scratchpad and each carries `**Status:** COMPLETE`.
+DONE is a contract, not a feeling. Status is DONE only when ALL seven phase sections exist in scratchpad and each carries `**Status:** COMPLETE`.
 
 **Valid Status values per phase:**
 - `IN PROGRESS` — actively working
@@ -110,9 +120,9 @@ DONE is a contract, not a feeling. Status is DONE only when ALL six phase sectio
 
 **Phase status update is mandatory at every transition:**
 ```
-update_agent_status(phase="Phase N/6 NAME")
-update_agent_status(phase="Phase N/6 NAME (milestone M/K)")   # EXECUTE with milestones
-update_agent_status(phase="Phase N/6 NAME (blocked: <why>)")
+update_agent_status(phase="Phase N/7 NAME")
+update_agent_status(phase="Phase N/7 NAME (milestone M/K)")   # EXECUTE with milestones
+update_agent_status(phase="Phase N/7 NAME (blocked: <why>)")
 ```
 
 Free-form string, canonical format. Single source of truth for live progress.
@@ -120,12 +130,99 @@ Free-form string, canonical format. Single source of truth for live progress.
 **Orchestrator validates DONE:**
 - DONE-guard (auto, every 30s) checks phase block compliance via regex
 - Manual fallback: Read scratchpad section
-- Check `### Phase 1` through `### Phase 6` headers exist
+- Check `### Phase 1` through `### Phase 7` headers exist
 - Each has `**Status:** COMPLETE` (or `BLOCKED — <reason>` for genuinely blocked phases)
 - Phase 5 has `self-review: done` plus evidence-backed `cold-review: ses_<id>`, `consequence: ses_<id>`, `security: ses_<id>` dispatch lines
-- Phase 6 has `Deploy executed: yes` or `Deploy required: no`
+- Phase 6 (DAEMON-VERIFY) carries the accepted pre-check: `**Vorab-Prüfung:** ... accepted`
+- Phase 7 (FINISH) has `Deploy executed: yes` or `Deploy required: no`, and `send_to orchestrator:`
 
 Missing evidence → guard fires automatically (freeze + notify orchestrator).
+
+## Der Prüfbericht (`<section>-verify`)
+
+Die Phasenblöcke sind nur die Form. Der Daemon glaubt keinem Bericht, er leitet jede
+Behauptung selbst her. Dafür schreibst du neben den Pipeline-Abschnitt einen zweiten,
+`<section>-verify` (gleiches Projekt, gleiche Scratchpad-Verbindung). Das ist die
+Eingabe, die geprüft wird, und das ist der Abschnitt, den du korrigierst: die
+Blockmeldung nennt den Befund und, wo es einen gibt, den Befehl, und sie druckt das
+folgende Muster, wenn der Abschnitt fehlt.
+
+```
+[COMMIT: <vollständiger Hash>]
+[BRANCH: <Branch, der gepusht wurde>]
+[DEPLOY: yes|no]
+Tests run: <Befehl> -> exit <N>
+Files in scope: <pfad>, <pfad>
+[EVIDENCE: cold-review=ses_…, consequence=ses_…, security=ses_…]
+[PLAN: <projekt>]
+```
+
+- Der Bericht ist Eingabe, nie Urteil. Was du nicht behauptest, kann nicht bestätigt
+  werden, und ein Platzhalter (`<hash>`, `TODO`) behauptet nichts.
+- `[MERGE: …]` gehört nicht hinein: der Agent merged nie, das tut der Orchestrator.
+  Die `MERGE`-Angabe der `send_to`-Payload bleibt davon unberührt.
+- `[PLAN: …]` nur bei strukturiertem Plan: offene Schritte (`pending`, `in_progress`)
+  blockieren DONE.
+
+## Der Vorab-Lauf (verbindlich vor dem DONE)
+
+Der Daemon prüft deinen Bericht nicht mehr selbst. Er liest ein Urteil, das vorher
+entstanden ist, unter einem Schlüssel aus Berichtstext, HEAD, Branch, Plan und
+Report-Session. Vor dem DONE setzt du deshalb genau diesen Lauf ab:
+
+```
+yesmem verify-claims --repo <worktree> --project <projekt> --section <section>-verify --profile yesloop-done --policy yesloop-done --strict
+```
+
+Die Session und der Plan-Thread sind keine Flags: eine Section nennt ihren Agenten, und
+der Daemon leitet beides aus dessen Zeile ab. Genau deshalb muss die Section stimmen; ein
+Bericht, den du inline mit `--report` prüfst, braucht die beiden Werte dagegen explizit,
+weil es dann keinen Agenten gibt, aus dem sie kommen.
+
+Die Reihenfolge ist Teil des Vertrags: erst den letzten Commit, dann den Plan
+abschließen (keine offenen Schritte mehr), dann pushen, dann dieser Lauf, dann das
+DONE. Die Plan-Revision steckt im Schlüssel, weil ein Bericht mit `[PLAN: …]` gegen
+den Plan geurteilt wird; eine Plan-Schreibung nach dem Lauf entwertet das Urteil und
+kostet einen zweiten Lauf.
+
+Exit 0 heißt `accepted`: dann setzt du das DONE ab. Exit 1 heißt `blocked`: du korrigierst
+den Bericht oder die Sache und läufst den Befehl erneut, denn ein geänderter Bericht ist
+ein neuer Schlüssel. Ohne frisches angenommenes Urteil blockt das Gate dein DONE sofort
+als Defekt und druckt diesen Befehl mit den konkreten Werten.
+
+## Was nach DONE passiert
+
+- Liegt das Urteil vor, gibt der Daemon sofort frei (`DONE-VERIFIED`) und nennt in der
+  Freigabe, dass das Urteil aus der Vorab-Prüfung stammt.
+- Blockt er dein DONE (`DONE-VERIFY-BLOCKED`), nennt die Meldung den Grund: fehlendes oder
+  veraltetes Urteil, abweichendes Profil oder die Befunde des Laufs. Bei einer
+  Report-Klasse (zum Beispiel refuted oder defect) korrigierst du, läufst die
+  Vorab-Prüfung erneut und setzt das DONE wieder ab. Nach drei Blockungen desselben
+  Versuchs eskaliert der Daemon an den Orchestrator, und du wartest.
+- Die Klassen environment, limit und error sind nicht dein Fehler: melde sie dem
+  Orchestrator und warte.
+- Läuft deine Vorab-Prüfung noch, während der Tick dein DONE sieht, hält er dich auf
+  `DONE-PENDING-VERIFY`. Du wartest: kein sleep, kein Polling, kein zweiter Bericht.
+
+### Stille ist unmöglich
+
+Du bist nicht der einzige Leser deines DONE. Ein zurückgehaltener DONE erreicht den
+Orchestrator so oder so, und keiner dieser Wege hängt von dir ab:
+
+- **Sofortmeldung.** In dem Moment, in dem die Zustellprüfung deinen DONE zurückhält,
+  bekommt der Orchestrator `DONE-WITHHELD` mit Klasse, Grund und dem vollständigen
+  `yesmem verify-claims`-Befehl. Er wartet nicht auf die dritte Runde.
+- **Zeitwächter.** Bleibt dein DONE länger als das Fenster `done_verify.max_wait`
+  unentschieden und du arbeitest nicht weiter, eskaliert der Daemon von selbst:
+  `DONE-UNDECIDED` mit Zustand und Befehl, einmal pro Versuch.
+- **Der Halt überlebt einen Neustart.** Er liegt mit dem Fingerabdruck deines Berichts in
+  `done_verify_holds`; ein neuer Daemon setzt die Uhr nicht zurück.
+- **Der Broadcast ist kein DONE-Kanal.** Ein DONE-Payload auf dem Broadcast-Kanal wird
+  abgelehnt und auf `send_to` verwiesen. Veröffentlichen umgeht die Sperre nicht.
+
+Was das für dich bedeutet: melde dich nicht mit einem zweiten Bericht und nicht über einen
+anderen Kanal. Ein blockierter DONE gehört korrigiert, neu geprüft und erneut gesetzt, oder
+er gehört dem Orchestrator.
 
 ## Automated DONE-Guard (v3)
 
@@ -133,13 +230,13 @@ Since yesmem v2.1.21, the heartbeat scheduler enforces the DONE contract **autom
 
 **What the guard checks:**
 
-1. All 6 phase blocks (`### Phase 1` through `### Phase 6`) must be present in scratchpad
+1. All 7 phase blocks (`### Phase 1` through `### Phase 7`) must be present in scratchpad
 2. Each block must have `**Status:**` on its own line with valid value (COMPLETE|BLOCKED|IN PROGRESS)
 3. Per-phase required fields (see Phase Pipeline below)
 4. Phase 5 must contain `self-review: done` AND a `cold-review: ses_<id>` dispatch line
 5. Phase 4 must contain `**Regression baseline:**` with a non-empty value and `**RED proof:**`
 6. Phase 5 must contain `consequence: ses_<id>` AND `security: ses_<id>` dispatch lines — after the format check, the daemon verifies each reported id against opencode's session DB (row exists, parent session matches the agent's own session, agent type allowed per sub-phase, ids pairwise distinct)
-7. Phase 6 must contain `send_to orchestrator:` and deploy evidence
+7. Phase 6 must carry the accepted pre-check (`**Vorab-Prüfung:**` naming `accepted`), Phase 7 the handoff (`send_to orchestrator:` and deploy evidence)
 8. Phase 5 must contain `**Stufe:**` (value 1-3 with a same-line rationale) and a non-empty `**Modules:**` line — the risk-based-code-review classification from the 5.2 cold reviewer
 
 **When the guard fires:**
@@ -149,7 +246,7 @@ Since yesmem v2.1.21, the heartbeat scheduler enforces the DONE contract **autom
 
 Before pausing, the guard relays the concrete missing fields and re-fires up to 2 times at 90s intervals. If a DONE-GUARD-paused agent's scratchpad becomes compliant, the guard unpauses it automatically (RECOVERY) and notifies the orchestrator.
 
-**Phases missing from scratchpad = still in progress.** The guard only escalates when all 6 phase blocks exist but their content is non-compliant.
+**Phases missing from scratchpad = still in progress.** The guard only escalates when all 7 phase blocks exist but their content is non-compliant.
 
 ### DISMISSAL-PATTERN
 
@@ -167,9 +264,10 @@ These patterns cause the guard to reject the DONE claim:
 | Missing module selection | No `**Modules:**` value in Phase 5 | active modules per trigger table are required 5.2 evidence |
 | Invalid evidence session ids | Reported id absent from opencode.db, parent session mismatch, duplicated id, or agent type not in the allowed set | Daemon evidence layer verifies substance, not just format (internal/daemon/done_gate_evidence.go) |
 | Missing regression baseline | No `**Regression baseline:**` with a non-empty value in Phase 4 | Deterministic base-vs-head test diff is mandatory (quality stage-2) |
-| Missing orchestrator notification | No `send_to orchestrator:` in Phase 6 | Orchestrator must be notified for DONE |
+| Missing orchestrator notification | No `send_to orchestrator:` in Phase 7 | Orchestrator must be notified for DONE |
 | Partial fields in Phase 5 | No issue breakdown, no findings per sub-phase | Self-Review must be structured |
-| No deploy evidence in Phase 6 | No `Deploy executed:` or `Deploy required:` | Must document deployment outcome |
+| No deploy evidence in Phase 7 | No `Deploy executed:` or `Deploy required:` | Must document deployment outcome |
+| Missing accepted pre-check | Phase 6 says COMPLETE without `**Vorab-Prüfung:** ... accepted` | The verification is the phase, not a label |
 | Missing status line | Phase block exists but no `**Status:**` | Every phase needs a status |
 | Missing session id note | Phase 1 has no `**Session id:**` field and no "session id missing" note | `whoami()` must be called at Phase 1 start; backend session id (or retry-failure note) must appear in Phase 1 block |
 | Missing session title | Phase 1 has no `**Session title set:**` field and no rename-failure note | `opencode_session_rename` at Phase 1 start with `[<agent-id>] <Session title>` (see SESSION TITLE rule) |
@@ -187,7 +285,7 @@ When the DONE-guard rejects a claim, its findings are structured as:
 
 ## Phase Pipeline
 
-Each phase writes ONE structured block to scratchpad. Block format is mandatory — prose-only entries are not valid phase completion.
+Each phase writes ONE structured block to scratchpad. Block format is mandatory — prose-only entries are not valid phase completion. The plan's outline carries the same seven phases (see "Phase skeleton"); the scratchpad block and the plan row change together, in the same update.
 
 ### CRITICAL — scratchpad project string + session id
 
@@ -207,12 +305,12 @@ For intermediate progress updates (milestone complete, phase done, status marker
 |---|---|---|
 || First thing after spawn | `scratchpad_read` |
 || Progress update (milestone/phase done) | `scratchpad_append` |
-|| Full DONE report (all 6 phases) | `scratchpad_write` |
+|| Full DONE report (all 7 phases) | `scratchpad_write` |
 || DRIFT alert / STUCK notice | `scratchpad_append` (preserves briefing) |
 
 ### Phase 1: ANALYZE
 ```
-update_agent_status(phase="Phase 1/6 ANALYZE")
+update_agent_status(phase="Phase 1/7 ANALYZE")
 
 ### Phase 1: ANALYZE
 **Status:** COMPLETE
@@ -226,15 +324,17 @@ update_agent_status(phase="Phase 1/6 ANALYZE")
 **Open questions:** none (must be inferrable, no user questions)
 ```
 
+**Verify profile.** If `.yesmem/verify.yaml` is not in the worktree and no earlier loop committed one, run `yesmem verify-claims --init` in the worktree before planning, and commit the file it writes as its own commit: `git add -f .yesmem/verify.yaml` (a project may ignore `.yesmem/`). The merge carries the profile into the project, and every later loop inherits it. init writes nothing without a proof run of the test command; when it writes nothing, it prints what is missing, and that line belongs in the report.
+
 Information gathering is automatic — never ask the user. Code questions → `search_code` (contents AND call sites: `search_code("<symbol>(")` returns file, line and the enclosing function), `search_code_index` (symbols by name), `get_code_context` (who calls it, what it calls, what types it references), `get_code_snippet` (source), `get_file_symbols` (line map of a file). Shell search (`rg`, `grep`) is BLOCKED on indexed files: the code-nav hook refuses it and names the MCP tool instead; if you genuinely need the shell, run the same command again (the retry passes) or call `dismiss_code_nav(session_id)`. API/docs → docs_search, hybrid_search. Errors → deep_search. Unknown concepts → WebFetch. NEVER guess — if you don't know, look it up (WebFetch or the indexed docs); infer only from code/context already in your turn.
 
 ### Phase 2: PLAN
 ```
-update_agent_status(phase="Phase 2/6 PLAN")
+update_agent_status(phase="Phase 2/7 PLAN")
 
 ### Phase 2: PLAN
 **Status:** COMPLETE
-**Plan stored via set_plan:** yes
+**Plan stored via set_plan:** yes (with `items` — see "Structured plan items")
 **Decisions resolved:** all — files, schema, API, blast radius
   - File selection: <which files, why not others>
   - Schema decisions: <data structures, interfaces, types>
@@ -277,11 +377,106 @@ Shape the stored plan (set_plan) so the live-ledger subscriber (`ledger_nudge`) 
 
 **Proof-line requirement:** only an item with a `proof:` line counts as Verified. A claim without a proof pointer belongs in **Open**, not **Verified**. The ledger is an evidence ledger — claims must cite the command and its result.
 
+### Structured plan items (REQUIRED — the sidebar draws nothing without them)
+
+`set_plan` and `update_plan` take an `items` array beside the free text: `[{content, status, reason, depth}]` with
+`status` from `pending | in_progress | completed | cancelled` and `depth` 0, 1 or 2 (three levels is the maximum —
+4+ is clamped to 2). **Always pass `items`.** A plan set as free text alone stores no outline: the ledger still shows
+it, but the opencode sidebar renders no plan block at all, because that block reads only `plan.items` from the
+per-thread status file. It looks like a broken plugin and is not one — this has cost a full diagnostic session
+already.
+
+Mapping for this skill:
+- **`content`** — one step, one line, no numbering and no depth markers; both come from the array.
+- **`status`** — `completed` as soon as a step is proven, `in_progress` for exactly the step you are on (one at
+  most), `cancelled` with a `reason` when a step is dropped. Keeping this current is the checkpoint discipline
+  below, not a separate chore.
+- **`reason`** — the `proof:` line for a verified step (`proof: <command> → <result>`), or the reason a step was
+  cancelled. This is where the Ledger Plan-Schema's evidence requirement lands in the structured form.
+- **`depth: 1`** — sub-steps of the step above; **`depth: 2`** — the detail under a sub-step (how it is done, which
+  command, which file). Three levels, no more: it is clamped at 2.
+
+The derived text is what the ledger and the next self read, so the Goal/Core/Verified discipline above still
+applies — it moves into the items instead of a prose block:
+
+```
+set_plan(items=[
+  {content: "Goal: <one line>", status: "in_progress"},
+  {content: "<verified step>", status: "completed", reason: "proof: <cmd> → <result>"},
+  {content: "<open step>", status: "pending"},
+  {content: "<sub-step of the open step>", status: "pending", depth: 1},
+])
+```
+
+`update_plan(items=[...])` replaces the outline wholesale (use it at a pivot); `update_plan(completed=["<substring>"])`
+marks steps done in place (use it at a milestone). Never let the outline drift more than one milestone behind the
+work — a stale outline is worse than none, because the orchestrator reads it as state.
+
+### Ticking off is an action, not a conclusion (REQUIRED after every step)
+
+The moment a step is proven — the command exited 0, the test went green, the file carries the change — its item flips
+to `completed` with the proof in `reason`. Not at the end of the phase, not when the next step starts, not in a batch
+after the milestone. One step proven, one `update_plan` call:
+
+```
+update_plan(completed=["<substring of the step>"])
+```
+
+This is the point of the plan: the orchestrator, the sidebar and the next self read the outline as **state**, so a
+proven step that still shows `[ ]` is a false statement about the run — it makes the work look unfinished, invites a
+second agent to redo it, and hides real progress from the human watching the sidebar. A plan that is only updated at
+phase boundaries is decoration.
+
+Rules that follow from it:
+- **`in_progress` moves with you.** When a step starts, its item becomes `in_progress` and the previous one is already
+  `completed`. Two `in_progress` items mean one of them is stale.
+- **A step that turns out unnecessary is `cancelled` with the reason, never deleted.** Deleting it erases the decision.
+- **Before Phase 7, the outline must show every step resolved** (`completed` or `cancelled`). An open item at FINISH is
+  either a forgotten tick or a hidden failure — resolve it in the DONE report, do not leave it dangling.
+- **`update_plan` failures are not ignorable.** If the call errors, the tick did not happen: retry once, and if it
+  still fails, say so in the scratchpad block instead of silently continuing.
+
+### Phase skeleton (the outline mirrors the seven phases — REQUIRED shape)
+
+The top level of the outline is the seven-phase pipeline, in order; the work lives underneath the phase that is
+running: milestones at `depth: 1`, and the steps or details of a milestone at `depth: 2`. The phase label must match
+the `update_agent_status` phase string exactly, so the status line and the plan row never drift apart:
+
+```
+set_plan(items=[
+  {content: "Phase 1/7 ANALYZE — <goal in one line>", status: "completed",
+   reason: "proof: <files/packages inspected> → <finding>"},
+  {content: "Phase 2/7 PLAN — <N milestones>, task type <debug|feature|chore|docs>", status: "completed",
+   reason: "proof: <milestone split>; depth-lock D3 <file::function> when debug"},
+  {content: "Phase 3/7 EXECUTE — milestone 1/3: <name>", status: "in_progress"},
+  {content: "<step>", status: "pending", depth: 1},
+  {content: "<how that step is done: file, command>", status: "pending", depth: 2},
+  {content: "<step>", status: "pending", depth: 1},
+  {content: "Phase 4/7 VERIFY", status: "pending"},
+  {content: "Phase 5/7 REVIEW — 5.1 self, 5.2 cold, 5.3 consequence, 5.4 security", status: "pending"},
+  {content: "Phase 6/7 DAEMON-VERIFY — yesmem verify-claims, verdict accepted", status: "pending"},
+  {content: "Phase 7/7 FINISH — commit, push, handoff", status: "pending"},
+])
+```
+
+Rules for the skeleton:
+- **Exactly one phase is `in_progress`** — the one whose scratchpad block you are writing right now. Two open
+  phases means the plan no longer answers "where am I", which is the only reason it exists.
+- **A phase flips to `completed` in the same update as its scratchpad block**, with the phase's DONE criterion as
+  `reason` (`proof: <command> → <result>`). `reason: "done"` is not a proof line and does not count.
+- **Work nests phase → milestone → step**, at depths 0, 1 and 2. Advance the milestone label as work moves
+  (`milestone 2/3: …`); do not nest phases under phases, and do not go past depth 2 — the renderer clamps it.
+- **A phase the task genuinely skips stays in the outline as `cancelled` with the reason** (e.g. a docs-only change:
+  `Phase 5/6 REVIEW`, `cancelled`, "no code delta — 5.4 security not applicable"). Never delete a phase row: the
+  DONE-guard and the orchestrator read the shape, and a missing row reads as a missing phase.
+- `update_plan(completed=["Phase 3/6"])` at a phase boundary is the cheap form; use `items=[...]` when the milestone
+  split itself changes (Phase 2 replanned), because that is a different shape, not a status change.
+
 ### Phase 3: EXECUTE
 ```
-update_agent_status(phase="Phase 3/6 EXECUTE")
+update_agent_status(phase="Phase 3/7 EXECUTE")
 # or with milestones:
-update_agent_status(phase="Phase 3/6 EXECUTE (milestone 1/3)")
+update_agent_status(phase="Phase 3/7 EXECUTE (milestone 1/3)")
 
 ### Phase 3: EXECUTE
 **Status:** IN PROGRESS
@@ -303,7 +498,9 @@ update_agent_status(phase="Phase 3/6 EXECUTE (milestone 1/3)")
 ```
 
 **Per-milestone discipline:**
-- `update_plan(completed=["milestone M"])` after each milestone finishes — persistence for collapse recovery
+- `update_plan(completed=["<step>"])` after **every** proven step, `update_plan(completed=["milestone M"])` when the
+  milestone's last step lands — the matched items become `completed`, which is what the sidebar block and the ledger
+  render as done. Ticking is per step; the milestone call only closes the group.
 - `scratchpad_write` per milestone, not per step — controls bloat
 - DRIFT CHECK before each milestone (not each step): re-read goal, compare scope
 
@@ -313,7 +510,7 @@ update_agent_status(phase="Phase 3/6 EXECUTE (milestone 1/3)")
 
 ### Phase 4: VERIFY
 ```
-update_agent_status(phase="Phase 4/6 VERIFY")
+update_agent_status(phase="Phase 4/7 VERIFY")
 
 ### Phase 4: VERIFY
 **Status:** COMPLETE
@@ -356,7 +553,7 @@ claim DONE.
 | 5.4 | Security Review | task(reviewer); the subagent loads the security-review skill | `security: ses_<id>` | like 5.2, agent in {reviewer}, id distinct from 5.2 and 5.3 |
 
 ```
-update_agent_status(phase="Phase 5/6 REVIEW")
+update_agent_status(phase="Phase 5/7 REVIEW")
 
 ### Phase 5: REVIEW
 **Status:** COMPLETE
@@ -444,11 +641,30 @@ Every coverage / success claim in the DONE-Report must carry a proof pointer (co
 
 Corollary from the ledgere schema: don't claim success you cannot back. Move unproven items to **Open** in the plan instead of asserting them in **Verified**.
 
-### Phase 6: FINISH
+### Phase 6: DAEMON-VERIFY
 ```
-update_agent_status(phase="Phase 6/6 FINISH")
+update_agent_status(phase="Phase 6/7 DAEMON-VERIFY")
 
-### Phase 6: FINISH
+### Phase 6: DAEMON-VERIFY
+**Status:** COMPLETE
+**Vorab-Prüfung:** yesmem verify-claims → exit 0 (accepted), Urteil liegt für diesen Bericht
+**Findings:** none | <was der Lauf gesagt hat und was du dagegen getan hast>
+```
+
+- **Die Prüfung ist deine Phase, nicht die des Daemons.** Du läufst den Befehl aus
+  "Der Vorab-Lauf", liest das Urteil und schreibst es hierher. Exit 0 heißt `accepted`
+  und öffnet Phase 7; Exit 1 heißt `blocked`, und der Befund entscheidet, wohin du
+  zurückgehst: `refuted` oder `defect` in die Arbeit (Phase 3 oder 4), `environment`,
+  `limit` oder `error` an den Orchestrator.
+- **Kein Ermessen, kein Modell.** Der Befehl, der Exit-Code und der Befund sind die
+  ganze Entscheidung. Ein Feld ohne den Wortlaut `accepted` behauptet nichts: der
+  DONE-Guard liest Phase 6 als nicht belegt.
+
+### Phase 7: FINISH
+```
+update_agent_status(phase="Phase 7/7 FINISH")
+
+### Phase 7: FINISH
 **Status:** COMPLETE
 **Deploy required:** yes (binary/skill/cap/code change) | no (docs/config only)
 **Deploy executed:** yes — <evidence: make build output, md5sum diff>
@@ -459,17 +675,26 @@ update_agent_status(phase="Phase 6/6 FINISH")
 **Worktree:** kept (pending merge confirmation)
 **send_to orchestrator:** yes — <timestamp>
 **send_to payload:** `[DONE] [DEPLOY: yes|no|skipped|failed] [COMMIT: <hash>] [BRANCH: <name>] [MERGE: no|pending-PR|blocked-PR] <summary>`
+**Prüfbericht:** <section>-verify geschrieben (Commit, Branch, Testlauf, Evidenz)
 **set_plan complete:** yes
 ```
 
-- **send_to marker convention (mandatory in Phase 6):** Orchestrator parses these markers — keep them leading in the `send_to` payload, summary free-text after.
+- **Prüfbericht vor dem DONE:** Der Abschnitt `<section>-verify` steht, bevor du
+  `send_to` absetzt. Muster oben unter "Der Prüfbericht".
+
+- **Vorab-Prüfung vor dem DONE:** Nach dem letzten Commit und dem Push läufst du
+  `yesmem verify-claims` mit dem Befehl aus "Der Vorab-Lauf" und wartest auf Exit 0. Erst
+  danach setzt du das DONE ab. Ein DONE ohne frisches angenommenes Urteil blockt der
+  Daemon als Defekt, ohne selbst zu prüfen.
+
+- **send_to marker convention (mandatory in Phase 7):** Orchestrator parses these markers — keep them leading in the `send_to` payload, summary free-text after.
   - `DEPLOY`: `yes` (deployed), `no` (docs-only, not required), `skipped` (required but skipped per instruction/contract), `failed` (attempted, failed — escalate)
   - `MERGE`: `no` (default — agents never merge), `pending-PR` (PR created, awaits orchestrator), `blocked-PR` (PR has blockers)
 
 - **Merge policy: Agents NEVER merge to main themselves.**
   - Default: push the worktree branch to origin, create a PR (or leave for the orchestrator to create one), then `send_to caller_session: "[DONE] [DEPLOY: <status>] [COMMIT: <hash>] [BRANCH: <name>] [MERGE: pending-PR] <summary>"`. Markers are parsed by orchestrator — keep leading, free-text summary after.
   - `--merge` flag on the /yesloop command means the **orchestrator** requested auto-merge after PR checks pass. Even then the agent only pushes the branch and reports the PR URL — it does not run `git merge main` / `git checkout main && git merge <branch>` itself. The orchestrator handles the merge.
-  - Running `git checkout main` + `git merge <branch>` inside the agent's Phase 6 is ALWAYS wrong, regardless of flag, confidence, or test results. The agent's git scope is its worktree branch. Main is the orchestrator's scope.
+  - Running `git checkout main` + `git merge <branch>` inside the agent's Phase 7 is ALWAYS wrong, regardless of flag, confidence, or test results. The agent's git scope is its worktree branch. Main is the orchestrator's scope.
   - Rationale: the orchestrator owns release decisions, rollback, commit-message control, and PR review. A self-merge bypasses all four.
 - **Do NOT delete worktree** — keep until the orchestrator confirms the merge is done.
 
@@ -488,7 +713,7 @@ update_agent_status(phase="Phase 6/6 FINISH")
 
 ### Phase 2: PLAN
 **Status:** COMPLETE
-**Plan stored via set_plan:** yes
+**Plan stored via set_plan:** yes (with `items` — see "Structured plan items")
 **Decisions resolved:** all
   - File selection: config.go, handler_state.go, cmd_config.go, main.go
   - Schema decisions: yaml config struct with Get/Set methods
@@ -552,7 +777,12 @@ security: ses_237
 
 **REVIEW→VERIFY cycles used:** 2/5
 
-### Phase 6: FINISH
+### Phase 6: DAEMON-VERIFY
+**Status:** COMPLETE
+**Vorab-Prüfung:** yesmem verify-claims → exit 0 (accepted)
+**Findings:** none
+
+### Phase 7: FINISH
 **Status:** COMPLETE
 **Deploy required:** yes (Go code change)
 **Deploy executed:** yes — make build → binary mtime 2026-06-20T00:40
@@ -561,6 +791,48 @@ security: ses_237
 **send_to payload:** `[DONE] [DEPLOY: yes] [COMMIT: 27e35ca] [BRANCH: yesloop/example-task] [MERGE: no] Add config.yaml read/write`
 **set_plan complete:** yes
 ```
+
+## Test Charter (when a test counts)
+
+TDD is mandatory: the test exists before the fix. These rules decide whether a test counts as
+evidence. Group A is machine-checkable, B is the cold reviewer's criterion, C is proportionality.
+
+**A — machine-checkable**
+
+- **A1 RED first, against the base.** Run the new test on `origin/main` without the fix and keep the
+  failing output. No RED, no test. A test written after a review finding is allowed, but then revert
+  the fix locally and show the test turns red.
+- **A2 Deterministic.** No network (httptest is fine), no real `time.Sleep`, no real clock without
+  injection, no `rand` without a seed.
+- **A3 Hermetic.** HOME and XDG point at a temp dir, fixtures live in the repo, and the existing
+  per-package harness is used instead of a second one.
+- **A4 Skips are named.** Every `t.Skip` names the missing prerequisite. Never skip silently.
+- **A5 The race gate stays as it is.** A new slow test in `proxy`, `storage`, `daemon` or `hooks`
+  needs its RACE_RUN classification, not a loosened gate.
+- **A6 Deleting or moving an existing test** needs a reason in the report and a pointer to where the
+  coverage lives now.
+
+**B — the cold reviewer's criterion**
+
+- **B1 Name the defect each new test catches.** If no defect can be named, the test is invalid.
+- **B2 Behaviour through the public seam**, not internal fields or call counters.
+- **B3 One behaviour per test, the name states the rule.**
+- **B4 Every assertion names expected and got.**
+
+**C — proportionality (no overengineering)**
+
+- **C1 No tests for cases that cannot occur.** If the realistic use path cannot be named, it is an
+  overengineering test and it goes. Same rule as the no-esoteric-hardening pin, applied to tests.
+- **C2 No tests for language or framework guarantees** (nil handling, SQL driver, JSON encoding,
+  standard library). Trust internals.
+- **C3 No behaviour tested twice on two layers.** Once, at the seam where it is decided.
+- **C4 Table-driven over N single functions** when the cases exercise the same behaviour with
+  different values.
+- **C5 Size in the order of the production code you touch.** Not four times, and never a hundred
+  thousand lines of tests for a thousand lines of code. Few tests at boundaries and error classes
+  beat many tests on the obvious.
+
+Work in progress that violates A or B gets corrected before the first commit.
 
 ## Guardrails (Prevent Agent Drift)
 
@@ -618,7 +890,7 @@ Your state lives in yesmem, not context. On every wake-up:
 2. `scratchpad_read(project, section)` — restore detailed context
 3. **`check_messages`** — poll for orchestrator messages (OpenCode has no push, DB-poll is the only reliable path)
 4. Reconstruct current phase + milestone
-5. `update_agent_status(phase="Phase N/6 NAME (milestone M/K)")` — re-assert current state
+5. `update_agent_status(phase="Phase N/7 NAME (milestone M/K)")` — re-assert current state
 6. Continue where you left off
 
 ## TUI Agent Mode (You were spawned in a worktree)
@@ -638,12 +910,12 @@ On startup, before ANY other action:
 
 **IF ANY CHECK FAILS:** STOP. Do not touch files. `scratchpad_write + send_to orchestrator: "⛔ WORKTREE GUARD FAILED: pwd=<actual>, branch=<actual>. Expected <expected>."` Wait for orchestrator.
 
-**IF ALL PASS:** Identify via `whoami`, `scratchpad_read(project, section)`, `get_plan()`, `update_agent_status(phase="Phase 1/6 ANALYZE")`, then begin pipeline.
+**IF ALL PASS:** Identify via `whoami`, `scratchpad_read(project, section)`, `get_plan()`, `update_agent_status(phase="Phase 1/7 ANALYZE")`, then begin pipeline.
 
 Write-Probe-Regel: die Probe-Datei wird NICHT gelöscht (kein rm) — sie bleibt im Worktree liegen und wird mit dem Worktree-Cleanup entfernt.
 
 ### Completion — MUST do all three:
-1. `scratchpad_write(content="✅ DONE: <summary>. PR: <url>")` — final write with all 6 phase blocks COMPLETE
+1. `scratchpad_write(content="✅ DONE: <summary>. PR: <url>")` — final write with all 7 phase blocks COMPLETE
 2. `send_to(target=<caller_session>, content="[DONE] [DEPLOY: <status>] [COMMIT: <hash>] [BRANCH: <name>] [MERGE: <status>] <summary>. PR: <url>")` — markers leading, parsed by orchestrator; summary free-text after
 3. `set_plan(...)` mark as completed
 
@@ -680,36 +952,36 @@ Layer 2 of the yesloop guarantee: **Idle Detection** for yesloop agents with a l
 | State | Condition | Action |
 |---|---|---|
 | 0 WORKING | stream_active=true or idle <10min | No action |
-| 1 SELF_CHECK | stream_active=false for 10min, PID alive | Relay 1: mid-pipeline text, or the six-phase question when the agent claims DONE or reports Phase 6 (see below) |
-| 2 REMARK_REQUEST | PROVEN marker found | Relay 2: ask agent to mark all 6 phases as done |
-| 3 COMMIT_REQUEST | 6 phases marked done | Relay 3: ask agent to commit and send_to orchestrator |
+| 1 SELF_CHECK | stream_active=false for 10min, PID alive | Relay 1: mid-pipeline text, or the seven-phase question when the agent claims DONE or reports Phase 7 (see below) |
+| 2 REMARK_REQUEST | PROVEN marker found | Relay 2: ask agent to mark all 7 phases as done |
+| 3 COMMIT_REQUEST | 7 phases marked done | Relay 3: ask agent to commit and send_to orchestrator |
 | 4 DONE | send_to evidence in scratchpad | Terminal — notify orchestrator |
 
 ### Relay Messages
 
-Relay 1 has two wordings: the six-phase question only to an agent that claims DONE or reports Phase 6, the mid-pipeline text to every other agent.
+Relay 1 has two wordings: the seven-phase question only to an agent that claims DONE or reports Phase 7, the mid-pipeline text to every other agent.
 
 The daemon sends these exact messages (metachar-free, no markdown, no backticks):
 
-1. **State 0 → 1, six-phase wording** (the agent claims DONE or reports Phase 6): `Have you completed all 6 phases? If not do it now. For each phase prove you have done each. IF you have proven, mark each phase as done: put [x] at the end of the phase header line, or on its own line inside the phase block with just the marker and optionally the phase number or phase name, for example [x] Phase 1 or [x] ANALYZE. The Status line from the phase template with the value COMPLETE also counts. MANDATORY: Make sure that you have also done phase 5 with all code reviews including Sub-phase 5.2 cold review, 5.3 consequence check and 5.4 security review via task subagents. REVIEW BLOCKED without subagent trace is not acceptable. Mandatory: only mark as PROVEN if it IS proven.`
+1. **State 0 → 1, seven-phase wording** (the agent claims DONE or reports Phase 7): `Have you completed all 7 phases? If not do it now. For each phase prove you have done each. IF you have proven, mark each phase as done: put [x] at the end of the phase header line, or on its own line inside the phase block with just the marker and optionally the phase number or phase name, for example [x] Phase 1 or [x] ANALYZE. The Status line from the phase template with the value COMPLETE also counts. MANDATORY: Make sure that you have also done phase 5 with all code reviews including Sub-phase 5.2 cold review, 5.3 consequence check and 5.4 security review via task subagents. REVIEW BLOCKED without subagent trace is not acceptable. Mandatory: only mark as PROVEN if it IS proven.`
    **State 0 → 1, mid-pipeline wording** (every other agent): `Your session showed no activity for a while. Continue the phase you are working on: do the remaining work, then write your progress and evidence into the scratchpad. Do not mark a phase as done that is not done.`
-2. **State 1 → 2:** `Mark all 6 phases as done in scratchpad: put [x] at the end of the phase header line, or on a dedicated marker line inside the phase block. The Status line from the phase template with the value COMPLETE also counts.`
-3. **State 2 → 3:** `If 1 through 6 are ok commit and send_to to caller.`
+2. **State 1 → 2:** `Mark all 7 phases as done in scratchpad: put [x] at the end of the phase header line, or on a dedicated marker line inside the phase block. The Status line from the phase template with the value COMPLETE also counts.`
+3. **State 2 → 3:** `If 1 through 7 are ok commit and send_to to caller.`
 
 ### Scratchpad Markers
 
 The idle checker reads the agent's scratchpad section to detect progress:
 
-- **PROVEN** (case-insensitive): signals that the agent has verified all 6 phases are complete → triggers State 1 → 2
+- **PROVEN** (case-insensitive): signals that the agent has verified all 7 phases are complete → triggers State 1 → 2
 - **Per-phase done marker**: since YM-149 the checker accepts the same three forms the relay names — `[x]` at the end of the phase header line (`### Phase 1: ANALYZE [x]`), a dedicated marker line inside the phase block (`[x]`, `- [x] Phase 1`, `- [x] ANALYZE`) or `**Status:** COMPLETE` in the block. A checklist item with its own text inside the block (`- [x] fixed the parser`) is NOT a phase mark.
-- **6x `**Status:** COMPLETE`**: when all 6 phase blocks are completed (detected by `CountCompletedPhases()`) → triggers State 2 → 3
+- **7x `**Status:** COMPLETE`**: when all 7 phase blocks are completed (detected by `CountCompletedPhases()`) → triggers State 2 → 3
 - **send_to orchestrator:** evidence in scratchpad → triggers State 3 → 4
 
 ### Re-fire and Escalation
 
 - Each state re-fires the relay after 90 seconds if no progress
-- After 2 re-fires (3 total attempts), the agent is **paused** as DEAD_AGENT
-- The orchestrator (caller_session) is notified via send_to
+- After 2 re-fires (3 total attempts) the guard stops relaying: it leaves a note on the row and sends one informational notice to the orchestrator
+- The agent keeps running. A guard nudges, it does not stop the agent; only the DONE verdict pauses
 
 ### What triggers idle detection
 
@@ -720,7 +992,7 @@ The idle checker reads the agent's scratchpad section to detect progress:
 
 ## Automated Done-Verify (v3.2)
 
-Layer 3 of the yesloop guarantee: **Done-Verify** for yesloop agents that emit a DONE-claim (Phase 6 header, `send_to ... DONE`, or `Phase 6/6` marker). The heartbeat runs a 4-state verify machine (`checkYesloopDoneVerify` in `internal/daemon/yesloop_done_verify.go`, called every 5 minutes) that asks the agent to **BEWEISEN** all 6 phases ran — especially Phase 5 Cold Review — before marking DONE.
+Layer 3 of the yesloop guarantee: **Done-Verify** for yesloop agents that emit a DONE-claim (Phase 7 header, `send_to ... DONE`, or `Phase 7/7` marker). The heartbeat runs a 4-state verify machine (`checkYesloopDoneVerify` in `internal/daemon/yesloop_done_verify.go`, called every 5 minutes) that asks the agent to **BEWEISEN** all 7 phases ran — especially Phase 5 Cold Review — before marking DONE.
 
 ### State Machine
 
@@ -728,40 +1000,40 @@ Layer 3 of the yesloop guarantee: **Done-Verify** for yesloop agents that emit a
 |---|---|---|
 | 0 NOT_DONE | No DONE-claim in scratchpad | Not tracked, cron inactive |
 | 1 VERIFY_REQUESTED | DONE-claim detected | Relay: "Hast du wirklich alle Phasen abgehakt..." |
-| 2 DONE_VERIFIED | BEWEISEN marker + send_to orchestrator + 6 phases COMPLETE | Terminal — cron stops for this agent |
-| 3 DEAD_AGENT_ESCALATION | 3 re-fires without progress | Freeze + notify orchestrator |
+| 2 DONE_VERIFIED | BEWEISEN marker + send_to orchestrator + 7 phases COMPLETE | Terminal — cron stops for this agent |
+| 3 NUDGED | 3 re-fires without progress | Note on the row + one notice to the orchestrator, the agent keeps running |
 
 ### DONE-Claim Indicators (any one triggers)
 
-- `### Phase 6:` header (case-insensitive)
+- `### Phase 7:` header (case-insensitive)
 - `send_to ... DONE` pattern
-- `Phase 6/6` marker
+- `Phase 7/7` marker
 - `DONE: ` prefix in content
 
 ### Relay Message (metachar-free)
 
-`Hast du wirklich alle Phasen abgehakt. Vor allem Phase 5 Code Review. Falls nicht bitte durchfuehren und BEWEISEN dass alle 5 Phasen durch sind und DANN Phase 6 Finish durchfuehren mit commit und send_to. KEIN auto-deploy.`
+`Hast du wirklich alle Phasen abgehakt. Vor allem Phase 5 Code Review inklusive Security Review via security-review Skill. Im Phase 5 Block muessen die Zeilen self-review: done, cold-review: ses ID, consequence: ses ID und security: ses ID stehen — je ein eigener task subagent, der Daemon prueft die IDs gegen die opencode DB. Phase 4 braucht eine Regression baseline. Falls nicht bitte durchfuehren und BEWEISEN dass alle Phasen durch sind und DANN Phase 7 Finish durchfuehren mit commit und send_to. KEIN auto-deploy.`
 
 ### Scratchpad Markers
 
 The done-verify checker reads the agent's scratchpad section to detect progress:
 
 - **DONE-claim** (any indicator above): triggers NOT_DONE → VERIFY_REQUESTED
-- **BEWEISEN** (case-insensitive) + `send_to orchestrator:` line + 6 phases COMPLETE: triggers VERIFY_REQUESTED → DONE_VERIFIED
-- Missing evidence after 3 re-fires: triggers VERIFY_REQUESTED → DEAD_AGENT_ESCALATION
+- **BEWEISEN** (case-insensitive) + `send_to orchestrator:` line + 7 phases COMPLETE: triggers VERIFY_REQUESTED → DONE_VERIFIED
+- Missing evidence after 3 re-fires: triggers VERIFY_REQUESTED → NUDGED
 
 ### Re-fire and Escalation
 
 - Re-fires the relay every 5 minutes if no progress
-- After 3 re-fires (total 4 relay attempts), the agent is **paused** as DEAD_AGENT
-- The orchestrator (caller_session) is notified via send_to
+- After 3 re-fires (total 4 relay attempts) the layer reports once: a note on the row plus one notice to the orchestrator
+- The agent keeps running: this layer does not stop it, the seven-phase DONE gate decides a DONE
 
 ### What triggers done-verify
 
 - Section prefix: `yesloop-`
 - Agent status: `running`
 - Scratchpad content matches any DONE-claim indicator
-- Agent not already in DONE_VERIFIED or DEAD_AGENT_ESCALATION state
+- Agent not already in DONE_VERIFIED or NUDGED state
 
 ### Boundary with other layers
 
@@ -778,8 +1050,7 @@ Layer 4 of the yesloop guarantee: **Context-Compaction-Re-Read** gegen Skill-Ver
 |---|---|---|
 | 0 TRACKING | Arbeitsvolumen unter Schwelle seit Baseline | No action |
 | 1 REMIND | OutputTokens-Delta ≥ 100k ODER Turns-Delta ≥ 50 seit Baseline | Relay: Skill-Ladezustand prüfen, bei Bedarf neu laden, per Marker bestätigen |
-| 2 CONFIRMED | **SKILL-RELOAD-<N>:** yes mit aktueller Runden-Nummer im Scratchpad | Baseline auf aktuellen Stand zurücksetzen → zurück zu TRACKING |
-| 3 DEAD_AGENT_ESCALATION | 3 Re-Fires ohne Marker | Freeze + notifyOrchestrator |
+| 2 CONFIRMED | **SKILL-RELOAD-<N>:** yes der aktuellen Runde ODER 3 Re-Fires ohne Marker | Baseline zurücksetzen → TRACKING; ohne Marker zusätzlich genau eine Info an den Orchestrator, keine Pause |
 
 ### Context-Compaction-Re-Read (Agentenseite — MANDATORY)
 
@@ -789,10 +1060,11 @@ Layer 4 of the yesloop guarantee: **Context-Compaction-Re-Read** gegen Skill-Ver
 - Die Runden-Nummer ändert sich pro Fenster: ein alter Marker aus einem früheren Fenster bestätigt ein neues Fenster NICHT. Nur eine echte, aktuelle Bestätigung verdient den Reload.
 - Ohne echten Reload KEINEN Marker setzen — der Zustand wird nur durch eine tatsächlich geladene Skill-Instanz verdient.
 
-### Re-fire and Escalation
+### Re-fire and Notification
 
 - Re-fires alle 5 Minuten ohne Marker-Progress für das aktuelle Runden-Fenster.
-- Nach dem 3. Re-Fire-Intervall ohne Fortschritt (initialer Relay + max 2 weitere gesendete Re-Fires) wird der Agent als DEAD_AGENT gepaust und der Orchester via send_to benachrichtigt.
+- Nach dem 3. Re-Fire-Intervall ohne Fortschritt (initialer Relay + max 2 weitere gesendete Re-Fires) meldet die Schicht die Runde genau einmal an den Orchestrator und schließt sie wie eine Bestätigung (Baseline-Reset): keine Pause, kein Statuswechsel, kein Relay als Bedingung, und das nächste Arbeitsfenster öffnet eine neue Runde mit frischem Token.
+- Den Vertrag prüft kein Pausenzustand, sondern der Sieben-Phasen-Validator beim DONE.
 
 ### Boundary with other layers
 
@@ -810,9 +1082,9 @@ Layer 5 of the yesloop guarantee: **Stagnation Detection** for agents with an **
 |---|---|---|
 | TRACKING | signal unchanged <2h | no action |
 | REFIRING | signal unchanged >1h | relay STAGNATION + up to 3 refires @30min |
-| ESCALATION | refires > 2 | `pauseAgent` + `notifyOrchestrator` (DEAD_AGENT) |
+| NUDGED | refires > 2 | note on the row + one `notifyOrchestrator` (GUARD NUDGE), the agent keeps running |
 
-Upon receiving a STAGNATION relay: write a status line with current evidence to the scratchpad immediately (scratchpad_append). If genuinely stuck, either change approach or document BLOCKED with the reason. Do not ignore the relay — escalation pauses you after 4 relays.
+Upon receiving a STAGNATION relay: write a status line with current evidence to the scratchpad immediately (scratchpad_append). If genuinely stuck, either change approach or document BLOCKED with the reason. Do not ignore the relay: after 4 relays the guard nudges the orchestrator about you and the note stays on your row, but nothing stops you.
 
 ## Anti-Patterns
 
