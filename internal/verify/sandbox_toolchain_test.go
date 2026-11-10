@@ -31,6 +31,17 @@ func suiteRepo(t *testing.T) (repo, commit string) {
 	return root, commit
 }
 
+// verdictOutputTail bounds what a failing test prints. The verdict keeps the
+// tail of the command's output, which is what names the real cause on a host
+// whose sandbox behaves differently from this one.
+func verdictOutputTail(output string) string {
+	const limit = 2000
+	if len(output) <= limit {
+		return output
+	}
+	return "…" + output[len(output)-limit:]
+}
+
 // goAvailability names the missing prerequisite instead of skipping silently.
 func goAvailability(t *testing.T) string {
 	t.Helper()
@@ -121,7 +132,8 @@ func TestSandboxKeepsAGoTestRunUnverifiableWithoutAProfile(t *testing.T) {
 	}, ctx)
 
 	if verdict.Status != engine.StatusUnverifiable {
-		t.Fatalf("status = %s (%s), want %s", verdict.Status, verdict.Reason, engine.StatusUnverifiable)
+		t.Fatalf("status = %s (%s), want %s; the sandbox could not be kept out of the toolchain here\ncommand: %s\noutput tail:\n%s",
+			verdict.Status, verdict.Reason, engine.StatusUnverifiable, verdict.Command, verdictOutputTail(verdict.Output))
 	}
 	if verdict.Class != engine.ClassEnvironment {
 		t.Fatalf("class = %q (%s), want %q", verdict.Class, verdict.Reason, engine.ClassEnvironment)

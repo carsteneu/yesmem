@@ -110,6 +110,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Testing
 
+- Let the sandbox check name the failure it sees
 - Pin the full trigger set and the deliberate absence of the yesloop trigger
 - The campaign skill survives catalogue discovery, not just its file
 - Gofmt the plan-thread table
