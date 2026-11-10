@@ -159,27 +159,6 @@ var (
 // never an unverified DONE.
 const maxStoredVerdicts = 256
 
-// doneGateRunLocks serialises the gate per agent. One lock per agent rather
-// than one global lock: a blocked gate notifies an orchestrator whose own gate
-// can run in the same process, and a single lock would then wait on itself.
-var (
-	doneGateRunLocksMu sync.Mutex
-	doneGateRunLocks   = map[string]*sync.Mutex{}
-)
-
-// lockDoneGateRun holds the gate slot of one agent and returns its release.
-func lockDoneGateRun(id string) func() {
-	doneGateRunLocksMu.Lock()
-	lock, ok := doneGateRunLocks[id]
-	if !ok {
-		lock = &sync.Mutex{}
-		doneGateRunLocks[id] = lock
-	}
-	doneGateRunLocksMu.Unlock()
-	lock.Lock()
-	return lock.Unlock
-}
-
 // resetDoneGateVerifyStates clears the gate's whole memory: the per-agent attempt
 // states, the verdict registry and the in-flight keys. Used in tests.
 func resetDoneGateVerifyStates() {
@@ -755,13 +734,6 @@ func (h *Handler) gateDoneVerify(agent storage.Agent, content string) bool {
 	if repo == "" || agent.Project == "" || agent.Section == "" {
 		return false
 	}
-
-	// One gate per agent at a time. Two ticks can land on the same report, and
-	// without this the slower one announces a block after the faster one has
-	// already escalated: the agent then reads a fourth request after the case
-	// left the loop, which is exactly what the escalation exists to prevent.
-	unlock := lockDoneGateRun(agent.ID)
-	defer unlock()
 
 	report, readErr := h.verifyReport(agent)
 	// A row that still carries the escalation is not re-entered: the state map is in

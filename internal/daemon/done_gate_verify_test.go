@@ -938,7 +938,11 @@ func TestDoneGateEscalatesAfterThreeBlockedRounds(t *testing.T) {
 		}
 	}
 
-	messages := contentWrites(rec)
+	// The recorder is fed by the accepting goroutine, so a synchronous read here
+	// races the write that just left the daemon. Every other assertion in this
+	// file waits through a helper; this one used to read the slice directly and
+	// failed under CI load with only the two earlier messages recorded.
+	messages := requireMessages(t, rec, doneVerifyEscalateAfter)
 	if len(messages) == 0 || !strings.Contains(messages[len(messages)-1], "Eskaliert an den Orchestrator") {
 		t.Fatalf("the last message to the agent is %q, want the escalation sentence", messages)
 	}
