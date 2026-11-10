@@ -153,10 +153,32 @@ var (
 	doneGateVerifyStatesMu sync.Mutex
 )
 
-// maxStoredVerdicts bounds the registry. One entry is written per verification,// not per tick, but a daemon running for weeks would still accumulate them. The
+// maxStoredVerdicts bounds the registry. One entry is written per verification,
+// not per tick, but a daemon running for weeks would still accumulate them. The
 // oldest judgement is dropped first, which costs a re-run of the pre-check and
 // never an unverified DONE.
 const maxStoredVerdicts = 256
+
+// doneGateRunLocks serialises the gate per agent. One lock per agent rather
+// than one global lock: a blocked gate notifies an orchestrator whose own gate
+// can run in the same process, and a single lock would then wait on itself.
+var (
+	doneGateRunLocksMu sync.Mutex
+	doneGateRunLocks   = map[string]*sync.Mutex{}
+)
+
+// lockDoneGateRun holds the gate slot of one agent and returns its release.
+func lockDoneGateRun(id string) func() {
+	doneGateRunLocksMu.Lock()
+	lock, ok := doneGateRunLocks[id]
+	if !ok {
+		lock = &sync.Mutex{}
+		doneGateRunLocks[id] = lock
+	}
+	doneGateRunLocksMu.Unlock()
+	lock.Lock()
+	return lock.Unlock
+}
 
 // resetDoneGateVerifyStates clears the gate's whole memory: the per-agent attempt
 // states, the verdict registry and the in-flight keys. Used in tests.

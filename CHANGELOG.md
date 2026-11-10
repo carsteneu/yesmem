@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Serialise the done gate per agent so a late block cannot follow an escalation
 - Mask through symlinked roots, and skip what this host cannot sandbox
 - A silent exit is an environment gap, and the worktree test checks its precondition
 - Read quoted rules as text unless an interpreter runs them
