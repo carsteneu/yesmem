@@ -29,20 +29,24 @@ import (
 // Round-scoped marker: every window's relay embeds a fresh round token
 // (SKILL-RELOAD-<N>: yes). Only a marker matching the CURRENT round confirms —
 // a stale marker from an earlier window cannot auto-ack later windows, so the
-// escalation path stays reachable after the first confirmation.
+// notification stays reachable after the first confirmation.
+//
+// This layer never pauses an agent. Past the last refire it reports the round
+// once to the orchestrator, closes the round the way a confirmation would
+// (baseline reset) and starts the next window from there: the pipeline contract
+// is checked at DONE by the seven-phase validator, and a pause here turned the
+// orchestrator into the resume button without a single case that needed it.
 
 const (
 	yesloopSkillCheckStateTracking = iota
 	yesloopSkillCheckStateRemind
 	yesloopSkillCheckStateConfirmed
-	yesloopSkillCheckStateDeadAgentEscalation
 )
 
 var yesloopSkillCheckStateNames = map[int]string{
-	yesloopSkillCheckStateTracking:            "TRACKING",
-	yesloopSkillCheckStateRemind:              "REMIND",
-	yesloopSkillCheckStateConfirmed:           "CONFIRMED",
-	yesloopSkillCheckStateDeadAgentEscalation: "DEAD_AGENT_ESCALATION",
+	yesloopSkillCheckStateTracking:  "TRACKING",
+	yesloopSkillCheckStateRemind:    "REMIND",
+	yesloopSkillCheckStateConfirmed: "CONFIRMED",
 }
 
 const (
@@ -159,8 +163,8 @@ func (h *Handler) checkYesloopSkillCheck() {
 
 // checkOneSkillCheck drives a single agent through the skill-check state machine.
 // Lock discipline (done_guard L60-62): the mutex is held for map reads/writes
-// only and released around socket/DB I/O (relay, pause, notify) so a stuck
-// agent socket cannot block the checks of concurrent agents.
+// only and released around socket/DB I/O (relay, notify) so a stuck agent
+// socket cannot block the checks of concurrent agents.
 func (h *Handler) checkOneSkillCheck(agent storage.Agent) {
 	if agent.Status != "running" {
 		h.pruneSkillCheckState(agent.ID)
@@ -172,9 +176,9 @@ func (h *Handler) checkOneSkillCheck(agent storage.Agent) {
 	if agent.SessionID == "" || agent.Project == "" {
 		return
 	}
-	// The guard relays into the agent's socket and pauses on escalation, so it
-	// needs the agent's own process — not just "somebody holds this PID"
-	// (Learning #101907). Dead rows are crashRecovery's case.
+	// The guard relays into the agent's socket, so it needs the agent's own
+	// process — not just "somebody holds this PID" (Learning #101907). Dead rows
+	// are crashRecovery's case.
 	if agentProcessGone(agent) {
 		return
 	}
@@ -199,7 +203,7 @@ func (h *Handler) checkOneSkillCheck(agent storage.Agent) {
 
 	// Freeze while the agent is blocked in a task() subagent: opencode child
 	// sessions queue injected relays as pending user messages, so no relay,
-	// refire count, escalation or interval advancement may happen this tick.
+	// refire count, notice or interval advancement may happen this tick.
 	// The freeze shifts lastRelayAt forward by the tick, so the refire
 	// interval restarts when the subagent returns.
 	if opencodeChildActiveFn(agent.OpencodeSessionID) {
@@ -216,7 +220,7 @@ func (h *Handler) checkOneSkillCheck(agent storage.Agent) {
 	// Decisions are computed under the lock; I/O is deferred past the unlock.
 	yesloopSkillCheckAgentsMu.Lock()
 	var sendRelay bool
-	var escalate bool
+	var notify bool
 	switch state.state {
 	case yesloopSkillCheckStateTracking:
 		outDelta := agent.OutputTokens - state.baselineOut
@@ -244,30 +248,23 @@ func (h *Handler) checkOneSkillCheck(agent storage.Agent) {
 			// Relay ONLY when a refire is actually counted (interval elapsed,
 			// max not reached). Ticks inside the interval must send nothing,
 			// otherwise every ~30s heartbeat floods the agent.
-			sendRelay, escalate = h.maybeSkillCheckRefireLocked(agent, state, "no current-round SKILL-RELOAD marker in scratchpad")
+			sendRelay, notify = h.maybeSkillCheckRefireLocked(agent, state, "no current-round SKILL-RELOAD marker in scratchpad")
 		}
 
 	case yesloopSkillCheckStateConfirmed:
-		// Confirmation received — reset the baseline to current counters and
-		// resume tracking for the next compaction window.
+		// Round closed — by a marker or by the notice after the last refire.
+		// Reset the baseline to current counters and resume tracking for the next
+		// compaction window.
 		state.baselineOut = agent.OutputTokens
 		state.baselineTurns = agent.TurnsUsed
 		h.transitionSkillCheckLocked(agent, state, yesloopSkillCheckStateTracking)
-
-	case yesloopSkillCheckStateDeadAgentEscalation:
-		// Terminal — no further action.
-		yesloopSkillCheckAgentsMu.Unlock()
-		return
 	}
 	// Relay metadata is read under the lock; state is NOT read after unlock.
 	relayRound := state.round
 	yesloopSkillCheckAgentsMu.Unlock()
 
-	if escalate {
-		h.pauseAgent(agent.ID, fmt.Sprintf("yesloop-skillcheck escalation: no current-round SKILL-RELOAD marker"))
-		h.notifyOrchestrator(agent, fmt.Sprintf(
-			"DEAD_AGENT: Agent %s (%s) skillcheck escalation — no current-round SKILL-RELOAD marker%s",
-			agent.ID, agent.Section, orchestratorPauseHint))
+	if notify {
+		h.notifySkillCheckNotice(agent, relayRound)
 		return
 	}
 	if sendRelay {
@@ -296,23 +293,40 @@ func (h *Handler) transitionSkillCheckLocked(agent storage.Agent, state *yesloop
 }
 
 // maybeSkillCheckRefireLocked re-fires the reminder decision: counts a refire
-// when the interval has elapsed and reports (refired, escalate). Ticks inside
-// the interval report neither — no relay may be sent for them. Caller must
-// hold yesloopSkillCheckAgentsMu.
-func (h *Handler) maybeSkillCheckRefireLocked(agent storage.Agent, state *yesloopSkillCheckState, reason string) (refired bool, escalate bool) {
+// when the interval has elapsed and reports (refired, notify). Ticks inside the
+// interval report neither — no relay may be sent for them. Reaching the refire
+// max reports the round once (notify) and closes it like a confirmation; the
+// agent keeps running. Caller must hold yesloopSkillCheckAgentsMu.
+func (h *Handler) maybeSkillCheckRefireLocked(agent storage.Agent, state *yesloopSkillCheckState, reason string) (refired bool, notify bool) {
 	if time.Since(state.lastRelayAt) < yesloopSkillCheckRefireInterval {
 		return false, false
 	}
 	state.refireCount++
 	if state.refireCount >= yesloopSkillCheckMaxRefires {
-		log.Printf("[yesloop-skillcheck] agent %s (%s) ESCALATION: %s (refireCount=%d, max=%d)",
+		log.Printf("[yesloop-skillcheck] agent %s (%s) NOTICE: %s (refireCount=%d, max=%d) — agent keeps running, round closed",
 			agent.ID, agent.Section, reason, state.refireCount, yesloopSkillCheckMaxRefires)
-		state.state = yesloopSkillCheckStateDeadAgentEscalation
-		state.transitionedAt = time.Now()
+		// Close the round the way a confirmation would. The baseline resets on
+		// the next tick, so a later window of work opens a fresh round instead of
+		// leaving the reminder dead for the rest of the run.
+		h.transitionSkillCheckLocked(agent, state, yesloopSkillCheckStateConfirmed)
 		return false, true
 	}
 	state.lastRelayAt = time.Now()
 	return true, false
+}
+
+// notifySkillCheckNotice tells the agent's caller once per round that the agent
+// works on without a skill confirmation. It is information, not a gate: no
+// pause, no status change, nothing the orchestrator has to do. The phase
+// contract is checked at DONE. The round token is in the text so two notices
+// from the same run are distinguishable.
+func (h *Handler) notifySkillCheckNotice(agent storage.Agent, round int) {
+	content := fmt.Sprintf(
+		"INFO: Agent %s (%s) works on after %d skill reload reminders without SKILL-RELOAD-%d: yes. No action needed: the skill check never pauses an agent, and the phase contract is checked at DONE.",
+		safeAgentText(agent.ID), safeAgentText(agent.Section), yesloopSkillCheckMaxRefires, round)
+	if !h.notifyOrchestrator(agent, content) {
+		log.Printf("[yesloop-skillcheck] notice for agent %s was not accepted by the caller channel", safeAgentText(agent.ID))
+	}
 }
 
 // sendSkillCheckRelay sends the skill-check relay for the current round to a

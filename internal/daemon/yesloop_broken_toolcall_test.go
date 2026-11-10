@@ -444,7 +444,7 @@ func TestBrokenToolcallGuard_CompletedPipelineIsSkipped(t *testing.T) {
 	stub.setAssistant(assistantTurn("msg_1", "stop", textPart(toolCallAsText)))
 	h, s := setupBrokenToolcall(t, stub, srv)
 	makeBoundYesloopAgent(t, h, s, "bt-done", "ses_bt_done")
-	s.ScratchpadWrite("testproj", "yesloop-bt-done", buildSixPhaseCompleteContent(), "")
+	s.ScratchpadWrite("testproj", "yesloop-bt-done", buildSevenPhaseCompleteContent(), "")
 
 	h.checkYesloopBrokenToolcalls()
 	h.checkYesloopBrokenToolcalls()
@@ -472,7 +472,7 @@ func TestBrokenToolcallGuard_ActiveSubagentIsSkipped(t *testing.T) {
 }
 
 // The agent answered the relay with another broken turn: after the refire limit
-// the guard escalates the same way the idle and stagnation guards do.
+// the guard nudges it once, the way the idle and stagnation guards do.
 func TestBrokenToolcallGuard_EscalatesAfterMaxRelays(t *testing.T) {
 	stub, srv := newBrokenToolcallStub(t)
 	stub.setAssistant(assistantTurn("msg_1", "stop", textPart(toolCallAsText)))
@@ -493,30 +493,8 @@ func TestBrokenToolcallGuard_EscalatesAfterMaxRelays(t *testing.T) {
 	if got := len(stub.delivered()); got != 3 {
 		t.Errorf("delivered prompts = %d, want 3 (relay + two refires)", got)
 	}
-	row, err := s.AgentGet(agent.ID)
-	if err != nil {
-		t.Fatalf("AgentGet: %v", err)
-	}
-	if row.Status != "paused" {
-		t.Errorf("after the refire limit the agent must be paused, got %q", row.Status)
-	}
-	if !strings.Contains(row.Progress, "yesloop-broken-toolcall") {
-		t.Errorf("pause reason must name the guard, got %q", row.Progress)
-	}
-
-	msgs, err := s.GetChannelMessages([]string{"caller-" + agent.ID})
-	if err != nil {
-		t.Fatalf("GetChannelMessages: %v", err)
-	}
-	var sawDead bool
-	for _, m := range msgs {
-		if strings.Contains(m.Content, "DEAD_AGENT") && strings.Contains(m.Content, orchestratorPauseHint) {
-			sawDead = true
-		}
-	}
-	if !sawDead {
-		t.Errorf("the orchestrator must be notified of the escalation, got %+v", msgs)
-	}
+	// The finding lands on the row as a note, and the agent keeps running.
+	assertGuardNudged(t, s, agent.ID, "yesloop-broken-toolcall")
 }
 
 // A new turn that ran a tool ends the case: the idle guard is free again.
@@ -852,9 +830,8 @@ func TestBrokenToolcallGuard_SuppressionWindowIsShort(t *testing.T) {
 }
 
 // A terminal case must not swallow the next defect: after the escalation a new
-// broken turn is a NEW case, judged on its own — otherwise the finding stays
-// silent and the idle guard takes the agent back with the generic text, the
-// overlay YM-196 rules out (consequence review, finding 2).
+// broken turn is a NEW case, judged on its own. The suppression that keeps the
+// idle layer off this turn must not become permanent either.
 func TestBrokenToolcallGuard_TerminalCaseDoesNotSwallowANewDefect(t *testing.T) {
 	stub, srv := newBrokenToolcallStub(t)
 	stub.setAssistant(assistantTurn("msg_1", "stop", textPart(toolCallAsText)))
@@ -868,8 +845,15 @@ func TestBrokenToolcallGuard_TerminalCaseDoesNotSwallowANewDefect(t *testing.T) 
 		expireRefire(t, agent.ID)
 	}
 	h.checkYesloopBrokenToolcalls() // escalation
-	if brokenToolcallPending(agent) {
-		t.Fatal("precondition: the escalated case must be terminal")
+	yesloopBrokenToolcallAgentsMu.Lock()
+	escalated := yesloopBrokenToolcallAgents[agent.ID]
+	terminal := escalated != nil && escalated.state == brokenToolcallStateEscalated
+	yesloopBrokenToolcallAgentsMu.Unlock()
+	if !terminal {
+		t.Fatal("precondition: the case must have escalated")
+	}
+	if !brokenToolcallPending(agent) {
+		t.Error("an escalated case must keep the idle layer off this turn")
 	}
 
 	// The agent keeps going (an unpause is enough for that — permission_kick does
@@ -883,6 +867,36 @@ func TestBrokenToolcallGuard_TerminalCaseDoesNotSwallowANewDefect(t *testing.T) 
 
 	if !brokenToolcallPending(agent) {
 		t.Error("a new broken turn must open a new case instead of being swallowed")
+	}
+}
+
+// The suppression a terminal case buys must be bounded. Without a bound the case
+// is renewed on every tick (the anchor turn never settles), the idle layer stays
+// out forever, and an agent that goes silent after the escalation is watched by
+// nobody.
+func TestBrokenToolcallGuard_EscalatedSuppressionIsBounded(t *testing.T) {
+	stub, srv := newBrokenToolcallStub(t)
+	stub.setAssistant(assistantTurn("msg_1", "stop", textPart(toolCallAsText)))
+	h, s := setupBrokenToolcall(t, stub, srv)
+	agent := makeBoundYesloopAgent(t, h, s, "bt-bound", "ses_bt_bound")
+
+	h.checkYesloopBrokenToolcalls()
+	expireGrace(t, agent.ID)
+	for i := 0; i < 4; i++ {
+		h.checkYesloopBrokenToolcalls()
+		expireRefire(t, agent.ID)
+	}
+
+	if !brokenToolcallPending(agent) {
+		t.Fatal("precondition: the escalated case must keep the idle layer off this turn")
+	}
+
+	yesloopBrokenToolcallAgentsMu.Lock()
+	yesloopBrokenToolcallAgents[agent.ID].escalatedAt = time.Now().Add(-brokenToolcallSuppressAfter - time.Second)
+	yesloopBrokenToolcallAgentsMu.Unlock()
+
+	if brokenToolcallPending(agent) {
+		t.Error("after the bound the idle layer must take the agent back: the case was reported once and may not silence the remaining layers")
 	}
 }
 

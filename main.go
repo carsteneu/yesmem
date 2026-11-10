@@ -187,6 +187,8 @@ func main() {
 		runConfig(os.Args[2:])
 	case "scratchpad":
 		runScratchpad()
+	case "verify-claims":
+		runVerifyClaims(os.Args[2:])
 	case "cap-store":
 		runCapStoreCLI(os.Args[2:])
 	case "store":
@@ -387,6 +389,7 @@ func printUsage() {
 	fmt.Println("  quickstart      Fast extraction of last N sessions [--last N]")
 	fmt.Println("  uninstall       Remove all YesMem registrations")
 	fmt.Println("  status          Show index status")
+	fmt.Println("  verify-claims   Judge a DONE report against the repository [--repo P] [--report file|-|--project P --section S] [--base R] [--head R] [--profile P] [--policy P] [--budget D] [--report-session S] [--plan-thread T] [--strict] [--json]; --init writes the project profile .yesmem/verify.yaml after a passing proof run")
 	fmt.Println("  save-terminals  Snapshot open terminal windows (positions + sessions)")
 	fmt.Println("  restart-terminals  Reopen saved terminal windows after a reboot")
 	fmt.Println("  spawn-terminal [dir]  Start a new terminal session as a managed (relayable) agent; default: current dir")

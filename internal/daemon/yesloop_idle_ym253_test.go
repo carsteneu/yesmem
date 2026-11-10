@@ -433,10 +433,10 @@ func TestIdleGuard_YM253_DeferredWhileTheSocketIsBusy(t *testing.T) {
 	}
 }
 
-// TestIdleGuard_YM253_EscalationSkipsWhenTheProtocolWasReset: the pause is the
-// one action that is not re-validated by the relay path. If the orchestrator
-// answered the escalation while the decision was being executed, the row is
-// already back under supervision and must not be paused on top of that.
+// TestIdleGuard_YM253_EscalationSkipsWhenTheProtocolWasReset: if the orchestrator
+// answered the escalation while the decision was being executed, the protocol is
+// already gone. A notice for an answered escalation would be noise, so nothing is
+// written and nothing is sent.
 func TestIdleGuard_YM253_EscalationSkipsWhenTheProtocolWasReset(t *testing.T) {
 	resetIdleState()
 	h, s := mustHandler(t)
@@ -447,13 +447,25 @@ func TestIdleGuard_YM253_EscalationSkipsWhenTheProtocolWasReset(t *testing.T) {
 	h.runIdleAction(storage.Agent{
 		ID: "ym253-esc", Project: "testproj", Section: "yesloop-ym253-esc",
 		CallerSession: "caller-ym253-esc",
-	}, idleAction{pauseReason: "no completion evidence"})
+	}, idleAction{escalationReason: "no completion evidence"})
 
 	agent, err := s.AgentGet("ym253-esc")
 	if err != nil {
 		t.Fatalf("AgentGet: %v", err)
 	}
-	if agent.Status == "paused" {
-		t.Errorf("an escalation must not pause an agent whose protocol was reset; progress=%q", agent.Progress)
+	if agent.Status != "running" {
+		t.Errorf("an escalation must not stop an agent whose protocol was reset, status = %q", agent.Status)
+	}
+	if strings.HasPrefix(agent.Progress, guardNudgeProgressPrefix) {
+		t.Errorf("an answered escalation must leave no note, progress=%q", agent.Progress)
+	}
+	msgs, err := s.GetChannelMessages([]string{"caller-ym253-esc"})
+	if err != nil {
+		t.Fatalf("GetChannelMessages: %v", err)
+	}
+	for _, m := range msgs {
+		if strings.HasPrefix(m.Content, guardNudgeNoticePrefix) {
+			t.Errorf("an answered escalation must send no notice, got %q", m.Content)
+		}
 	}
 }

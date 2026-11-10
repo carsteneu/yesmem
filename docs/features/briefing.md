@@ -121,9 +121,9 @@ While §12 injects condensed CLAUDE.md rules into long sessions, the `RULES.md` 
 
 `RULES.md` contains two sections:
 
-1. **Numbered Rules** — Behavioural constraints in imperative form. Examples: "Never auto-commit" (Rule 1), "Check for relevant Skill before acting" (Rule 6), "ALWAYS search memory before answering" (Rule 19), "API calls & Bash: always set timeouts" (Rule 23). `loadRules` keeps only lines matching `^\d+\.\s` and sends exactly those to the model.
+1. **Numbered Rules** — Behavioural constraints in imperative form. Examples: "Never auto-commit" (Rule 1), "Check for relevant Skill before acting" (Rule 6), "ALWAYS search memory before answering" (Rule 19), "API calls & Bash: always set timeouts" (Rule 23). `guard.PromptRules` keeps only lines matching `^\d+\.\s` and sends exactly those to the model.
 
-2. **Skill Catalog** — a YAML block under `## Skill Catalog`. It is **not** parsed: `loadRules` cuts the whole section out of the file and appends it verbatim to the rules text, so the model reads the catalog as plain documentation. Format today:
+2. **Skill Catalog** — a YAML block under `## Skill Catalog`. It is **not** parsed: `guard.PromptRules` cuts the whole section out of the file and appends it verbatim to the rules text, so the model reads the catalog as plain documentation. Format today:
 
 ```yaml
 ## Skill Catalog
@@ -138,17 +138,17 @@ rules:
 **Lifecycle:**
 
 - **Created** — Initially authored as `DECISIONS.md`, renamed to `RULES.md` on May 13 (semantic accuracy: Rules, not Decisions)
-- **Loaded by rule_guard** — The plugin reads `RULES.md` from the project root once per guard instance (`loadRules` behind `rulesCache`/`rulesLoaded`), not per call
-- **Evaluated** — On every tool call, the guard sends the numbered rules + skill catalog section to DeepSeek for a PASS/BLOCK/SUGGEST decision
-- **Auto-Refresh** — There is no fsnotify watcher and no reload timer. The cached text survives for the life of the plugin instance, so an edited `RULES.md` becomes effective with the next opencode session; the decision cache (`GUARD_CACHE_TTL_MS = 5000`) is keyed on the rules text
-- **Default rules** — None are hardcoded. Without a local `RULES.md` the guard sends `"No RULES.md found in project root"` and there is no built-in Rule 19 or skill rule to fall back on
+- **Loaded by the guard core** — `guard.LoadRules` reads `RULES.md` from the call's `cwd` (falling back to the installation's copy) per call, and the daemon's answer cache is keyed on the resulting prompt text. The plugin sends no rules
+- **Evaluated** — On every tool call, the daemon sends the numbered rules plus the Decision Policy and skill catalog sections to the resolved model and asks for a PASS/BLOCK/SUGGEST decision. The opencode plugin only carries the call and the context to it
+- **Auto-Refresh** — There is no fsnotify watcher and no reload timer. The rules are read per call, so an edit takes effect on the next tool call; the daemon's answer cache (5 s) is keyed on the prompt text, so a change cannot be served from a stale entry
+- **Default rules** — None are hardcoded. Without a local `RULES.md` the guard answers `PASS` with `no rules to judge against`, and there is no built-in Rule 19 or skill rule to fall back on
 
 **Relationship to CLAUDE.md:**
 
 | | CLAUDE.md | RULES.md |
 |---|---|---|
 | **Purpose** | Instructions for the agent's behaviour (coding style, conventions, project context) | Hard policy constraints for tool-call compliance |
-| **Consumer** | Loaded by Claude Code / opencode as system context; condensed and re-injected by proxy (§12) | Evaluated by rule_guard plugin (§10c) via DeepSeek |
+| **Consumer** | Loaded by Claude Code / opencode as system context; condensed and re-injected by proxy (§12) | Judged by the guard core (§10c) on every tool call, whichever harness is running |
 | **Enforcement** | Advisory (loses attention weight over long sessions → re-injection needed) | Enforced per tool call (BLOCK/SUGGEST/PASS) |
 | **Format** | Free-form Markdown with code blocks, references, tables | Numbered rules + YAML skill catalog
 

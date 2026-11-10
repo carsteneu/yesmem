@@ -16,10 +16,12 @@ import (
 //
 // Layer 3 of the yesloop guarantee. When a yesloop agent emits a DONE-claim
 // (Phase 6 header, send_to DONE, Status: COMPLETE on Phase 6), the heartbeat
-// asks the agent to prove all 6 phases ran — especially Phase 5 Cold Review.
+// asks the agent to prove all 7 phases ran — especially Phase 5 Cold Review and the
+// accepted pre-check in Phase 6.
 // The agent must reply with a BEWEISEN marker plus send_to evidence; otherwise
 // the state machine re-fires the relay up to yesloopDoneVerifyMaxRefires times,
-// then escalates to DEAD_AGENT_ESCALATION.
+// then nudges the orchestrator once and lets the agent run. The pause is not this
+// layer's to set: a DONE is decided by the seven-phase gate at the DONE itself.
 //
 // Trigger: DONE-claim in scratchpad (not stream inactivity — that's yesloop_idle).
 // States and helpers are intentionally modeled after yesloop_idle.go.
@@ -28,14 +30,14 @@ const (
 	yesloopDoneVerifyStateNotDone = iota
 	yesloopDoneVerifyStateVerifyRequested
 	yesloopDoneVerifyStateDoneVerified
-	yesloopDoneVerifyStateDeadAgentEscalation
+	yesloopDoneVerifyStateNudged
 )
 
 var yesloopDoneVerifyStateNames = map[int]string{
-	yesloopDoneVerifyStateNotDone:             "NOT_DONE",
-	yesloopDoneVerifyStateVerifyRequested:     "VERIFY_REQUESTED",
-	yesloopDoneVerifyStateDoneVerified:        "DONE_VERIFIED",
-	yesloopDoneVerifyStateDeadAgentEscalation: "DEAD_AGENT_ESCALATION",
+	yesloopDoneVerifyStateNotDone:         "NOT_DONE",
+	yesloopDoneVerifyStateVerifyRequested: "VERIFY_REQUESTED",
+	yesloopDoneVerifyStateDoneVerified:    "DONE_VERIFIED",
+	yesloopDoneVerifyStateNudged:          "NUDGED",
 }
 
 const (
@@ -47,7 +49,7 @@ const (
 // Metachar-free (no markdown, no backticks, no parens) because it is written
 // as a single line to the agent's PTY inject socket. Package-level so tests
 // can assert on the content without capturing the socket write.
-const doneVerifyRelayMessage = "Hast du wirklich alle Phasen abgehakt. Vor allem Phase 5 Code Review inklusive Security Review via security-review Skill. Im Phase 5 Block muessen die Zeilen self-review: done, cold-review: ses ID, consequence: ses ID und security: ses ID stehen — je ein eigener task subagent, der Daemon prueft die IDs gegen die opencode DB. Phase 4 braucht eine Regression baseline. Falls nicht bitte durchfuehren und BEWEISEN dass alle Phasen durch sind und DANN Phase 6 Finish durchfuehren mit commit und send_to. KEIN auto-deploy."
+const doneVerifyRelayMessage = "Hast du wirklich alle Phasen abgehakt. Vor allem Phase 5 Code Review inklusive Security Review via security-review Skill. Im Phase 5 Block muessen die Zeilen self-review: done, cold-review: ses ID, consequence: ses ID und security: ses ID stehen — je ein eigener task subagent, der Daemon prueft die IDs gegen die opencode DB. Phase 4 braucht eine Regression baseline. Falls nicht bitte durchfuehren und BEWEISEN dass alle Phasen durch sind und DANN Phase 7 Finish durchfuehren mit commit und send_to. KEIN auto-deploy."
 
 // yesloopDoneVerifyState tracks the verify state machine for a single agent.
 type yesloopDoneVerifyState struct {
@@ -78,11 +80,18 @@ var (
 // DONE-claim indicators are split into two groups:
 //   - structural indicators are matched against the full scratchpad content.
 //     They are anchors that don't false-positive on body text.
-//   - text indicators are matched against the Phase 6 block ONLY. They would
-//     false-positive on briefing/template text elsewhere (e.g. an agent's
-//     Phase 1 notes the instruction "send_to DONE when complete"). #82125.
+//   - text indicators are matched against the LAST phase block that exists.
+//     They would false-positive on briefing/template text elsewhere (e.g. an
+//     agent's Phase 1 notes the instruction "send_to DONE when complete"). #82125.
+//
+// The legacy pair (`Phase 6: FINISH`, `Phase 6/6`) is deliberate: a loop that
+// started before the verification became its own phase writes six blocks, and
+// its sixth is the handoff. Anchoring only on Phase 7 would leave exactly those
+// loops outside the contract, with nothing to bounce them.
 var doneClaimIndicatorsStructural = []*regexp.Regexp{
-	regexp.MustCompile(`(?im)^###\s+Phase\s+6\s*:`),
+	regexp.MustCompile(`(?im)^###\s+Phase\s+7\s*:`),
+	regexp.MustCompile(`(?im)Phase\s+7\s*/\s*7\b`),
+	regexp.MustCompile(`(?im)^###\s+Phase\s+6\s*:\s*FINISH`),
 	regexp.MustCompile(`(?im)Phase\s+6\s*/\s*6\b`),
 }
 
@@ -92,9 +101,10 @@ var doneClaimIndicatorsText = []*regexp.Regexp{
 }
 
 // hasDoneClaim reports whether content carries any DONE-claim indicator.
-// Structural indicators are matched against full content; text indicators
-// are scoped to the Phase 6 block only (Phase 6 is the source of truth for
-// real DONE claims — Phase 1-5 mentions are aspirational/instructional).
+// Structural indicators are matched against full content. Text indicators are
+// scoped to the handoff blocks (Phase 7, or the legacy Phase 6): the handoff is
+// the source of truth for a real DONE claim, while earlier phases mention the
+// word only as an instruction (#82125).
 func hasDoneClaim(content string) bool {
 	for _, re := range doneClaimIndicatorsStructural {
 		if re.MatchString(content) {
@@ -102,13 +112,15 @@ func hasDoneClaim(content string) bool {
 		}
 	}
 	phases := splitPhases(content)
-	phase6, ok := phases[6]
-	if !ok {
-		return false
-	}
-	for _, re := range doneClaimIndicatorsText {
-		if re.MatchString(phase6) {
-			return true
+	for _, number := range []int{donePhaseCount - 1, donePhaseCount} {
+		block, ok := phases[number]
+		if !ok {
+			continue
+		}
+		for _, re := range doneClaimIndicatorsText {
+			if re.MatchString(block) {
+				return true
+			}
 		}
 	}
 	return false
@@ -130,11 +142,11 @@ func hasSendToOrchestrator(content string) bool {
 }
 
 // isVerified reports whether the agent has produced full DONE evidence:
-// BEWEISEN marker AND send_to orchestrator line AND 6 phases COMPLETE.
+// BEWEISEN marker AND send_to orchestrator line AND 7 phases COMPLETE.
 func isVerified(content string) bool {
 	return hasBewiesenMarker(content) &&
 		hasSendToOrchestrator(content) &&
-		CountCompletedPhases(content) >= 6
+		CountCompletedPhases(content) >= donePhaseCount
 }
 
 // checkYesloopDoneVerify is the heartbeat-driven DONE-claim verifier for
@@ -155,7 +167,7 @@ func (h *Handler) checkYesloopDoneVerify() {
 // row. The map is in-memory; before YM-203 it kept one entry per agent that had
 // ever emitted a DONE-claim until the daemon restarted. A row that still exists
 // keeps its verdict — doneVerifySettled (idle guard) reads it, and the idle layer
-// must stay silent for an agent this layer already settled.
+// must stay silent for an agent whose completion this layer verified.
 func (h *Handler) pruneDoneVerifyStates(agents []storage.Agent) {
 	live := make(map[string]struct{}, len(agents))
 	for i := range agents {
@@ -207,17 +219,22 @@ func (h *Handler) checkOneDoneVerify(agent storage.Agent) {
 		log.Printf("[yesloop-done-verify] agent %s (%s) verified DONE",
 			safeAgentText(agent.ID), safeAgentText(agent.Section))
 		h.notifyOrchestrator(agent, fmt.Sprintf(
-			"Agent %s (%s) verified DONE — BEWEISEN + send_to + 6 phases COMPLETE",
+			"Agent %s (%s) verified DONE — BEWEISEN + send_to + 7 phases COMPLETE",
 			safeAgentText(agent.ID), safeAgentText(agent.Section)))
 
 	case doneVerifyActionRelay:
 		h.sendDoneVerifyRelay(agent)
 
-	case doneVerifyActionEscalate:
-		h.pauseAgent(agent.ID, fmt.Sprintf("yesloop-done-verify escalation: %s", reason))
-		h.notifyOrchestrator(agent, fmt.Sprintf(
-			"DEAD_AGENT: Agent %s (%s) done-verify escalation — %s%s",
-			safeAgentText(agent.ID), safeAgentText(agent.Section), safeAgentText(reason), orchestratorPauseHint))
+	case doneVerifyActionNudge:
+		// The layer reports once and lets go: a DONE is decided by the
+		// seven-phase gate that runs at the DONE itself, not by this ladder.
+		if !h.nudgeAgent(agent.ID, fmt.Sprintf("yesloop-done-verify escalation: %s", reason)) {
+			skipNudgeNote("yesloop-done-verify", agent.ID, agent.Section)
+			return
+		}
+		h.notifyOrchestrator(agent, nudgeNotice(fmt.Sprintf(
+			"Agent %s (%s) claimed DONE without proof and its relay ladder ran out: %s",
+			safeAgentText(agent.ID), safeAgentText(agent.Section), safeAgentText(reason))))
 	}
 }
 
@@ -228,7 +245,7 @@ type doneVerifyAction int
 const (
 	doneVerifyActionNone doneVerifyAction = iota
 	doneVerifyActionRelay
-	doneVerifyActionEscalate
+	doneVerifyActionNudge
 	doneVerifyActionVerified
 )
 
@@ -253,7 +270,7 @@ func (h *Handler) advanceDoneVerify(agent storage.Agent, content string, claim, 
 	// Terminal verdicts need no relay: reporting a freeze for them would point a
 	// log reader at an agent this layer has nothing left to say to.
 	if state.state == yesloopDoneVerifyStateDoneVerified ||
-		state.state == yesloopDoneVerifyStateDeadAgentEscalation {
+		state.state == yesloopDoneVerifyStateNudged {
 		return doneVerifyActionNone, ""
 	}
 
@@ -292,15 +309,15 @@ func (h *Handler) advanceDoneVerify(agent storage.Agent, content string, claim, 
 		}
 
 	case yesloopDoneVerifyStateVerifyRequested:
-		return h.refireOrEscalate(agent, state)
+		return h.refireOrNudge(agent, state)
 	}
 	return doneVerifyActionNone, ""
 }
 
-// refireOrEscalate advances the refire ladder. Called with the state mutex held;
+// refireOrNudge advances the refire ladder. Called with the state mutex held;
 // the caller performs the returned action after releasing it.
-func (h *Handler) refireOrEscalate(agent storage.Agent, state *yesloopDoneVerifyState) (doneVerifyAction, string) {
-	const reason = "no BEWEISEN/send_to/6-phases evidence"
+func (h *Handler) refireOrNudge(agent storage.Agent, state *yesloopDoneVerifyState) (doneVerifyAction, string) {
+	const reason = "no BEWEISEN/send_to/7-phases evidence"
 	if time.Since(state.lastRelayAt) < yesloopDoneVerifyRefireInterval {
 		return doneVerifyActionNone, ""
 	}
@@ -308,9 +325,9 @@ func (h *Handler) refireOrEscalate(agent storage.Agent, state *yesloopDoneVerify
 	if state.refireCount >= yesloopDoneVerifyMaxRefires {
 		log.Printf("[yesloop-done-verify] agent %s (%s) ESCALATION: %s (refireCount=%d, max=%d)",
 			safeAgentText(agent.ID), safeAgentText(agent.Section), reason, state.refireCount, yesloopDoneVerifyMaxRefires)
-		state.state = yesloopDoneVerifyStateDeadAgentEscalation
+		state.state = yesloopDoneVerifyStateNudged
 		state.transitionedAt = time.Now()
-		return doneVerifyActionEscalate, reason
+		return doneVerifyActionNudge, reason
 	}
 	state.lastRelayAt = time.Now()
 	return doneVerifyActionRelay, ""
@@ -327,11 +344,14 @@ func doneVerifyHasState(agentID string) bool {
 }
 
 // doneVerifySettled reports whether the done-verify layer has already reached a
-// verdict for this agent: DONE_VERIFIED means the agent proved its completion,
-// DEAD_AGENT_ESCALATION means the layer escalated and paused it. Either way the
-// idle layer must not relay into the agent — two layers of one daemon
-// contradicting each other was the reported symptom (YM-149: DONE_VERIFIED at
-// 23:36, idle relays from 23:42).
+// verdict for this agent: DONE_VERIFIED means the agent proved its completion, and
+// the idle layer must not relay into it — two layers of one daemon contradicting
+// each other was the reported symptom (YM-149: DONE_VERIFIED at 23:36, idle relays
+// from 23:42).
+//
+// The nudge state does not settle anything. It says "claimed DONE without proof",
+// and an agent that then goes quiet is exactly what the idle ladder is for, so
+// that layer keeps watching instead of joining the silence.
 //
 // The verdict is bound to the row it was reached for: a new agent must not
 // inherit a silence it never earned. Since YM-151 the allocator does not reuse
@@ -344,7 +364,7 @@ func doneVerifySettled(agent storage.Agent) bool {
 	if !ok || st.createdAt != agent.CreatedAt {
 		return false
 	}
-	return st.state == yesloopDoneVerifyStateDoneVerified || st.state == yesloopDoneVerifyStateDeadAgentEscalation
+	return st.state == yesloopDoneVerifyStateDoneVerified
 }
 
 // transitionDoneVerify moves the agent to a new verify state.

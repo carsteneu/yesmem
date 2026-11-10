@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
-import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import {
@@ -97,25 +96,11 @@ async function waitFor(predicate: () => Promise<boolean> | boolean, timeoutMs = 
   throw new Error("timed out waiting for the nudge to react")
 }
 
-/** Stand-in for the endpoint the semantic (stage 2) skill match posts to. */
-async function mockModel(reply: string) {
-  const requests: any[] = []
-  const server = createServer((request, response) => {
-    let body = ""
-    request.on("data", (chunk) => (body += chunk))
-    request.on("end", () => {
-      requests.push(JSON.parse(body))
-      response.setHeader("content-type", "application/json")
-      response.end(JSON.stringify({ choices: [{ message: { content: reply } }] }))
-    })
-  })
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
-  const address = server.address() as { port: number }
-  return {
-    url: `http://127.0.0.1:${address.port}`,
-    requests,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
-  }
+/** A daemon that answers the semantic match: guard_check with purpose "nudge". */
+function nudgeDaemon(skill: string) {
+  return mockDaemon((request: DaemonRequest) =>
+    request.method === "guard_check" ? { result: { decision: "SUGGEST", suggestion: skill } } : { result: {} },
+  )
 }
 
 describe("skill_nudge catalog", () => {
@@ -233,8 +218,7 @@ describe("skill_nudge", () => {
   })
 
   test("asks the model off the critical path and never nudges on the first sighting", async () => {
-    const daemon = await mockDaemon(quietDaemon)
-    const model = await mockModel("semantic")
+    const daemon = await nudgeDaemon("semantic")
     const project = await projectWithCatalog(
       `## Skill Catalog
 - id: one
@@ -247,26 +231,25 @@ describe("skill_nudge", () => {
     await mkdir(path.join(skills, "semantic"))
     await writeFile(path.join(skills, "semantic", "SKILL.md"), "# semantic")
     try {
-      await withEnv(
-        { YESMEM_SKILL_ROOTS: skills, YESMEM_GUARD_URL: model.url, YESMEM_GUARD_KEY: "test-key" },
-        () =>
-          withSocket(daemon.socketPath, async () => {
-            const recorder = fakeContext(project)
-            await loadPlugin(recorder)
+      await withEnv({ YESMEM_SKILL_ROOTS: skills }, () =>
+        withSocket(daemon.socketPath, async () => {
+          const recorder = fakeContext(project)
+          await loadPlugin(recorder)
 
-            const messages = [userTurn("msg_s0", "bitte hilf mir dabei")]
-            const started = Date.now()
-            await recorder.fire("session.context", { sessionID: "ses_cache", messages })
+          const messages = [userTurn("msg_s0", "bitte hilf mir dabei")]
+          const started = Date.now()
+          await recorder.fire("session.context", { sessionID: "ses_cache", messages })
 
-            // The dispatch returns without waiting for the model.
-            expect(Date.now() - started).toBeLessThan(1000)
-            expect(textOf(messages[0])).toBe("bitte hilf mir dabei")
-            await waitFor(() => model.requests.length > 0)
-            expect(JSON.stringify(model.requests[0])).toContain("Skill Catalog")
-          }),
+          // The dispatch returns without waiting for the answer.
+          expect(Date.now() - started).toBeLessThan(1000)
+          expect(textOf(messages[0])).toBe("bitte hilf mir dabei")
+          await waitFor(() => daemon.requests.some((request) => request.method === "guard_check"))
+          const params = daemon.requests.find((request) => request.method === "guard_check")?.params
+          expect(params?.purpose).toBe("nudge")
+          expect(String(params?.context)).toContain("bitte hilf mir dabei")
+        }),
       )
     } finally {
-      await model.close()
       await daemon.close()
       await rm(project, { recursive: true, force: true })
       await rm(skills, { recursive: true, force: true })
@@ -360,8 +343,7 @@ describe("human turn targeting", () => {
 
 describe("skill_nudge cache reuse", () => {
   test("reuses the cached stage-2 answer for a repeated identical message", async () => {
-    const daemon = await mockDaemon(quietDaemon)
-    const model = await mockModel("semantic")
+    const daemon = await nudgeDaemon("semantic")
     const project = await projectWithCatalog(
       `## Skill Catalog
 - id: one
@@ -374,32 +356,28 @@ describe("skill_nudge cache reuse", () => {
     await mkdir(path.join(skills, "semantic"))
     await writeFile(path.join(skills, "semantic", "SKILL.md"), "# semantic")
     try {
-      await withEnv(
-        { YESMEM_SKILL_ROOTS: skills, YESMEM_GUARD_URL: model.url, YESMEM_GUARD_KEY: "test-key" },
-        () =>
-          withSocket(daemon.socketPath, async () => {
-            const recorder = fakeContext(project)
-            await loadPlugin(recorder)
+      await withEnv({ YESMEM_SKILL_ROOTS: skills }, () =>
+        withSocket(daemon.socketPath, async () => {
+          const recorder = fakeContext(project)
+          await loadPlugin(recorder)
 
-            const first = [userTurn("msg_s1", "bitte hilf mir dabei")]
-            await recorder.fire("session.context", { sessionID: "ses_cache", messages: first })
-            // Stage 2 never nudges on the first sighting (it is answered in the background and cached).
-            expect(textOf(first[0])).toBe("bitte hilf mir dabei")
-            await waitFor(() => model.requests.length > 0)
-            await waitFor(() => daemon.hooked() !== undefined)
-            // Give the precompute promise time to store the answer.
-            await new Promise((resolve) => setTimeout(resolve, 300))
+          const first = [userTurn("msg_s1", "bitte hilf mir dabei")]
+          await recorder.fire("session.context", { sessionID: "ses_cache", messages: first })
+          // Stage 2 never nudges on the first sighting (it is answered in the background and cached).
+          expect(textOf(first[0])).toBe("bitte hilf mir dabei")
+          await waitFor(() => daemon.requests.some((request) => request.method === "guard_check"))
+          // Give the precompute promise time to store the answer.
+          await new Promise((resolve) => setTimeout(resolve, 300))
 
-            const repeat = [userTurn("msg_s2", "bitte hilf mir dabei")]
-            await recorder.fire("session.context", { sessionID: "ses_cache", messages: repeat })
+          const repeat = [userTurn("msg_s2", "bitte hilf mir dabei")]
+          await recorder.fire("session.context", { sessionID: "ses_cache", messages: repeat })
 
-            expect(textOf(repeat[0])).toStartWith("🧠 MANDATORY CHECK — activate semantic")
-            // The cached answer is reused: no second model call.
-            expect(model.requests.length).toBe(1)
-          }),
+          expect(textOf(repeat[0])).toStartWith("🧠 MANDATORY CHECK — activate semantic")
+          // The cached answer is reused: one question, not two.
+          expect(daemon.requests.filter((request) => request.method === "guard_check").length).toBe(1)
+        }),
       )
     } finally {
-      await model.close()
       await daemon.close()
       await rm(project, { recursive: true, force: true })
       await rm(skills, { recursive: true, force: true })

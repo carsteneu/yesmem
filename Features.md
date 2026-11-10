@@ -70,6 +70,24 @@ LLM Client  ──→  Proxy (:9099)  ──→  Upstream API
 - **Shared scratchpad:** Persistent key-value communication between agents
 - **Orchestrator pattern:** Long-running coordinator via `/swarm` skill
 
+### Claim Verification
+[→ Full documentation](docs/features/verifier.md)
+
+- **Report is input, not verdict:** the daemon re-derives every claim from the repository, the session store and the plan instead of believing the report
+- **One registry of claim kinds:** commit, branch, merge, deploy, diff scope, tests green and exit, compute, artifact, lint, evidence ids, plan items, mutation, coverage delta, profile, unknown marker
+- **Verdict classes:** confirmed, refuted, unverifiable, with defect, environment and limit naming whose gap it is
+- **One operation for every caller:** `verify_claims` as daemon RPC and MCP tool, independent of yesloop
+- **Quality claims:** mutation and coverage of the changed lines, language-agnostic through a profile
+
+### Rule Guard
+[→ Full documentation](docs/features/guard.md)
+
+- **One judgement core:** `internal/guard` and `internal/guardmodel`, serving the Claude Code hook and the `guard_check` RPC
+- **Model chain:** environment override, `rule_guard.model`, the account's model list with a 24h cache, `models.json`, one fallback constant
+- **Fail-open, with one exception:** an unreachable endpoint passes with a reason, only a request the model endpoint refused is `UNAVAILABLE`
+- **Enforcement set:** the literal rules 1, 2, 25 and 32 intersected with the installed `RULES.md` Decision Policy; a project file only shapes the prompt
+- **No credential, no judgement:** a subscription installation stays inactive, and the destructive pre-check still runs
+
 ### Developer Tools
 [→ Full documentation](docs/features/developer-tools.md)
 

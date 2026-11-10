@@ -30,7 +30,7 @@ import (
 const (
 	stagnationStateTracking = iota
 	stagnationStateRefiring
-	stagnationStatePaused
+	stagnationStateNudged
 )
 
 const (
@@ -42,6 +42,7 @@ const (
 type stagnationState struct {
 	state         int
 	lastSig       string
+	lastContent   string
 	lastChangedAt time.Time
 	lastRelayAt   time.Time
 	refireCount   int
@@ -140,7 +141,7 @@ func (h *Handler) checkYesloopStagnation() {
 		}
 
 		// DONE territory: other guards own complete phase blocks.
-		if CountCompletedPhases(content) >= 6 {
+		if CountCompletedPhases(content) >= donePhaseCount {
 			continue
 		}
 
@@ -182,20 +183,24 @@ func (h *Handler) checkOneStagnationAgent(agent storage.Agent, content string, i
 	yesloopStagnationAgentsMu.Lock()
 	state, exists := yesloopStagnationAgents[agent.ID]
 
+	// Terminal: already nudged. The guard writes its note into the column its own
+	// signal reads, so the question here is whether the agent's content moved, not
+	// whether the note is there. The asymmetry is deliberate: a phase change in
+	// progress alone no longer re-arms this ladder, the scratchpad does.
+	if exists && state.state == stagnationStateNudged && content == state.lastContent {
+		state.lastSig = sig
+		yesloopStagnationAgentsMu.Unlock()
+		return
+	}
+
 	// Progress: signature changed → reset to tracking.
 	if !exists || sig != state.lastSig {
 		yesloopStagnationAgents[agent.ID] = &stagnationState{
 			state:         stagnationStateTracking,
 			lastSig:       sig,
+			lastContent:   content,
 			lastChangedAt: now,
 		}
-		yesloopStagnationAgentsMu.Unlock()
-		return
-	}
-
-	// Terminal: already escalated and paused — don't re-escalate on a later
-	// unpause with an unchanged signal.
-	if state.state == stagnationStatePaused {
 		yesloopStagnationAgentsMu.Unlock()
 		return
 	}
@@ -248,15 +253,17 @@ func (h *Handler) checkOneStagnationAgent(agent storage.Agent, content string, i
 
 	state.refireCount++
 	if state.refireCount > stagnationMaxRefires {
-		state.state = stagnationStatePaused
+		state.state = stagnationStateNudged
 		reason := fmt.Sprintf("yesloop-stagnation escalation: no progress for %s after %d relays",
 			staleFor.Round(time.Minute), state.refireCount)
 		log.Printf("[stagnation] agent %s (%s) ESCALATION: %s", agent.ID, agent.Section, reason)
 		yesloopStagnationAgentsMu.Unlock()
-		h.pauseAgent(agent.ID, reason)
-		h.notifyOrchestrator(agent, fmt.Sprintf(
-			"DEAD_AGENT: Agent %s (%s) paused by STAGNATION — no progress for %s while stream active.%s",
-			agent.ID, agent.Section, staleFor.Round(time.Minute), orchestratorPauseHint))
+		if !h.nudgeAgent(agent.ID, reason) {
+			skipNudgeNote("stagnation", agent.ID, agent.Section)
+			return
+		}
+		h.notifyOrchestrator(agent, nudgeNotice(fmt.Sprintf("Agent %s (%s) is stagnant: no progress for %s while the stream is active",
+			safeAgentText(agent.ID), safeAgentText(agent.Section), staleFor.Round(time.Minute))))
 		return
 	}
 

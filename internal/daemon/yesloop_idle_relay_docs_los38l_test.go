@@ -24,10 +24,10 @@ var idleRelayChoiceDocMarkers = map[string]string{
 }
 
 // idleRelayChoiceDocCondition is the wording every doc has to put next to the
-// marker: the six-phase question is tied to a DONE claim and to a reported
-// Phase 6. Checking the marker alone would pass a doc that names the choice and
+// marker: the seven-phase question is tied to a DONE claim and to a reported
+// Phase 7. Checking the marker alone would pass a doc that names the choice and
 // then states the opposite condition — the drift this ticket is about.
-var idleRelayChoiceDocCondition = []string{"DONE", "Phase 6"}
+var idleRelayChoiceDocCondition = []string{"DONE", "Phase 7"}
 
 // los38lParagraphContaining returns the blank-line-delimited block around marker.
 // The docs wrap their sentences, so the conditions may sit a line below the
@@ -53,14 +53,19 @@ func los38lParagraphContaining(doc, marker string) string {
 // verbatim where the relay texts are quoted, and every doc must name the
 // condition under which the six-phase question is sent.
 func TestLos38l_FirstRelayWordingIsDocumented(t *testing.T) {
-	if got := idleRelayOneText("", "Phase 3/6 EXECUTE"); got != idleMidPipelineRelayMessage() {
+	if got := idleRelayOneText("", "Phase 3/7 EXECUTE"); got != idleMidPipelineRelayMessage() {
 		t.Errorf("a mid-pipeline agent must get the mid-pipeline text, got %q", got)
 	}
-	if got := idleRelayOneText("", "Phase 6/6 FINISH"); got != "" {
-		t.Errorf("an agent that reports Phase 6 must get the six-phase question (empty override), got %q", got)
+	if got := idleRelayOneText("", "Phase 7/7 FINISH"); got != "" {
+		t.Errorf("an agent that reports Phase 7 must get the seven-phase question (empty override), got %q", got)
 	}
-	if got := idleRelayOneText("### Phase 6: FINISH\n**Status:** IN PROGRESS\nDONE: files committed", ""); got != "" {
-		t.Errorf("an agent that claims DONE must get the six-phase question (empty override), got %q", got)
+	// A loop that started under the six-block contract still reports its old
+	// last phase; the question is the one it can answer by then as well.
+	if got := idleRelayOneText("", "Phase 6/6 FINISH"); got != "" {
+		t.Errorf("an agent that reports the legacy Phase 6 must get the question (empty override), got %q", got)
+	}
+	if got := idleRelayOneText("### Phase 7: FINISH\n**Status:** IN PROGRESS\nDONE: files committed", ""); got != "" {
+		t.Errorf("an agent that claims DONE must get the seven-phase question (empty override), got %q", got)
 	}
 
 	for path, marker := range idleRelayChoiceDocMarkers {

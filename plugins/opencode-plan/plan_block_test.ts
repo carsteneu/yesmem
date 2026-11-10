@@ -4,7 +4,6 @@ import {
   clampDepth,
   markerFor,
   normalizeStatus,
-  planOverflow,
   planRows,
   planSummary,
 } from "./plan_block"
@@ -45,14 +44,15 @@ describe("planRows", () => {
     expect(rows[0].marker).toBe("[ ]")
   })
 
-  test("depth is clamped into the two supported levels", () => {
+  test("depth is clamped into the three supported levels", () => {
     expect(clampDepth(-5)).toBe(0)
-    expect(clampDepth(9)).toBe(1)
+    expect(clampDepth(9)).toBe(2)
     expect(clampDepth(1.7)).toBe(1)
+    expect(clampDepth(2)).toBe(2)
     expect(clampDepth("2")).toBe(0)
     expect(clampDepth(Number.NaN)).toBe(0)
     const rows = planRows({ items: [{ content: "deep", depth: 99 }] })
-    expect(rows[0].depth).toBe(1)
+    expect(rows[0].depth).toBe(2)
   })
 
   test("flattens line breaks out of a step", () => {
@@ -68,11 +68,9 @@ describe("planRows", () => {
     }
   })
 
-  test("caps the rows and reports the remainder", () => {
-    const items = Array.from({ length: PLAN_MAX_ROWS + 3 }, (_, i) => ({ content: `step ${i}` }))
-    expect(planRows({ items })).toHaveLength(PLAN_MAX_ROWS)
-    expect(planOverflow({ items })).toBe(3)
-    expect(planOverflow({ items: items.slice(0, 2) })).toBe(0)
+  test("renders every row - the sidebar scrolls instead of the plan being cut", () => {
+    const items = Array.from({ length: 40 }, (_, i) => ({ content: `step ${i}` }))
+    expect(planRows({ items })).toHaveLength(40)
   })
 })
 

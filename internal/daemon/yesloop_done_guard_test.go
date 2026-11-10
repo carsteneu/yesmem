@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carsteneu/yesmem/internal/config"
 	"github.com/carsteneu/yesmem/internal/storage"
 )
 
@@ -219,6 +220,11 @@ func TestDoneGuard_Pauses_After_Max_Refires(t *testing.T) {
 func TestDoneGuard_Compliance_Resets_State(t *testing.T) {
 	resetDoneGuardState()
 	h, s := mustHandler(t)
+	// This test covers the format guard's state reset. The verification stage
+	// that follows a compliant DONE claim has its own test
+	// (done_gate_verify_test.go), and leaving it on here would queue a run whose
+	// goroutine outlives the test.
+	h.SetDoneVerifyConfig(&config.DoneVerifyConfig{Enabled: false})
 
 	makeDoneGuardAgent(t, h, s, "dg-4", "sess-dg-4", allPhasesPhase4Invalid)
 	h.checkYesloopDoneGuard()
@@ -263,6 +269,9 @@ func TestBuildDoneGuardRelayMessage_IncludesFieldName(t *testing.T) {
 func TestDoneGuard_Revalidates_Paused_Agent_When_Compliant(t *testing.T) {
 	resetDoneGuardState()
 	h, s := mustHandler(t)
+	// The format guard's recovery path, without the verification stage that a
+	// compliant DONE claim now enters (done_gate_verify_test.go owns that).
+	h.SetDoneVerifyConfig(&config.DoneVerifyConfig{Enabled: false})
 
 	makeDoneGuardAgent(t, h, s, "dg-recv-1", "sess-dg-recv-1", validV3Content)
 	s.AgentUpdate("dg-recv-1", map[string]any{

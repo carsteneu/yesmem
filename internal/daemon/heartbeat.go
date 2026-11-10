@@ -53,6 +53,9 @@ func (h *Handler) startAgentHeartbeat(ctx context.Context) {
 			}
 			if tick%30 == 0 {
 				h.checkYesloopDoneGuard()
+				// After the guard, so a hold this tick placed is already visible:
+				// an undecided one escalates on its own clock, agent alive or not.
+				h.checkDONEHoldWatchdog()
 				// Before the idle guard: the case it may have to yield to has to
 				// exist when that guard makes its decision (same tick).
 				h.checkYesloopBrokenToolcalls()
@@ -686,14 +689,14 @@ func (h *Handler) reportFinalCrash(a storage.Agent) bool {
 		context += fmt.Sprintf(" Letzter Status: %s", sp)
 
 		// Dead-agent-detection for yesloop agents: check if agent had partial
-		// phase work but never completed Phase 6 → structured GATE-ESCALATION.
+		// phase work but never completed the last phase → structured GATE-ESCALATION.
 		if strings.HasPrefix(a.Section, "yesloop-") {
 			result := ValidatePhaseBlocks(fullContent)
 			completed := CountCompletedPhases(fullContent)
 			if completed > 0 && !result.Compliant {
 				escalation = fmt.Sprintf(
-					"DEAD_AGENT: Agent %s (%s) terminated without completing Phase 6.\n  Runtime: %s\n  Completed: %d/6 phases\n  Missing phases: %v\n  Field errors: %s",
-					safeAgentText(a.ID), safeAgentText(a.Section), runtime, completed,
+					"DEAD_AGENT: Agent %s (%s) terminated without completing Phase %d.\n  Runtime: %s\n  Completed: %d/%d phases\n  Missing phases: %v\n  Field errors: %s",
+					safeAgentText(a.ID), safeAgentText(a.Section), donePhaseCount, runtime, completed, donePhaseCount,
 					result.MissingPhases, summarizeErrors(result),
 				)
 			}
@@ -1690,7 +1693,7 @@ func (h *Handler) sendOrchestratorStatusPing() {
 }
 
 // checkYesloopDoneGuard validates yesloop agent scratchpad sections for
-// DONE compliance. If an agent claims all 6 phases COMPLETE but the phase
+// DONE compliance. If an agent claims all 7 phases COMPLETE but the phase
 // blocks fail validation, the per-agent refire state machine
 // (yesloop_done_guard.go) relays the missing field to the agent and only
 // pauses after doneGuardMaxRefires attempts. Runs every ~30s from
@@ -1701,6 +1704,7 @@ func (h *Handler) checkYesloopDoneGuard() {
 		return
 	}
 	h.pruneDoneGuardStates(agents)
+	h.pruneDoneGateVerifyStates(agents)
 	for _, agent := range agents {
 		if agent.Status != "running" && agent.Status != "paused" {
 			continue
@@ -1708,8 +1712,14 @@ func (h *Handler) checkYesloopDoneGuard() {
 		// Paused agents: only revalidate those paused by DONE-GUARD.
 		// Idle and DoneVerify pauses use different progress prefixes
 		// ("paused: yesloop-idle escalation:" / "paused: yesloop-done-verify
-		// escalation:") and must not be touched by this guard.
-		if agent.Status == "paused" && !strings.HasPrefix(agent.Progress, "paused: DONE-GUARD:") {
+		// escalation:") and must not be touched by this guard. A row held by the
+		// verification stage is the exception: its in-memory state is lost on a
+		// daemon restart, and without re-entering the stage such a row would stay
+		// paused with no verdict and nobody to ask for one.
+		if agent.Status == "paused" &&
+			!strings.HasPrefix(agent.Progress, "paused: DONE-GUARD:") &&
+			!strings.HasPrefix(agent.Progress, "paused: DONE-PENDING-VERIFY:") &&
+			!strings.HasPrefix(agent.Progress, "paused: DONE-VERIFY-BLOCKED") {
 			continue
 		}
 		// A paused agent whose process is definitively gone has nothing left to
@@ -1738,15 +1748,34 @@ func (h *Handler) checkYesloopDoneGuard() {
 
 		result := ValidatePhaseBlocks(content)
 
-		// Missing phases = still in progress, agent hasn't claimed DONE yet.
-		if len(result.MissingPhases) > 0 {
+		// The guard judges a claim, not a draft. A pipeline whose blocks are
+		// still being written is in progress: it has neither the completion of
+		// the last block nor a blocker to report, and relaying the 20-odd
+		// missing fields of a fresh skeleton interrupted agents during
+		// legitimate work (#81984).
+		//
+		// A loop that started under the six-block contract counts as a claim:
+		// every block it wrote is COMPLETE and the seventh is missing, which is
+		// exactly the bounce this contract owes it.
+		if !claimsPipelineEnd(content) && !lastPhaseBlocked(content) {
 			continue
 		}
 
-		// All 6 phases present. Delegate refire/pause decision to the state
-		// machine in yesloop_done_guard.go.
+		// Delegate the refire/pause decision to the state machine in
+		// yesloop_done_guard.go.
 		h.checkOneDoneGuardAgent(agent, result)
 	}
+}
+
+// phaseName is the contract name of one phase, e.g. 6 -> DAEMON-VERIFY. The
+// number alone is not actionable for a reader who has to write the block.
+func phaseName(number int) string {
+	for _, pv := range phaseValidations {
+		if pv.Number == number {
+			return pv.Name
+		}
+	}
+	return ""
 }
 
 // summarizeErrors produces a compact one-line summary of validation errors.
@@ -1760,6 +1789,17 @@ func summarizeErrors(r ValidationResult) string {
 		return "compliant"
 	}
 	var parts []string
+	if len(r.MissingPhases) > 0 {
+		// The name belongs beside the number: a loop that started under the
+		// six-block contract has to be told that the seventh block is the one it
+		// is missing (#phase 6 DAEMON-VERIFY, phase 7 FINISH), not merely that a
+		// number is absent.
+		missing := make([]string, 0, len(r.MissingPhases))
+		for _, number := range r.MissingPhases {
+			missing = append(missing, fmt.Sprintf("%d %s", number, phaseName(number)))
+		}
+		parts = append(parts, "missing phases: "+strings.Join(missing, ", "))
+	}
 	for _, fe := range r.FieldErrors {
 		part := fmt.Sprintf("Phase%d:%s", fe.Phase, fe.Field)
 		if fe.Detail != "" {
@@ -1768,7 +1808,7 @@ func summarizeErrors(r ValidationResult) string {
 		parts = append(parts, part)
 	}
 	if len(parts) == 0 {
-		return fmt.Sprintf("missing phase blocks: %v", r.MissingPhases)
+		return "compliant"
 	}
 	return strings.Join(parts, ", ")
 }

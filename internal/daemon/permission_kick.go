@@ -3,6 +3,7 @@ package daemon
 import (
 	"log"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -46,6 +47,16 @@ var permKickStatuses = map[string]bool{
 // permKickPause separates the two enter connections so the TUI treats them
 // as two keypresses, not one bracketed paste block. Var for testability.
 var permKickPause = 2 * time.Second
+
+// heldByVerification reports whether the row is paused on purpose by the DONE
+// gate's verification stage. Such a pause is a decision, not a stalled dialog:
+// the agent is meant to stay off until a verdict arrives, so a live stream must
+// not flip it back (unpauseAgent would also overwrite the progress the gate
+// reads back after a restart).
+func heldByVerification(progress string) bool {
+	return strings.HasPrefix(progress, "paused: DONE-PENDING-VERIFY:") ||
+		strings.HasPrefix(progress, "paused: DONE-VERIFY-BLOCKED")
+}
 
 // permKickState tracks one agent's stream activity and kick history.
 // In-memory only, reset on daemon restart — the first observation seeds
@@ -132,7 +143,7 @@ func (h *Handler) checkPermissionKickAgent(agent storage.Agent) {
 		permKickAgentsMu.Unlock()
 		// A live stream proves the agent works again — flip a guard-paused
 		// agent back to running so the other guards resume watching it.
-		if agent.Status == "paused" {
+		if agent.Status == "paused" && !heldByVerification(agent.Progress) {
 			h.unpauseAgent(agent.ID, "PERM-KICK", "stream recovered after kick")
 		}
 		return

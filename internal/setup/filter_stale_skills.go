@@ -62,10 +62,11 @@ func scanSkillDir(dir string, names map[string]bool) {
 
 // FilterStaleSkillRules strips catalog entries from a RULES.md document whose
 // `skill:` field names a skill that is not loadable on this machine. This is
-// a backwards-compat shim: GenerateRULESmd does not overwrite existing files,
-// so a RULES.md baked at an earlier time may reference skills whose
-// SKILL.md have since been removed. Without this filter the guard keeps
-// suggesting un-activatable skills on every tool call.
+// a backwards-compat shim: a catalogue is only refreshed by setup when its
+// provenance proves nobody edited it, so a RULES.md baked at an earlier time
+// may still reference skills whose SKILL.md have since been removed. Without
+// this filter the guard keeps suggesting un-activatable skills on every tool
+// call.
 //
 // If available is empty (e.g. filesystem inaccessible), the input is
 // returned unchanged — pass through conservatively rather than risk

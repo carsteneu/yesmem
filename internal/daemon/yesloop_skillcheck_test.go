@@ -59,6 +59,21 @@ func setSkillCheckLastRelayAt(agentID string, t time.Time) {
 	st.lastRelayAt = t
 }
 
+// skillCheckNoticeTexts returns the contents of the messages the layer sent to
+// an agent's caller channel, in store order.
+func skillCheckNoticeTexts(t *testing.T, s *storage.Store, caller string) []string {
+	t.Helper()
+	msgs, err := s.GetChannelMessages([]string{caller})
+	if err != nil {
+		t.Fatalf("GetChannelMessages: %v", err)
+	}
+	out := make([]string, 0, len(msgs))
+	for _, m := range msgs {
+		out = append(out, m.Content)
+	}
+	return out
+}
+
 // --- Tests ---
 
 func TestSkillCheck_TracksBelowThreshold(t *testing.T) {
@@ -157,30 +172,102 @@ func TestSkillCheck_ConfirmationDelaysNextFire(t *testing.T) {
 	}
 }
 
-func TestSkillCheck_Escalation_AfterRefires(t *testing.T) {
+// TestSkillCheck_MaxRefires_KeepsAgentRunningWithOneNotice: three unanswered
+// refires used to pause the agent and turn the orchestrator into the resume
+// button. The layer now informs once and leaves the agent running — the pipeline
+// contract is checked at DONE by the seven-phase validator, not by a pause.
+func TestSkillCheck_MaxRefires_KeepsAgentRunningWithOneNotice(t *testing.T) {
 	resetYesloopSkillCheckState()
 	h, s := mustHandler(t)
-	makeSkillCheckAgent(t, h, s, "sc-esc", "sess-sc-esc", "")
+	makeSkillCheckAgent(t, h, s, "sc-info", "sess-sc-info", "")
 	h.checkYesloopSkillCheck() // TRACKING
-	jumpSkillCheckCounters(t, s, "sc-esc", skillCheckOutputTokenThreshold, 0)
+	jumpSkillCheckCounters(t, s, "sc-info", skillCheckOutputTokenThreshold, 0)
 	h.checkYesloopSkillCheck() // -> REMIND
-	if !hasSkillCheckState("sc-esc", yesloopSkillCheckStateRemind) {
+	if !hasSkillCheckState("sc-info", yesloopSkillCheckStateRemind) {
 		t.Fatalf("precondition: agent should be in REMIND")
 	}
-	// 3 refires (interval elapsed each time) without marker → escalation.
+	// 3 refires (interval elapsed each time) without marker.
 	for i := 0; i < 3; i++ {
-		setSkillCheckLastRelayAt("sc-esc", time.Now().Add(-2*yesloopSkillCheckRefireInterval))
+		setSkillCheckLastRelayAt("sc-info", time.Now().Add(-2*yesloopSkillCheckRefireInterval))
 		h.checkYesloopSkillCheck()
 	}
-	agent, _ := s.AgentGet("sc-esc")
-	if agent.Status != "paused" {
-		t.Errorf("agent without SKILL-RELOAD marker should be paused after max refires, got status=%q", agent.Status)
+
+	agent, err := s.AgentGet("sc-info")
+	if err != nil {
+		t.Fatalf("AgentGet: %v", err)
 	}
-	if !strings.Contains(agent.Progress, "skillcheck") {
-		t.Errorf("pause reason should reference the skillcheck layer, got %q", agent.Progress)
+	if agent.Status != "running" {
+		t.Errorf("status = %q, want \"running\" — the skill check must not pause an agent", agent.Status)
 	}
-	if !hasSkillCheckState("sc-esc", yesloopSkillCheckStateDeadAgentEscalation) {
-		t.Errorf("agent should end in DEAD_AGENT_ESCALATION")
+	if strings.Contains(agent.Progress, "paused") {
+		t.Errorf("progress = %q, want no pause note", agent.Progress)
+	}
+	notices := skillCheckNoticeTexts(t, s, "caller-sc-info")
+	if len(notices) != 1 {
+		t.Fatalf("orchestrator notices = %d, want 1 — one informational message per round", len(notices))
+	}
+	if !strings.Contains(notices[0], "SKILL-RELOAD") {
+		t.Errorf("notice = %q, want the missing marker named", notices[0])
+	}
+	if strings.Contains(notices[0], orchestratorPauseHint) {
+		t.Errorf("notice = %q, must not ask the orchestrator to intervene (no pause happened)", notices[0])
+	}
+}
+
+// TestSkillCheck_NoticeFiresOncePerRound: the round carries one notice. Ticks
+// after it must not reach the orchestrator a second time for the same round.
+func TestSkillCheck_NoticeFiresOncePerRound(t *testing.T) {
+	resetYesloopSkillCheckState()
+	h, s := mustHandler(t)
+	makeSkillCheckAgent(t, h, s, "sc-once", "sess-sc-once", "")
+	h.checkYesloopSkillCheck() // TRACKING
+	jumpSkillCheckCounters(t, s, "sc-once", skillCheckOutputTokenThreshold, 0)
+	h.checkYesloopSkillCheck() // -> REMIND
+	for i := 0; i < 3; i++ {
+		setSkillCheckLastRelayAt("sc-once", time.Now().Add(-2*yesloopSkillCheckRefireInterval))
+		h.checkYesloopSkillCheck()
+	}
+
+	for i := 0; i < 3; i++ {
+		setSkillCheckLastRelayAt("sc-once", time.Now().Add(-2*yesloopSkillCheckRefireInterval))
+		h.checkYesloopSkillCheck()
+	}
+
+	if notices := skillCheckNoticeTexts(t, s, "caller-sc-once"); len(notices) != 1 {
+		t.Errorf("orchestrator notices = %d, want 1 — the round is reported once", len(notices))
+	}
+}
+
+// TestSkillCheck_AfterNotice_NextWindowOpensFreshRound: the notice closes the
+// round the way a confirmation does, so the reminder is not dead for the rest
+// of the run. A later window of work opens round 2 with a fresh token.
+func TestSkillCheck_AfterNotice_NextWindowOpensFreshRound(t *testing.T) {
+	resetYesloopSkillCheckState()
+	h, s := mustHandler(t)
+	makeSkillCheckAgent(t, h, s, "sc-rearm", "sess-sc-rearm", "")
+	h.checkYesloopSkillCheck() // TRACKING
+	jumpSkillCheckCounters(t, s, "sc-rearm", skillCheckOutputTokenThreshold, 0)
+	h.checkYesloopSkillCheck() // -> REMIND round 1
+	for i := 0; i < 3; i++ {
+		setSkillCheckLastRelayAt("sc-rearm", time.Now().Add(-2*yesloopSkillCheckRefireInterval))
+		h.checkYesloopSkillCheck()
+	}
+
+	h.checkYesloopSkillCheck() // round closed: baseline resets, back to TRACKING
+	if !hasSkillCheckState("sc-rearm", yesloopSkillCheckStateTracking) {
+		t.Fatalf("state = %d, want TRACKING — the notice closes the round", stateOfSkillCheck("sc-rearm"))
+	}
+	// A later window of work must open round 2 instead of staying silent.
+	jumpSkillCheckCounters(t, s, "sc-rearm", 2*skillCheckOutputTokenThreshold, 0)
+	h.checkYesloopSkillCheck()
+	if !hasSkillCheckState("sc-rearm", yesloopSkillCheckStateRemind) {
+		t.Fatalf("state = %d, want REMIND — a new window must re-arm the reminder", stateOfSkillCheck("sc-rearm"))
+	}
+	if rc := getSkillCheckRound("sc-rearm"); rc != 2 {
+		t.Errorf("round = %d, want 2 — the new window needs a fresh token", rc)
+	}
+	if notices := skillCheckNoticeTexts(t, s, "caller-sc-rearm"); len(notices) != 1 {
+		t.Errorf("orchestrator notices = %d, want 1 — the second round is not exhausted yet", len(notices))
 	}
 }
 
@@ -254,9 +341,10 @@ func TestSkillCheck_StaleMarker_DoesNotAutoConfirm(t *testing.T) {
 	}
 }
 
-// TestSkillCheck_EscalationAfterPriorConfirmation: the escalation path must stay
-// reachable even after an earlier window was confirmed (Cold Review I-1).
-func TestSkillCheck_EscalationAfterPriorConfirmation(t *testing.T) {
+// TestSkillCheck_SecondWindowInformsWithoutPausing: a second window without a
+// marker is reported the same way as the first — one notice, no pause. The layer
+// stays reachable after an earlier confirmation.
+func TestSkillCheck_SecondWindowInformsWithoutPausing(t *testing.T) {
 	resetYesloopSkillCheckState()
 	h, s := mustHandler(t)
 	makeSkillCheckAgent(t, h, s, "sc-esc2", "sess-sc-esc2", "")
@@ -267,7 +355,7 @@ func TestSkillCheck_EscalationAfterPriorConfirmation(t *testing.T) {
 	h.checkYesloopSkillCheck() // -> CONFIRMED
 	h.checkYesloopSkillCheck() // -> TRACKING (baseline = 100k)
 
-	// Window 2: agent does NOT reload (no round-2 marker) — must escalate.
+	// Window 2: agent does NOT reload (no round-2 marker).
 	jumpSkillCheckCounters(t, s, "sc-esc2", skillCheckOutputTokenThreshold, 0)
 	h.checkYesloopSkillCheck() // -> REMIND round 2 (not auto-confirmed)
 	for i := 0; i < 3; i++ {
@@ -275,11 +363,11 @@ func TestSkillCheck_EscalationAfterPriorConfirmation(t *testing.T) {
 		h.checkYesloopSkillCheck()
 	}
 	agent, _ := s.AgentGet("sc-esc2")
-	if agent.Status != "paused" {
-		t.Errorf("agent refusing window-2 reload should be paused after max refires, got status=%q", agent.Status)
+	if agent.Status != "running" {
+		t.Errorf("status = %q, want \"running\" — window 2 must not pause the agent", agent.Status)
 	}
-	if !hasSkillCheckState("sc-esc2", yesloopSkillCheckStateDeadAgentEscalation) {
-		t.Errorf("agent should end in DEAD_AGENT_ESCALATION")
+	if notices := skillCheckNoticeTexts(t, s, "caller-sc-esc2"); len(notices) != 1 {
+		t.Errorf("orchestrator notices = %d, want 1", len(notices))
 	}
 }
 
@@ -299,6 +387,7 @@ func TestSkillCheck_WrongRoundMarker_DoesNotConfirm(t *testing.T) {
 		t.Errorf("round-less or wrong-round marker must not confirm the window")
 	}
 }
+
 // A fresh window must not reuse a token that already appears in the section: the
 // counter is in-memory (it resets on daemon restart and whenever the row leaves
 // "running"), so a reused low token let a marker from an earlier window confirm
@@ -320,7 +409,7 @@ func TestSkillCheck_WindowTokenAvoidsMarkersAlreadyPresent(t *testing.T) {
 	if hasSkillReloadMarker("**SKILL-RELOAD-7:** yes", round) {
 		t.Errorf("round %d still matches the stale marker already in the section", round)
 	}
-}	
+}
 
 // A later round's marker must be recognized even when an earlier round's marker
 // sits above it. hasSkillReloadMarker used FindStringSubmatch — the FIRST match
@@ -358,8 +447,8 @@ func TestSkillCheck_LaterRoundMarker_ConfirmsAfterEarlierRound(t *testing.T) {
 }
 
 // A recycled PID must not enter the skill-check protocol: the guard relays into
-// the agent's socket and can escalate to a pause, both of which belong to the
-// agent's own process (Learning #101907).
+// the agent's socket, which belongs to the agent's own process (Learning
+// #101907).
 func TestSkillCheck_RecycledPIDNotTracked(t *testing.T) {
 	resetYesloopSkillCheckState()
 	h, s := mustHandler(t)

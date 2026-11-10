@@ -113,6 +113,10 @@ type brokenToolcallState struct {
 	failed     int
 	detectedAt time.Time
 	lastSeenAt time.Time
+	// escalatedAt is when the case was reported. The suppression it buys is
+	// bounded: the anchor turn never settles, so lastSeenAt keeps being renewed
+	// and without this stamp the case would silence the idle layer for good.
+	escalatedAt time.Time
 	// lastRelayAt is stamped by the attempt, so a failed push is retried on the
 	// refire cadence rather than on every tick.
 	lastRelayAt time.Time
@@ -145,7 +149,14 @@ func brokenToolcallPending(agent storage.Agent) bool {
 	if !ok || st.createdAt != agent.CreatedAt {
 		return false
 	}
-	if st.state == brokenToolcallStateEscalated || st.state == brokenToolcallStateGaveUp {
+	if st.state == brokenToolcallStateEscalated {
+		// The agent keeps running after the nudge, so the idle layer would overlay
+		// its generic phase text onto a session whose turn never executed a tool
+		// (YM-196). That hold is bounded: the case is reported once, and after the
+		// window the idle layer owns the agent again.
+		return time.Since(st.escalatedAt) < brokenToolcallSuppressAfter
+	}
+	if st.state == brokenToolcallStateGaveUp {
 		return false
 	}
 	return time.Since(st.lastSeenAt) < brokenToolcallSuppressAfter
@@ -202,7 +213,7 @@ func (h *Handler) checkYesloopBrokenToolcalls() {
 			continue
 		}
 		// A finished pipeline belongs to the DONE guards.
-		if CountCompletedPhases(h.readAgentScratchpad(agent)) >= 6 {
+		if CountCompletedPhases(h.readAgentScratchpad(agent)) >= donePhaseCount {
 			continue
 		}
 		candidates = append(candidates, agent)
@@ -666,8 +677,8 @@ func (h *Handler) recordBrokenToolcallAttempt(agent storage.Agent, delivered boo
 		agent.ID, agent.Section, st.attempts, delivered, st.relay, brokenToolcallMaxRefires+1, st.failed, st.kind, st.tool)
 }
 
-// escalateBrokenToolcall pauses the agent and reports it, after the deliveries
-// went unanswered.
+// escalateBrokenToolcall nudges the agent once and reports it, after the
+// deliveries went unanswered.
 func (h *Handler) escalateBrokenToolcall(agent storage.Agent, b brokenToolcall) {
 	yesloopBrokenToolcallAgentsMu.Lock()
 	st, ok := yesloopBrokenToolcallAgents[agent.ID]
@@ -676,16 +687,20 @@ func (h *Handler) escalateBrokenToolcall(agent storage.Agent, b brokenToolcall) 
 		return
 	}
 	st.state = brokenToolcallStateEscalated
+	st.escalatedAt = time.Now()
 	delivered := st.relay
 	yesloopBrokenToolcallAgentsMu.Unlock()
 
 	reason := fmt.Sprintf("yesloop-broken-toolcall escalation: %s on tool %q unanswered after %d delivered relays",
 		b.Kind, b.Tool, delivered)
 	log.Printf("[broken-toolcall] agent %s (%s) ESCALATION: %s", agent.ID, agent.Section, reason)
-	h.pauseAgent(agent.ID, reason)
-	h.notifyOrchestrator(agent, fmt.Sprintf(
-		"DEAD_AGENT: Agent %s (%s) paused by BROKEN TOOL CALL — %s on tool %q, %d delivered relays without the call being repeated.%s",
-		agent.ID, agent.Section, b.Kind, b.Tool, delivered, orchestratorPauseHint))
+	if !h.nudgeAgent(agent.ID, reason) {
+		skipNudgeNote("broken-toolcall", agent.ID, agent.Section)
+		return
+	}
+	h.notifyOrchestrator(agent, nudgeNotice(fmt.Sprintf(
+		"Agent %s (%s) has a broken tool call: %s on tool %q stayed unanswered after %d delivered relays",
+		safeAgentText(agent.ID), safeAgentText(agent.Section), b.Kind, b.Tool, delivered)))
 }
 
 // giveUpBrokenToolcall stops relaying a finding the API never confirmed, and

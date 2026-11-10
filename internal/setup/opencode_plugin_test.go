@@ -412,7 +412,6 @@ func TestInstallOpencodePlugin_V2InstallsEveryRepoModule(t *testing.T) {
 		"code_nav.ts",
 		"context.ts",
 		"failure_learn.ts",
-		"http.ts",
 		"idle_reminder.ts",
 		"index.ts",
 		"ledger_nudge.ts",

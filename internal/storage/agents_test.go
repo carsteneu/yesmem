@@ -1281,6 +1281,33 @@ func TestAgentUpdateIfMatches_OnlyWritesTheExpectedRow(t *testing.T) {
 	}
 }
 
+// A fresh row stores no progress at all, and the caller read that as "". A bare
+// equality against the column would compare against NULL and never match, so the
+// first nudge or relay on a new row would look like "the row moved" and do
+// nothing.
+func TestAgentUpdateIfMatches_MatchesAnEmptyProgressOnAFreshRow(t *testing.T) {
+	s := mustOpen(t)
+	if err := s.AgentCreate(Agent{ID: "cas-fresh", Project: "p", Section: "s", Status: "running"}); err != nil {
+		t.Fatalf("AgentCreate: %v", err)
+	}
+	row, err := s.AgentGet("cas-fresh")
+	if err != nil {
+		t.Fatalf("AgentGet: %v", err)
+	}
+	if row.Progress != "" {
+		t.Fatalf("precondition: a fresh row reads back an empty progress, got %q", row.Progress)
+	}
+
+	changed, err := s.AgentUpdateIfMatches("cas-fresh", "running", row.Progress,
+		map[string]any{"progress": "guard nudge: something"})
+	if err != nil {
+		t.Fatalf("AgentUpdateIfMatches: %v", err)
+	}
+	if !changed {
+		t.Error("a fresh row must take the write: the empty progress is what the caller read")
+	}
+}
+
 func TestAgentUpdateIfMatches_RejectsDisallowedFields(t *testing.T) {
 	s := mustOpen(t)
 	if err := s.AgentCreate(Agent{ID: "cas-2", Project: "p", Section: "s", Status: "paused"}); err != nil {

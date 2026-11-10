@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carsteneu/yesmem/internal/config"
 	"github.com/carsteneu/yesmem/internal/storage"
 )
 
@@ -99,6 +100,9 @@ func TestDoneGuard_EvidenceFailure_Pauses_After_Max_Refires(t *testing.T) {
 func TestDoneGuard_EvidenceOK_Passes(t *testing.T) {
 	resetDoneGuardState()
 	h, s := mustHandler(t)
+	// Covers the Phase 5 evidence check; the verification stage that follows a
+	// compliant DONE claim is done_gate_verify_test.go's subject.
+	h.SetDoneVerifyConfig(&config.DoneVerifyConfig{Enabled: false})
 	h.ocDBPath = evidenceDBPath(t)
 	makeEvidenceGuardAgent(t, h, s, "dg-ev3", true)
 	stubEvidenceRows(t, evidenceRowsForParent("ses_loop_dg-ev3"))
@@ -117,6 +121,9 @@ func TestDoneGuard_EvidenceOK_Passes(t *testing.T) {
 func TestDoneGuard_EvidenceSkipped_WithoutOpencodeSessionID(t *testing.T) {
 	resetDoneGuardState()
 	h, s := mustHandler(t)
+	// Covers the skip-on-empty contract of the evidence check; the verification
+	// stage is out of scope here (done_gate_verify_test.go).
+	h.SetDoneVerifyConfig(&config.DoneVerifyConfig{Enabled: false})
 	h.ocDBPath = evidenceDBPath(t)
 	makeEvidenceGuardAgent(t, h, s, "dg-ev4", false)
 	// No verification may run: with an empty OpencodeSessionID the DB must

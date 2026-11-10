@@ -3665,6 +3665,66 @@ func TestRelayAgent_LiftsTheIdleGuardPause(t *testing.T) {
 	}
 }
 
+// The three other guards stopped pausing, but rows they paused before the change
+// are still in the database. A relay has to release those too: no layer watches a
+// paused row, so without this they would stay paused forever.
+func TestRelayAgent_ReleasesTheRetiredGuardPauses(t *testing.T) {
+	resetIdleState()
+	h, s := mustHandler(t)
+
+	cases := []struct{ id, progress string }{
+		{"retired-idle", "paused: yesloop-idle escalation: no PROVEN marker in scratchpad"},
+		{"retired-stag", "paused: yesloop-stagnation escalation: no progress for 3h0m0s after 4 relays"},
+		{"retired-dv", "paused: yesloop-done-verify escalation: no BEWEISEN/send_to/7-phases evidence"},
+		{"retired-bt", "paused: yesloop-broken-toolcall escalation: empty on tool \"bash\" unanswered after 3 delivered relays"},
+	}
+	// One socket directory for all four: the helper sets h.dataDir, and the path
+	// each row carries has to live under the directory the handler derives.
+	dir := filepath.Dir(los24dAgentSock(t, h, cases[0].id))
+	for _, c := range cases {
+		sockPath := filepath.Join(dir, c.id+".sock")
+		ln, err := net.Listen("unix", sockPath+".inject")
+		if err != nil {
+			t.Fatalf("listen inject for %s: %v", c.id, err)
+		}
+		defer ln.Close()
+		go func() {
+			for {
+				conn, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				io.Copy(io.Discard, conn)
+				conn.Close()
+			}
+		}()
+		if err := s.AgentCreate(storage.Agent{
+			ID: c.id, Project: "p", Section: "yesloop-" + c.id,
+			Status: "paused", Backend: "claude", SockPath: sockPath,
+		}); err != nil {
+			t.Fatalf("AgentCreate: %v", err)
+		}
+		if err := s.AgentUpdate(c.id, map[string]any{"progress": c.progress}); err != nil {
+			t.Fatalf("AgentUpdate: %v", err)
+		}
+	}
+
+	for _, c := range cases {
+		if resp := h.handleRelayAgent(map[string]any{
+			"to": c.id, "content": "approved, continue",
+		}); resp.Error != "" {
+			t.Fatalf("relay to %s failed: %s", c.id, resp.Error)
+		}
+		row, err := s.AgentGet(c.id)
+		if err != nil {
+			t.Fatalf("AgentGet(%s): %v", c.id, err)
+		}
+		if row.Status != "running" {
+			t.Errorf("a relay must release the retired pause of %s, status = %q", c.id, row.Status)
+		}
+	}
+}
+
 // Any other pause keeps its status: the DONE-guard lifts its own pause when the
 // scratchpad becomes compliant, and a relay must not take that decision away.
 func TestRelayAgent_LeavesForeignPausesPaused(t *testing.T) {

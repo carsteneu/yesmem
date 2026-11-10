@@ -1596,20 +1596,17 @@ func (h *Handler) handleRelayAgent(params map[string]any) Response {
 		return errorResponse(err.Error())
 	}
 
-	// The idle guard's pause is a request for the orchestrator, not a verdict:
-	// relaying into the agent is the answer to it, so the row returns under
-	// supervision (every guard skips a paused row). Other pauses keep their
-	// status — the DONE-guard lifts its own pause once the scratchpad becomes
-	// compliant, and a relay must not take that decision away (YM-225).
+	// A row the retired pauses left behind: the guards no longer stop an agent,
+	// but rows paused by the old code are still in the database and no layer
+	// watches a paused row, so a relay is the only thing that releases them.
 	//
-	// The write is conditional on the row still carrying exactly the pause this
-	// relay answered: the row was read before the delivery, and a stop or another
-	// guard's pause may have landed since. The prefix is matched, not searched —
-	// only this guard writes it.
-	if agent.Status == "paused" && strings.HasPrefix(agent.Progress, idlePausePrefix()) {
+	// The write is conditional on the row still carrying exactly that pause: the
+	// row was read before the delivery, and a stop or another guard's pause may
+	// have landed since. The prefix is matched, not searched.
+	if agent.Status == "paused" && matchesRetiredGuardPause(agent.Progress) {
 		changed, err := h.store.AgentUpdateIfMatches(agent.ID, "paused", agent.Progress, map[string]any{
 			"status": "running",
-			"progress": fmt.Sprintf("recovered by RELAY at %s: relay delivered to an idle-guard pause",
+			"progress": fmt.Sprintf("recovered by RELAY at %s: relay delivered to a retired guard pause",
 				time.Now().Format("2006-01-02 15:04:05")),
 		})
 		if err != nil {

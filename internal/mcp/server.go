@@ -952,7 +952,7 @@ func planItemsSchema() mcplib.PropertyOption {
 			"content": map[string]any{"type": "string", "description": "One step, one line"},
 			"status":  map[string]any{"type": "string", "enum": []string{"pending", "in_progress", "completed", "cancelled"}},
 			"reason":  map[string]any{"type": "string", "description": "Why this step is on the plan"},
-			"depth":   map[string]any{"type": "integer", "minimum": 0, "maximum": 1, "description": "0 = top level, 1 = sub-step"},
+			"depth":   map[string]any{"type": "integer", "minimum": 0, "maximum": 2, "description": "0 = top level, 1 = sub-step, 2 = detail; three levels is the maximum"},
 		},
 		"required": []string{"content"},
 	})
@@ -1461,6 +1461,22 @@ func (s *Server) registerTools() {
 		mcplib.NewTool("complete_plan",
 			mcplib.WithDescription("Mark the active plan as completed. Use when all plan items are done — stops plan checkpoints and signals completion to the orchestration layer."),
 		), s.proxyCallWithThreadID("complete_plan", formatPlanResult))
+
+	s.srv.AddTool(
+		mcplib.NewTool("verify_claims",
+			mcplib.WithDescription("Judge a DONE report against the world: the daemon re-derives every claim (commit, branch, test run, diff scope, plan items, evidence ids) instead of believing it. Answer is accepted or blocked with the blocking findings. Pass the report text, or a scratchpad section that holds it."),
+			mcplib.WithString("repo", mcplib.Required(), mcplib.Description("Repository the claims are checked against")),
+			mcplib.WithString("report", mcplib.Description("Report text. Omit when passing project and section.")),
+			mcplib.WithString("section", mcplib.Description("Scratchpad section holding the report")),
+			mcplib.WithString("project", mcplib.Description(projectFilterDesc)),
+			mcplib.WithString("base", mcplib.Description("Base revision a diff-scope claim is compared from; rejected with the yesloop-done profile, which derives it")),
+			mcplib.WithString("profile", mcplib.Description("Claim classes the report must contain, e.g. yesloop-done")),
+			mcplib.WithString("policy", mcplib.Description("Class policy: yesloop-done tolerates an unprovable deploy; empty stays strict")),
+			mcplib.WithBoolean("strict", mcplib.Description("Reserve success for a fully proven report")),
+			mcplib.WithString("budget", mcplib.Description("Run budget as a Go duration, e.g. 5m")),
+			mcplib.WithString("report_session", mcplib.Description("Session the report belongs to; a cited subagent must descend from it (ignored when a section is given: its agent owns it)")),
+			mcplib.WithString("plan_thread", mcplib.Description("Thread whose plan a [PLAN:] claim is checked against (ignored when a section is given: its agent owns it)")),
+		), s.proxyCall("verify_claims"))
 
 	s.srv.AddTool(
 		mcplib.NewTool("hybrid_search",

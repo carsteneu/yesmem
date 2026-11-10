@@ -759,19 +759,35 @@ func executeSetup(home, dataDir, binaryPath, model, apiKey, provider, terminal s
 		})
 	}
 
-	// 7e. Generate project RULES.md (for rule_guard plugin)
+	// 7e. Seed the project's deviation file. The standard rules live in the installation, so nothing numbered
+	// is generated into the checkout: a project states only where it differs. A checkout with a complete
+	// RULES.md of its own is left untouched (it wins alone in guard.LoadRules).
 	if cwd, err := os.Getwd(); err == nil {
-		withSpinner("Generating RULES.md", func() (string, error) {
-			path, err := GenerateRULESmd(home, cwd)
+		withSpinner("Seeding PROJECT_RULES.md", func() (string, error) {
+			path, err := seedProjectRules(cwd)
 			if err != nil {
 				return "", err
 			}
 			if path != "" {
 				return filepath.Base(path), nil
 			}
-			return "already exists", nil
+			return "nothing to declare", nil
 		})
 	}
+
+	// 7f. Install the installation's own RULES.md: the one place the standard rules are maintained, and the
+	// copy the guard enforces from (guard.LoadInstalledRules). A copy the operator edited is kept, and only a
+	// provably untouched one is replaced, so a new standard rule can reach the machine.
+	withSpinner("Installing RULES.md", func() (string, error) {
+		path, err := installRULESmd(dataDir)
+		if err != nil {
+			return "", err
+		}
+		if path != "" {
+			return filepath.Join("yesmem", filepath.Base(path)), nil
+		}
+		return "kept", nil
+	})
 
 	// 8. Write .mcp.json
 	withSpinner("Writing .mcp.json", func() (string, error) {
@@ -849,6 +865,10 @@ func executeSetup(home, dataDir, binaryPath, model, apiKey, provider, terminal s
 			return "", verifyLLMConnection(dataDir, apiKey, model, provider, openaiBaseURL)
 		})
 	}
+
+	// 14. Report the rule guard's resolution. The guard picks its model at runtime, so this is a report of
+	// that resolution, not a value written anywhere: config.yaml keeps no model name for it.
+	printGuardStatus(dataDir, provider)
 
 	fmt.Println()
 	fmt.Println("  ══════════════════════════════════════")
@@ -1215,6 +1235,17 @@ llm:
 
   # Max cost per single LLM call (USD). Safety net against runaway prompts.
   max_budget_per_call_usd: 1.0
+
+# --- DONE verification ---
+# The gate reads the verdict a verify_claims run reached before the DONE: the
+# report is proved, not believed. budget is the default run budget of that call,
+# max_wait how long it waits for the single verification slot. model is part of
+# the schema for symmetry with rule_guard; a run calls no model.
+done_verify:
+  enabled: true
+  model: ""
+  budget: 5m
+  max_wait: 10m
 
 # --- Evolution ---
 # Automatic evolution of knowledge over time.

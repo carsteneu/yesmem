@@ -22,6 +22,7 @@ Orchestrator (this session, light)
   ├─ DISPATCH yesmem_spawn_agent × ≤6 (opencode TUI agents)
   ├─ MONITOR list_agents + scratchpad polling
   ├─ INTEGRATE cross-links + INDEX.md + citation audit
+  ├─ DAEMON-VERIFY yesmem verify-claims, verdict accepted
   └─ DELIVER commit + DONE
             │
             ▼ yesmem_spawn_agent (TUI; 12h and 6 concurrent are orchestrator conventions, not daemon limits)
@@ -34,6 +35,7 @@ Orchestrator (this session, light)
      │         bash+curl+pdftotext for PDFs
      ├─ VERIFY min 2 sources/file, every claim cited
      ├─ COMMIT write files to worktree
+     ├─ DAEMON-VERIFY yesmem verify-claims, verdict accepted
      └─ DELIVER scratchpad DONE + send_to orchestrator
 ```
 
@@ -41,7 +43,7 @@ Orchestrator (this session, light)
 
 ## CRITICAL: Always spawn in a worktree
 
-When invoked from an interactive session, the user's session only does setup — it does NOT run the orchestrator pipeline inline. Setup creates the worktree, writes the master plan + scratchpad briefing, then **spawns the Orchestrator as a TUI agent** which takes over all 6 phases.
+When invoked from an interactive session, the user's session only does setup — it does NOT run the orchestrator pipeline inline. Setup creates the worktree, writes the master plan + scratchpad briefing, then **spawns the Orchestrator as a TUI agent** which takes over all 7 phases.
 
 Setup steps (user's interactive session):
 1. **Create worktree:** `git worktree add -b yesresearch/<topic-slug> <repo>/.worktrees/yesresearch-<topic-slug>` (fresh-create) OR `git worktree add -b yesresearch/<topic-slug>-update-N <repo>/.worktrees/yesresearch-<topic-slug>-update-N` (update mode, branching from previous wiki commit)
@@ -252,7 +254,7 @@ NEVER write to `/tmp/` or `~/.claude/yesmem/tmp/` in autonomous operations. Use 
 
 ## Definition of DONE
 
-DONE is a contract. A Bereichs-Agent is DONE only when ALL six phase sections exist in its scratchpad section AND each carries `**Status:** COMPLETE`.
+DONE is a contract. A Bereichs-Agent is DONE only when ALL seven phase sections exist in its scratchpad section AND each carries `**Status:** COMPLETE`.
 
 **Valid Status values per phase:**
 - `IN PROGRESS` — actively working
@@ -261,9 +263,9 @@ DONE is a contract. A Bereichs-Agent is DONE only when ALL six phase sections ex
 
 **Phase status update mandatory at every transition:**
 ```
-update_agent_status(phase="Phase N/6 NAME")
-update_agent_status(phase="Phase N/6 NAME (file M/K)")
-update_agent_status(phase="Phase N/6 NAME (blocked: <why>)")
+update_agent_status(phase="Phase N/7 NAME")
+update_agent_status(phase="Phase N/7 NAME (file M/K)")
+update_agent_status(phase="Phase N/7 NAME (blocked: <why>)")
 ```
 
 **SCRATCHPAD DISCIPLINE (MANDATORY — prevents briefing clobber):**
@@ -280,7 +282,7 @@ update_agent_status(phase="Phase N/6 NAME (blocked: <why>)")
 
 **For Bereichs-Agents reporting phase progress:**
 - Use `scratchpad_append` for intermediate status updates ("Phase 1 done, starting Phase 2")
-- Use `scratchpad_write` ONLY for the final DONE report (all 6 Phase blocks at once)
+- Use `scratchpad_write` ONLY for the final DONE report (all 7 Phase blocks at once)
 - Phase blocks are written to `scratchpad` via `scratchpad_write` when ALL phases are complete
 
 **For Orchestrator:**
@@ -291,10 +293,45 @@ update_agent_status(phase="Phase N/6 NAME (blocked: <why>)")
 **Orchestrator validates DONE:**
 - `list_agents` → check status, turns, activity
 - `scratchpad_read(project, section)` → check phase blocks
-- `### Phase 1` through `### Phase 6` headers present
+- `### Phase 1` through `### Phase 7` headers present
 - Each block has `**Status:** COMPLETE` (or `BLOCKED — <reason>`)
 - Phase 4 has citation audit evidence (`Citations verified: yes`, source count per file)
-- Phase 6 has `send_to orchestrator:` and file list
+- Phase 6 (DAEMON-VERIFY) carries the accepted pre-check (`**Vorab-Prüfung:** ... accepted`)
+- Phase 7 (FINISH/DELIVER) has `send_to orchestrator:` and the file list
+
+## Der Prüfbericht (`<section>-verify`)
+
+Die Phasenblöcke sind die Form, der Bericht ist die Behauptung. Der Daemon leitet jede
+Behauptung selbst her und glaubt keinem Bericht. Lege deshalb neben dem Pipeline-Abschnitt
+den Abschnitt `<section>-verify` an. Ohne ihn ist nichts zu prüfen und DONE blockiert.
+
+```
+[COMMIT: <vollständiger Hash>]
+[BRANCH: <Branch, der gepusht wurde>]
+[DEPLOY: yes|no]
+Tests run: <Befehl> -> exit <N>
+Files in scope: <pfad>, <pfad>
+[EVIDENCE: cold-review=ses_…, consequence=ses_…, security=ses_…]
+[PLAN: <projekt>]
+```
+
+Regeln:
+
+- `Tests run:` braucht einen Befehl aus der Allowlist und `exit 0` plus positives
+  Testsummarium. Ein Exit-Code allein zählt nicht.
+- Platzhalter (`<hash>`, `TODO`, `…`) behaupten nichts, dann fehlt die Klasse.
+- Ein unbekannter Marker ist ein Defekt.
+- `[DEPLOY: …]` ist strukturell unbeweisbar und blockiert deshalb nicht.
+- Recherche ohne Testlauf meldet den ehrlichen Ausgang (`Tests run: … -> exit 1`) statt
+  einer grünen Suite, die es nicht gibt.
+
+Der Daemon prüft den Bericht nicht mehr selbst. Er liest ein Urteil, das vor der
+DONE-Meldung entstand: `yesmem verify-claims` mit `--profile yesloop-done --policy
+yesloop-done --strict` (Section, Report-Session und Plan-Thread wie in der yesloop-Skill).
+Exit 0 heißt `accepted`, dann setzt du das DONE ab; Exit 1 heißt `blocked`, dann
+korrigierst du und prüfst erneut. Ein DONE ohne frisches Urteil blockt der Daemon als
+Defekt und druckt den vollständigen Befehl. Danach meldet er `DONE-VERIFIED` oder
+`DONE-VERIFY-BLOCKED` mit einer Findings-Tabelle.
 
 ## DONE-Gate Hardening (Section 11)
 
@@ -326,7 +363,7 @@ Bereichs-Agent DONE-claims fail the gate when ANY of these deterministic checks 
 | W7 | No broken git index.lock files in worktree | `ls .yesmem/locks/*.lock` empty after DELIVER | Manual cleanup |
 | W8 | Frontmatter Union applied (UPDATE MODE) | spot-check: tags from prior version preserved in ≥80% of files | Re-do INTEGRATE frontmatter-merge |
 | W9 | No concurrent Bereichs-Agents exceeded cap | `list_agents(project)` and count the rows with `status == "running"` client-side (the tool takes only `project`); historical max ≤ cap | Log warning |
-| W10 | All Bereichs-Agent scratchpad DONE blocks complete | Each has `### Phase 1` through `### Phase 6` + all `**Status:** COMPLETE` | Re-dispatch incomplete Bereichs-Agents |
+| W10 | All Bereichs-Agent scratchpad DONE blocks complete | Each has `### Phase 1` through `### Phase 7` + all `**Status:** COMPLETE` | Re-dispatch incomplete Bereichs-Agents |
 
 ### Orchestrator Self-Checks (before DELIVER complete)
 
@@ -386,9 +423,9 @@ This mirrors the deterministic DONE-Guard pattern from yesloop  — no LLM judgm
 
 ## Orchestrator Phase Pipeline
 
-### Phase 1/6: READ
+### Phase 1/7: READ
 ```
-update_agent_status(phase="Phase 1/6 READ")
+update_agent_status(phase="Phase 1/7 READ")
 ```
 - Read master plan (plain MD). If path given, Read it. If `--ad-hoc`, generate plan from topic.
 - Parse `##` headings as clusters. Bullet points under each heading are file targets.
@@ -449,9 +486,9 @@ Delta-plan output: list of `{file, reason, action}` tuples.
 
 **Files not update-worthy stay untouched.** This is delta-only — avoid the "rebuild all on every tick" anti-pattern .
 
-### Phase 2/6: DECOMPOSE
+### Phase 2/7: DECOMPOSE
 ```
-update_agent_status(phase="Phase 2/6 DECOMPOSE")
+update_agent_status(phase="Phase 2/7 DECOMPOSE")
 ```
 - **FRESH MODE:** Group files into batches à 5-8 per Bereichs-Agent (cap: 6 concurrent agents).
 - **UPDATE MODE:** Group delta-tasks (from Phase 1 delta-scan) into batches à 5-8 per Bereichs-Agent. Same cluster-files typically go to the same Bereichs-Agent to preserve context. A Bereichs-Agent may receive mixed actions: "file X: add visuals", "file Y: refresh sources", "file Z: run persona review".
@@ -461,9 +498,9 @@ update_agent_status(phase="Phase 2/6 DECOMPOSE")
   - **UPDATE MODE additional:** per-file action, existing frontmatter state, existing content path
 - Decide the runtime budget per agent (default `2h`, longer for source-heavy clusters; UPDATE typically shorter since not all files need work). This is an orchestrator convention: the daemon's hard ceiling is the global `max_runtime` config, so stopping an overrunning agent is a relay plus `stop_agent`, not a spawn parameter.
 
-### Phase 3/6: DISPATCH
+### Phase 3/7: DISPATCH
 ```
-update_agent_status(phase="Phase 3/6 DISPATCH")
+update_agent_status(phase="Phase 3/7 DISPATCH")
 ```
 - **Dynamic cap:** Spawn `min(cluster_count, max_concurrent_agents)` agents (default cap: 6, configurable). If cluster_count > cap, form batches.
 - **Batch strategy for many clusters:**
@@ -477,9 +514,9 @@ update_agent_status(phase="Phase 3/6 DISPATCH")
 - **Relay kick** within 30s: `yesmem_relay_agent(to="<agent-id>", content="Read scratchpad section <section> AND load the yesresearch skill (skill tool or ~/.claude/skills/yesresearch/SKILL.md). MANDATORY - YOU MUST READ THE YESRESEARCH SKILL AND YOU MUST FOLLOW THE INSTRUCTIONS IN THIS SKILL. Your agent id: <agent-id>. At Phase 1 start, rename your session to '[<agent-id>] <session title from briefing>'. Mode: FRESH|UPDATE. Begin Phase 1 CONTEXT.")` — backup if PTY is slow
 - Log agent IDs in orchestrator scratchpad.
 
-### Phase 4/6: MONITOR
+### Phase 4/7: MONITOR
 ```
-update_agent_status(phase="Phase 4/6 MONITOR")
+update_agent_status(phase="Phase 4/7 MONITOR")
 ```
 **PATIENCE IS THE JOB.** Research agents work slower than coding agents — often by an order of magnitude. A single file may take 10-15 minutes: webfetch roundtrips, PDF download+pdftotext, draft writing, citation verification via task(explore), revision. A 5-file cluster typically takes 30-90 minutes; a large cluster 2-4 hours. This is normal, not a stall.
 
@@ -490,8 +527,8 @@ update_agent_status(phase="Phase 4/6 MONITOR")
 - **Prefer `get_agent` over `list_agents` for single-agent checks** — it returns the full field set including `stream_active` and `subagent_streams`.
 
 **Primary vs secondary indicators (clarification):**
-- **Primary:** `update_agent_status` field in `get_agent`/`list_agents` responses — shows current phase (`Phase N/6 NAME`). Live, daemon-tracked. Use this for progress tracking.
-- **Secondary:** `scratchpad_read` — for DONE-verification (6 phase blocks COMPLETE) and content review. Poll less frequently.
+- **Primary:** `update_agent_status` field in `get_agent`/`list_agents` responses — shows current phase (`Phase N/7 NAME`). Live, daemon-tracked. Use this for progress tracking.
+- **Secondary:** `scratchpad_read` — for DONE-verification (7 phase blocks COMPLETE) and content review. Poll less frequently.
 - Do NOT poll scratchpad for phase tracking — `update_agent_status` is the authoritative source.
 
 **What counts as "working" (not stalled):**
@@ -525,9 +562,9 @@ update_agent_status(phase="Phase 4/6 MONITOR")
 - Do NOT spawn redundant backup agents "just in case" — burns tokens, clogs worktree
 - Do NOT escalate to user unless ALL agents are stalled AND ≥3 respawns exhausted
 
-### Phase 5/6: INTEGRATE
+### Phase 5/7: INTEGRATE
 ```
-update_agent_status(phase="Phase 5/6 INTEGRATE")
+update_agent_status(phase="Phase 5/7 INTEGRATE")
 ```
 Triggers after all Bereichs-Agents report DONE (or aborted).
 
@@ -550,9 +587,27 @@ Triggers after all Bereichs-Agents report DONE (or aborted).
   - NEVER remove existing entries — broken 404 links stay as historical record (#4 decision)
   - FRESH MODE: just write new bibliography from scratch
 
-### Phase 6/6: DELIVER
+### Phase 6/7: DAEMON-VERIFY
 ```
-update_agent_status(phase="Phase 6/6 DELIVER")
+update_agent_status(phase="Phase 6/7 DAEMON-VERIFY")
+```
+The verification is its own phase, between the finished wiki and the handoff. Nothing
+leaves the worktree before its report has a verdict.
+
+- Write the report section `yesresearch-<topic-slug>-orchestrator-verify` in the shape the
+  yesloop skill prescribes (commit, branch, tests run, files in scope, evidence, plan).
+- Run the pre-check on it:
+  `yesmem verify-claims --repo <worktree> --project <project> --section <orchestrator-section>-verify --profile yesloop-done --policy yesloop-done --strict`
+- Exit 0 means `accepted`: record `**Vorab-Prüfung:** ... accepted` in this block and go to
+  Phase 7. Exit 1 means `blocked`. The class decides: `refuted` and `defect` send you back
+  into INTEGRATE or a cluster, `environment`, `limit` and `error` belong to the
+  orchestrator's caller.
+- No judgement and no model takes part here: a command, an exit code and the verdict it
+  prints.
+
+### Phase 7/7: DELIVER
+```
+update_agent_status(phase="Phase 7/7 DELIVER")
 ```
 - `git add yesdocs/<topic>/wiki/` → verify staged file count matches plan
 - Commit: `docs(<topic>): research-wiki complete — N files, M citations, INDEX live`
@@ -570,9 +625,9 @@ When you are spawned as a yesresearch Bereichs-Agent, you receive via scratchpad
 
 **SESSION TITLE (MANDATORY at Phase 1 start, opencode backend):** `opencode_session_rename(title="[<agent-id>] <session title>")` (Code Mode: `tools.opencode.session_rename`) — omit `sessionID` (renames the current session); the bare `session_rename` does not exist. `<agent-id>` comes from the relay kick; the session title from your briefing (or derive it from the cluster name). Record `**Session title set:** <final title>` in the Phase 1 block. Rename failure or non-opencode backend: non-blocking — note it and continue.
 
-### Phase 1/6: CONTEXT
+### Phase 1/7: CONTEXT
 ```
-update_agent_status(phase="Phase 1/6 CONTEXT")
+update_agent_status(phase="Phase 1/7 CONTEXT")
 
 ### Phase 1: CONTEXT
 **Status:** COMPLETE
@@ -599,9 +654,9 @@ Allowed mutations per action:
 - `verify_status`: change frontmatter `status: Entwurf → Verifiziert` after successful VERIFY pass; no content change.
 - `expand_content`: append new sections addressing identified gaps; do NOT remove existing sections.
 
-### Phase 2/6: PLAN
+### Phase 2/7: PLAN
 ```
-update_agent_status(phase="Phase 2/6 PLAN")
+update_agent_status(phase="Phase 2/7 PLAN")
 
 ### Phase 2: PLAN
 **Status:** COMPLETE
@@ -612,9 +667,9 @@ update_agent_status(phase="Phase 2/6 PLAN")
 **Files in scope:** <list>
 ```
 
-### Phase 3/6: EXECUTE
+### Phase 3/7: EXECUTE
 ```
-update_agent_status(phase="Phase 3/6 EXECUTE (file M/K)")
+update_agent_status(phase="Phase 3/7 EXECUTE (file M/K)")
 
 ### Phase 3: EXECUTE
 **Status:** IN PROGRESS
@@ -643,9 +698,9 @@ Per-file discipline:
 - `todowrite` synced after each file.
 - One commit per file (or per cluster if files are small). UPDATE MODE: one commit per action-batch per file.
 
-### Phase 4/6: VERIFY
+### Phase 4/7: VERIFY
 ```
-update_agent_status(phase="Phase 4/6 VERIFY")
+update_agent_status(phase="Phase 4/7 VERIFY")
 
 ### Phase 4: VERIFY
 **Status:** COMPLETE
@@ -691,9 +746,9 @@ If Persona Review returns gaps → add content addressing the gap (re-dispatch t
 
 If verify fails on citation layer only → fix and re-verify (also counts against the 5-cycle budget).
 
-### Phase 5/6: COMMIT
+### Phase 5/7: COMMIT
 ```
-update_agent_status(phase="Phase 5/6 COMMIT")
+update_agent_status(phase="Phase 5/7 COMMIT")
 
 ### Phase 5: COMMIT
 **Status:** COMPLETE
@@ -705,11 +760,29 @@ update_agent_status(phase="Phase 5/6 COMMIT")
 **Commits:** <hashes>
 ```
 
-### Phase 6/6: DELIVER
+### Phase 6/7: DAEMON-VERIFY
 ```
-update_agent_status(phase="Phase 6/6 DELIVER")
+update_agent_status(phase="Phase 6/7 DAEMON-VERIFY")
 
-### Phase 6: DELIVER
+### Phase 6: DAEMON-VERIFY
+**Status:** COMPLETE
+**Vorab-Prüfung:** yesmem verify-claims -> exit 0 (accepted)
+**Findings:** none | <what the run said and what you did about it>
+```
+
+- Write the report section `<your-section>-verify` first (commit, branch, files in scope,
+  citations) and run:
+  `yesmem verify-claims --repo <worktree> --project <project> --section <your-section>-verify --profile yesloop-done --policy yesloop-done --strict`
+- Exit 0 means `accepted` and opens Phase 7. Exit 1 means `blocked`; `refuted` or `defect`
+  send you back into VERIFY or EXECUTE, `environment`, `limit` and `error` go to the
+  orchestrator. A DONE without a fresh accepted verdict is withheld by the daemon, and the
+  orchestrator is told about the hold.
+
+### Phase 7/7: DELIVER
+```
+update_agent_status(phase="Phase 7/7 DELIVER")
+
+### Phase 7: DELIVER
 **Status:** COMPLETE
 **Files complete:** N/N
 **Citations:** M total
@@ -1100,7 +1173,7 @@ If the Orchestrator agent itself crashes (daemon restart, OOM, manual kill), the
 2. `scratchpad_read(project, "yesresearch-<topic-slug>-orchestrator")` — restore detailed state
 3. `list_agents(project)` and keep the rows with `status == "running"`; the tool takes only `project` — check which Bereichs-Agents are still alive
 4. Reconstruct: which phase was I in? Which batches dispatched? Which agents completed?
-5. `update_agent_status(phase="Phase N/6 NAME (recovered)")` — re-assert state
+5. `update_agent_status(phase="Phase N/7 NAME (recovered)")` — re-assert state
 6. Continue from the right point:
    - Was in Phase 3 DISPATCH with 2/4 agents spawned? Spawn remaining 2.
    - Was in Phase 4 MONITOR? Resume polling.
@@ -1190,7 +1263,12 @@ Orchestrator updates this after every phase transition + every batch completion.
 **Status badges:** Verifiziert ×3
 **Commits:** a1b2c3d, e4f5g6h, i7j8k9l
 
-### Phase 6: DELIVER
+### Phase 6: DAEMON-VERIFY
+**Status:** COMPLETE
+**Vorab-Prüfung:** yesmem verify-claims -> exit 0 (accepted)
+**Findings:** none
+
+### Phase 7: DELIVER
 **Status:** COMPLETE
 **Files complete:** 3/3
 **Citations:** 17 total

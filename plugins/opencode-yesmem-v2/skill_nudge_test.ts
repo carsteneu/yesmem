@@ -15,6 +15,7 @@ import { join } from "node:path"
 // definition. A competing plain Error class here would win over the fixture's and break the yieldable
 // tagged error index.ts relies on.
 import "./opencode-yesmem-fixture"
+import { mockDaemon } from "./opencode-yesmem-fixture"
 
 // The nudge drops a "ghost skill": a name that is not installed under a skills
 // root never reaches the message (skill_whitelist.isSkillInstalled). Without this
@@ -36,6 +37,7 @@ afterAll(() => {
 })
 
 const { cacheKeyLabel, catalogCandidates, skillNudge } = await import("./skill_nudge")
+const { YesMemRPC } = await import("./rpc")
 type ContextEvent = import("./skill_nudge").ContextEvent
 
 function dirWithCatalog(trigger: string, skill: string): string {
@@ -70,8 +72,16 @@ function userEvent(text: string): ContextEvent {
   }
 }
 
-async function nudgedText(paths: readonly string[], text: string): Promise<string> {
-  const nudge = skillNudge(paths)
+/**
+ * A client for a socket that does not exist: the local stage (catalogue parsing and trigger match) needs no
+ * daemon, and the semantic stage then answers "not answered", which the nudge does not cache.
+ */
+function offlineRpc(): InstanceType<typeof YesMemRPC> {
+  return new YesMemRPC("/nonexistent/yesmem-daemon.sock")
+}
+
+async function nudgedText(paths: readonly string[], text: string, directory = "."): Promise<string> {
+  const nudge = skillNudge(offlineRpc(), directory, paths)
   const event = userEvent(text)
   await nudge.context(event)
   return event.messages![0].content![0].text ?? ""
@@ -97,6 +107,23 @@ describe("skill_nudge catalogue sources (YM-88)", () => {
     })
 
     expect(candidates[0]).toBe(override)
+  })
+
+  // Setup no longer writes a full copy into the project, so the only catalogue on a fresh installation is the
+  // installation's own RULES.md. Without this candidate the nudge returns before it ever asks the daemon: a
+  // project without a hand-written RULES.md would get no skill suggestion at all.
+  test("the installation's RULES.md is a candidate before the plugin copy", () => {
+    const candidates = catalogCandidates({
+      pluginDirectory: "/plugin",
+      projectDirectory: "/project",
+      installationDirectory: "/home/somebody/.claude/yesmem/",
+    })
+
+    expect(candidates).toEqual([
+      "/project/RULES.md",
+      "/home/somebody/.claude/yesmem/RULES.md",
+      "/plugin/RULES.md",
+    ])
   })
 
   test("an override that is not named RULES.md is kept verbatim", () => {
@@ -158,7 +185,7 @@ describe("skill_nudge catalogue sources (YM-88)", () => {
   test("stops nudging when the catalogue disappears", async () => {
     const projectDir = dirWithCatalog("zzz-project-trigger", "brainstorming")
     const path = join(projectDir, "RULES.md")
-    const nudge = skillNudge([path])
+    const nudge = skillNudge(offlineRpc(), projectDir, [path])
 
     const first = userEvent("please run the zzz-project-trigger now")
     await nudge.context(first)
@@ -169,6 +196,42 @@ describe("skill_nudge catalogue sources (YM-88)", () => {
     const second = userEvent("please run the zzz-project-trigger now")
     await nudge.context(second)
     expect(second.messages![0].content![0].text).toBe("please run the zzz-project-trigger now")
+  })
+})
+
+describe("skill_nudge semantic stage", () => {
+  test("a name outside the local catalogue is not injected", async () => {
+    // Stage 1 reads the candidate list (an override wins), stage 2 asks the daemon, which reads the project
+    // file. A name from the wrong catalogue must not reach the message: the override is authoritative.
+    const projectDir = dirWithCatalog("zzz-project-trigger", "brainstorming")
+    const skills = mkdtempSync(join(tmpdir(), "yesmem-v2-nudge-roots-"))
+    mkdirSync(join(skills, "outsider"), { recursive: true })
+    writeFileSync(join(skills, "outsider", "SKILL.md"), "# outsider\n")
+    const savedRoots = process.env.YESMEM_SKILL_ROOTS
+    process.env.YESMEM_SKILL_ROOTS = skills
+    const daemon = await mockDaemon((request) =>
+      request.method === "guard_check" ? { result: { decision: "SUGGEST", suggestion: "outsider" } } : { result: {} },
+    )
+
+    try {
+      const nudge = skillNudge(new YesMemRPC(daemon.socketPath), projectDir, [join(projectDir, "RULES.md")])
+      // First sighting: the background answer is stored and not injected.
+      await nudge.context(userEvent("plain sentence without any trigger"))
+      for (let attempt = 0; attempt < 40; attempt++) {
+        if (daemon.requests.length > 0) break
+        await Bun.sleep(50)
+      }
+      await Bun.sleep(200)
+
+      const repeat = userEvent("plain sentence without any trigger")
+      await nudge.context(repeat)
+
+      expect(repeat.messages![0].content![0].text).toBe("plain sentence without any trigger")
+    } finally {
+      await daemon.close()
+      if (savedRoots === undefined) delete process.env.YESMEM_SKILL_ROOTS
+      else process.env.YESMEM_SKILL_ROOTS = savedRoots
+    }
   })
 })
 
@@ -217,7 +280,7 @@ describe("skill_nudge log privacy (YM-22)", () => {
   test("a log line about the cache never carries the user message", async () => {
     const secret = "LOS22USERTEXT-do-not-log-me"
     const projectDir = dirWithCatalog("zzz-project-trigger", "brainstorming")
-    const nudge = skillNudge([join(projectDir, "RULES.md")])
+    const nudge = skillNudge(offlineRpc(), projectDir, [join(projectDir, "RULES.md")])
 
     const event = userEvent(secret)
     await nudge.context(event)

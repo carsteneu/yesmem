@@ -489,14 +489,14 @@ func derivePlanContent(items []PlanItem) string {
 	return strings.TrimSuffix(b.String(), "\n")
 }
 
-// clampPlanDepth keeps the derived snapshot inside the two levels the model
+// clampPlanDepth keeps the derived snapshot inside the three levels the model
 // defines. The stored value stays as given; only the rendering is clamped.
 func clampPlanDepth(depth int) int {
 	if depth < 0 {
 		return 0
 	}
-	if depth > 1 {
-		return 1
+	if depth > 2 {
+		return 2
 	}
 	return depth
 }

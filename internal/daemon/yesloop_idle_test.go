@@ -311,7 +311,7 @@ func TestCheckYesloopIdle_RemarkToCommit(t *testing.T) {
 	yesloopIdleAgentsMu.Unlock()
 
 	// Write a scratchpad with all 6 phases completed
-	phaseContent := buildSixPhaseCompleteContent()
+	phaseContent := buildSevenPhaseCompleteContent()
 	s.ScratchpadWrite("testproj", "yesloop-remark-1", phaseContent, "")
 
 	// Check — should transition to COMMIT_REQUEST
@@ -366,7 +366,11 @@ Stage 1 Self-Review: Done
 **task() dispatched:** blocked
 No Subagent infrastructure available
 
-### Phase 6: FINISH
+### Phase 6: DAEMON-VERIFY
+**Status:** COMPLETE
+Vorab-Prüfung: verify-claims -> exit 0 (accepted)
+
+### Phase 7: FINISH
 **Status:** COMPLETE
 Deploy executed: yes
 send_to orchestrator: yes
@@ -490,23 +494,15 @@ func TestCheckYesloopIdle_MaxRefires(t *testing.T) {
 		t.Error("after max re-fires, agent should transition to DONE (escalated)")
 	}
 
-	// Agent should be paused in the store
-	agent, err := s.AgentGet("refire-1")
-	if err != nil {
-		t.Fatalf("AgentGet: %v", err)
-	}
-	if agent.Status != "paused" {
-		t.Errorf("after escalation, agent status should be paused, got %s", agent.Status)
-	}
-	if !strings.Contains(agent.Progress, "yesloop-idle") {
-		t.Errorf("progress should mention yesloop-idle, got %s", agent.Progress)
-	}
+	// Agent keeps running: a guard nudges, it does not stop the agent
+	assertGuardNudged(t, s, "refire-1", "yesloop-idle")
 }
 
-// TestCheckYesloopIdle_EscalationPayload_HasHint: the DEAD_AGENT notification
-// sent to the orchestrator on idle escalation must include the pause-hint so
-// the orchestrator reaches for relay_agent, not resume_agent (Learning #81175).
-func TestCheckYesloopIdle_EscalationPayload_HasHint(t *testing.T) {
+// TestCheckYesloopIdle_EscalationNotice_IsANudge: the DEAD_AGENT wording is gone
+// with the pause. The orchestrator gets one informational notice that names the
+// standstill and asks nothing: there is no hold to lift, so the relay hint would
+// point at a resume that is not due.
+func TestCheckYesloopIdle_EscalationNotice_IsANudge(t *testing.T) {
 	resetIdleState()
 	h, s := mustHandler(t)
 
@@ -539,32 +535,14 @@ func TestCheckYesloopIdle_EscalationPayload_HasHint(t *testing.T) {
 		t.Fatal("expected DONE (escalation) state")
 	}
 
-	// Read the channel messages for the caller session and check the hint.
-	msgs, err := s.GetChannelMessages([]string{"caller-hint-1"})
-	if err != nil {
-		t.Fatalf("GetChannelMessages: %v", err)
-	}
-	if len(msgs) == 0 {
-		t.Fatal("expected at least one DEAD_AGENT message to caller")
-	}
-	var found bool
-	for _, m := range msgs {
-		if strings.Contains(m.Content, orchestratorPauseHint) {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("no DEAD_AGENT message contained the pause hint %q; got messages: %+v",
-			orchestratorPauseHint, msgs)
-	}
+	assertGuardNudged(t, s, "hint-1", "yesloop-idle")
 }
 
 // --- Helpers ---
 
-// buildSixPhaseCompleteContent returns a scratchpad string with all 6 phases
+// buildSevenPhaseCompleteContent returns a scratchpad string with all 7 phases
 // marked as COMPLETE.
-func buildSixPhaseCompleteContent() string {
+func buildSevenPhaseCompleteContent() string {
 	return `### Phase 1: ANALYZE
 **Status:** COMPLETE
 **Goal understood:** Test goal
@@ -588,7 +566,11 @@ func buildSixPhaseCompleteContent() string {
 task() dispatched: yes
 **Security:** none
 
-### Phase 6: FINISH
+### Phase 6: DAEMON-VERIFY
+**Status:** COMPLETE
+**Vorab-Prüfung:** verify-claims -> exit 0 (accepted)
+
+### Phase 7: FINISH
 **Status:** COMPLETE
 **Deploy executed:** yes
 **send_to orchestrator:** yes
@@ -638,7 +620,10 @@ notes
 ### Phase 5: REVIEW [x]
 cold-review: ses_abc
 
-### Phase 6: FINISH [x]
+### Phase 6: DAEMON-VERIFY [x]
+notes
+
+### Phase 7: FINISH [x]
 notes
 `, "")
 
@@ -789,8 +774,11 @@ func TestCheckYesloopIdle_DedicatedMarkerLinesAdvance(t *testing.T) {
 cold-review: ses_abc
 [x]
 
-### Phase 6: FINISH
+### Phase 6: DAEMON-VERIFY
 [x] Phase 6
+
+### Phase 7: FINISH
+[x] Phase 7
 `, "")
 
 	h.checkYesloopIdle()
@@ -833,7 +821,10 @@ func TestCheckYesloopIdle_SingleWordCheckboxesDoNotCountAsPhases(t *testing.T) {
 cold-review: ses_abc
 - [x] done
 
-### Phase 6: FINISH
+### Phase 6: DAEMON-VERIFY
+- [x] done
+
+### Phase 7: FINISH
 - [x] done
 `, "")
 
@@ -876,7 +867,10 @@ func TestCheckYesloopIdle_IncidentalCheckboxesDoNotCountAsPhases(t *testing.T) {
 cold-review: ses_abc
 - [x] ran the review
 
-### Phase 6: FINISH
+### Phase 6: DAEMON-VERIFY
+- [x] sent the verified report
+
+### Phase 7: FINISH
 - [x] sent the report
 `, "")
 
@@ -1034,7 +1028,7 @@ func TestCheckYesloopIdle_ProgressKeepsLadderAndEscalation(t *testing.T) {
 	if err := s.ScratchpadWrite("testproj", "yesloop-progress-ladder",
 		"**PROVEN:** all phases checked\n\n### Phase 1: ANALYZE\nnotes\n\n### Phase 2: PLAN\nnotes\n\n### Phase 3: EXECUTE\nnotes\n\n"+
 			"### Phase 4: VERIFY\nnotes\n\n### Phase 5: REVIEW\ncold-review: ses_abc\n\n"+
-			"### Phase 6: FINISH\nsend_to orchestrator: yes\n", ""); err != nil {
+			"### Phase 6: DAEMON-VERIFY\nVorab-Prüfung: accepted\n\n### Phase 7: FINISH\nsend_to orchestrator: yes\n", ""); err != nil {
 		t.Fatalf("ScratchpadWrite: %v", err)
 	}
 	h.handleUpdateAgentStatus(map[string]any{"id": "progress-ladder", "phase": "Phase 6/6 FINISH"})
@@ -1336,14 +1330,8 @@ func TestCheckYesloopIdle_SingleRelayAnswerIsStillNoProgress(t *testing.T) {
 		h.checkYesloopIdle()
 	}
 
-	row, err := s.AgentGet("answer-only")
-	if err != nil {
-		t.Fatalf("AgentGet: %v", err)
-	}
-	if row.Status != "paused" {
-		t.Errorf("an agent whose only output is the relay answer must still be escalated, status = %q (refireCount=%d)",
-			row.Status, getIdleStateRefireCount("answer-only"))
-	}
+	// The escalation is still owed, but as a nudge: the agent keeps running.
+	assertGuardNudged(t, s, "answer-only", "yesloop-idle")
 }
 
 // Telemetry can be missing for a row (the proxy thread never bound to it), so
@@ -1388,14 +1376,9 @@ func TestCheckYesloopIdle_SingleAssistantMessageIsNoProgress(t *testing.T) {
 		h.checkYesloopIdle()
 	}
 
-	row, err := s.AgentGet("answer-msg")
-	if err != nil {
-		t.Fatalf("AgentGet: %v", err)
-	}
-	if row.Status != "paused" {
-		t.Errorf("one assistant message is the relay answer, not progress: status = %q (refireCount=%d)",
-			row.Status, getIdleStateRefireCount("answer-msg"))
-	}
+	// One assistant message is the relay answer, not progress: the ladder still
+	// reaches its nudge, and the agent keeps running.
+	assertGuardNudged(t, s, "answer-msg", "yesloop-idle")
 }
 
 // Every relay answer costs one turn, so a counter read as a plain delta would
@@ -1413,14 +1396,9 @@ func TestCheckYesloopIdle_RepeatedRelayAnswersDoNotAccumulate(t *testing.T) {
 		h.checkYesloopIdle()
 	}
 
-	row, err := s.AgentGet("answer-loop")
-	if err != nil {
-		t.Fatalf("AgentGet: %v", err)
-	}
-	if row.Status != "paused" {
-		t.Errorf("relay answers must not accumulate into progress, status = %q (refireCount=%d)",
-			row.Status, getIdleStateRefireCount("answer-loop"))
-	}
+	// Relay answers must not accumulate into progress: the ladder reaches its
+	// nudge, and the agent keeps running.
+	assertGuardNudged(t, s, "answer-loop", "yesloop-idle")
 }
 
 // The relay answer plus the one tool call it triggers are already two requests.
@@ -1438,14 +1416,9 @@ func TestCheckYesloopIdle_AnswerWithOneToolCallIsStillNoProgress(t *testing.T) {
 		h.checkYesloopIdle()
 	}
 
-	row, err := s.AgentGet("answer-tool")
-	if err != nil {
-		t.Fatalf("AgentGet: %v", err)
-	}
-	if row.Status != "paused" {
-		t.Errorf("an agent that answers and stops must be escalated, status = %q (refireCount=%d)",
-			row.Status, getIdleStateRefireCount("answer-tool"))
-	}
+	// An agent that answers and stops is still escalated, but as a nudge: the
+	// row keeps running.
+	assertGuardNudged(t, s, "answer-tool", "yesloop-idle")
 }
 
 // A turn the model is still writing produces no completed turn and no scratchpad
@@ -1516,14 +1489,9 @@ func TestCheckYesloopIdle_StaleOpenTurnIsNoProgress(t *testing.T) {
 		h.checkYesloopIdle()
 	}
 
-	row, err := s.AgentGet("stale-open")
-	if err != nil {
-		t.Fatalf("AgentGet: %v", err)
-	}
-	if row.Status != "paused" {
-		t.Errorf("a turn aborted before the relay is not progress, status = %q (refireCount=%d)",
-			row.Status, getIdleStateRefireCount("stale-open"))
-	}
+	// A turn aborted before the relay is not progress: the ladder reaches its
+	// nudge, and the agent keeps running.
+	assertGuardNudged(t, s, "stale-open", "yesloop-idle")
 }
 
 // The working signal is bounded: a turn that stays open for longer than
@@ -1549,19 +1517,14 @@ func TestCheckYesloopIdle_OpenTurnStopsCountingAfterTheBound(t *testing.T) {
 	}
 
 	// The turn is gone now (it ended or its process died), so the ladder has to
-	// run out and pause the agent.
+	// run out and nudge the agent.
 	stub.report(0)
 	for i := 0; i < 3; i++ {
 		expireIdleRelay("stuck-open")
 		h.checkYesloopIdle()
 	}
 
-	row, err := s.AgentGet("stuck-open")
-	if err != nil {
-		t.Fatalf("AgentGet: %v", err)
-	}
-	if row.Status != "paused" {
-		t.Errorf("an agent that stopped producing must be escalated, status = %q (refireCount=%d)",
-			row.Status, getIdleStateRefireCount("stuck-open"))
-	}
+	// An agent that stopped producing is still escalated, but as a nudge: the
+	// row keeps running and nothing waits for the orchestrator.
+	assertGuardNudged(t, s, "stuck-open", "yesloop-idle")
 }

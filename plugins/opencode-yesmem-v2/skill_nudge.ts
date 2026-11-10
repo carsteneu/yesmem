@@ -2,9 +2,11 @@
 //
 // Stage 1: local substring match against the catalogue's trigger literals (fast, deterministic, on the
 //          critical path).
-// Stage 2: model fallback (semantic match) — NEVER on the critical path. Results are cached by
-//          (catalogue hash, message text) and precomputed in the background, so the dispatch hook always
-//          returns promptly and a later identical message reuses the answer.
+// Stage 2: model fallback (semantic match) — NEVER on the critical path. It asks the daemon's guard_check
+//          RPC with purpose "nudge", so the model, the chain and the answer cache are the same ones the
+//          rule guard uses. Results are cached by (catalogue hash, message text) and precomputed in the
+//          background, so the dispatch hook always returns promptly and a later identical message reuses
+//          the answer.
 //
 // The nudge is prepended to the terminal user message. Skills that are not installed are dropped
 // (skill_whitelist), the skill name must look like a skill name before it is injected, and a message that
@@ -13,10 +15,9 @@
 // Disable entirely with YESMEM_SKILL_NUDGE=off (v1 had no switch for this one; the other two nudges do).
 
 import { readFile, stat } from "node:fs/promises"
-import { readBodyCapped } from "./http"
 import { debugLog } from "./log"
 import { findTerminalUserText, hashString, type HostMessage } from "./messages"
-import { resolveGuardConfig } from "./rule_guard"
+import type { YesMemRPC } from "./rpc"
 import { isSkillInstalled } from "./skill_whitelist"
 
 const NUDGE_MARKER = "🧠 MANDATORY CHECK — activate "
@@ -24,7 +25,9 @@ const RESULT_CACHE_MAX = 128
 const MAX_CATALOG_BYTES = 256 * 1024
 const MAX_CATALOG_ENTRIES = 200
 const MAX_CATALOG_TEXT_CHARS = 32_000
-const MAX_MODEL_RESPONSE_CHARS = 100_000
+const MAX_MESSAGE_CHARS = 2000
+// The daemon may spend 15s on the model and retry once; this path is off the critical path, so it may wait.
+const NUDGE_RPC_TIMEOUT_MS = 20_000
 
 /**
  * A skill name reaches the model inside the user's message, so it may only look like a name. The whitelist
@@ -51,7 +54,6 @@ const inFlight = new Set<string>()
 export function _resetCaches() {
   resultCache.clear()
   inFlight.clear()
-  configCache = null
 }
 
 function cacheSet(key: string, value: string | null) {
@@ -139,78 +141,69 @@ function localMatch(userMessage: string, catalog: SkillEntry[]): string | null {
   return null
 }
 
-let configCache: { key: string; config: Awaited<ReturnType<typeof resolveGuardConfig>>; ts: number } | null = null
-const CONFIG_CACHE_TTL_MS = 300_000
-
-// Keyed on the inputs the resolution depends on: a cached endpoint must not survive an override change.
-function configKey() {
-  return [
-    process.env.YESMEM_GUARD_URL,
-    process.env.YESMEM_GUARD_KEY,
-    process.env.YESMEM_GUARD_MODEL,
-    process.env.YESMEM_GUARD_NPM,
-    process.env.HOME,
-  ].join("|")
-}
-
-async function guardConfig() {
-  const key = configKey()
-  if (configCache && configCache.key === key && Date.now() - configCache.ts < CONFIG_CACHE_TTL_MS)
-    return configCache.config
-  const config = await resolveGuardConfig()
-  configCache = { key, config, ts: Date.now() }
-  return config
-}
-
 /**
- * Returns the matched skill, `null` for a definitive "no match" (cacheable) and `undefined` when the call
- * failed (not cacheable — a transient error must not poison the message forever).
+ * Asks the daemon which skill fits the message (RPC guard_check, purpose "nudge"). The daemon owns the
+ * model, the chain and the answer cache; this side owns the message and the rendering.
+ *
+ * Returns the matched skill, `null` for a definitive "no match" (cacheable) and `undefined` when the question
+ * was not answered (not cacheable — a transient error must not poison the message forever). The distinction
+ * is the core's own: a PASS carries a detail when nothing was judged (no credential, endpoint unreachable),
+ * and carries none when the model answered PASS.
  */
-async function modelMatch(userMessage: string, catalogText: string): Promise<string | null | undefined> {
-  const config = await guardConfig()
-  if (!config?.apiKey) return undefined
-
-  const systemPrompt =
-    `You evaluate user messages against a skill catalog. ` +
-    `If the user's intent matches a skill, respond with ONLY the skill name. ` +
-    `If no skill matches, respond with "NONE". No explanation. No formatting.\n\n## Skill Catalog\n${catalogText}`
-  const userPrompt = `User message: "${userMessage.substring(0, 2000)}"`
-
-  try {
-    const response = await fetch(`${config.apiUrl}/v1/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
-      body: JSON.stringify({
-        model: config.model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        temperature: 0,
-        max_tokens: 64,
-      }),
-      signal: AbortSignal.timeout(10000),
-      redirect: "error",
-    })
-    if (!response.ok) {
-      debugLog("skill_nudge", `model err ${response.status}`)
-      return undefined
-    }
-    // Bound the body: the timeout limits time, not bytes.
-    const raw = await readBodyCapped(response, MAX_MODEL_RESPONSE_CHARS)
-    const content = (JSON.parse(raw) as any)?.choices?.[0]?.message?.content || ""
-    const trimmed = String(content).trim()
-    return trimmed && trimmed !== "NONE" ? trimmed : null
-  } catch (error: any) {
-    debugLog("skill_nudge", `model err: ${error?.message || String(error)}`)
+async function modelMatch(
+  rpc: YesMemRPC,
+  directory: string,
+  userMessage: string,
+  sessionID?: string,
+): Promise<string | null | undefined> {
+  const response = await rpc.call(
+    "guard_check",
+    {
+      // No call is judged here; the tool name only keeps the field from being empty.
+      tool: "skill",
+      tool_input: {},
+      cwd: directory,
+      session_id: sessionID || "",
+      context: userMessage.substring(0, MAX_MESSAGE_CHARS),
+      purpose: "nudge",
+    },
+    { timeoutMs: NUDGE_RPC_TIMEOUT_MS },
+  )
+  if (!response.ok) {
+    debugLog("skill_nudge", `rpc failed: ${String(response.error || "no answer").substring(0, 200)}`)
     return undefined
   }
+  const decision = (response.result ?? {}) as {
+    decision?: string
+    suggestion?: string
+    detail?: string
+    truncated?: boolean
+  }
+  if (decision.decision === "SUGGEST" && decision.suggestion) {
+    // The prompt asks for the bare name. A reason behind a colon is cut off here rather than rejected by
+    // isValidSkillName: the name is what reaches the message, the reason would only be noise.
+    const name = String(decision.suggestion).split(":")[0].trim()
+    return name || null
+  }
+  if (decision.decision === "PASS" && !decision.detail) return null
+  debugLog(
+    "skill_nudge",
+    `no answer: ${decision.decision || "?"} ${String(decision.detail || "").substring(0, 120)}`.trim(),
+  )
+  return undefined
 }
 
-function precompute(key: string, userMessage: string, catalogText: string, onTransient?: () => void) {
+function precompute(
+  rpc: YesMemRPC,
+  directory: string,
+  key: string,
+  userMessage: string,
+  sessionID: string | undefined,
+  onTransient?: () => void,
+) {
   if (inFlight.has(key)) return
   inFlight.add(key)
-  modelMatch(userMessage, catalogText)
+  modelMatch(rpc, directory, userMessage, sessionID)
     .then((skill) => {
       // Only a definitive answer is cached; a failed call stays open for the next sighting.
       if (skill === undefined) {
@@ -228,20 +221,24 @@ function precompute(key: string, userMessage: string, catalogText: string, onTra
 }
 
 /**
- * RULES.md candidates in priority order: an explicit override, then the project file the guard evaluates,
- * then a copy shipped next to the plugin. The first readable file with a Skill Catalog wins — the shipped
- * copy is only a fallback, so the nudge and the guard cannot work with two different catalogues (YM-88).
+ * RULES.md candidates in priority order: an explicit override, then the project file the guard evaluates, then
+ * the installation's standard rules (the only place a Skill Catalog is maintained since setup stopped writing one
+ * into the project), then a copy shipped next to the plugin. The first readable file with a Skill Catalog wins —
+ * the shipped copy is only a fallback, so the nudge and the guard cannot work with two different catalogues
+ * (YM-88).
  */
 export function catalogCandidates(sources: {
   override?: string
   pluginDirectory?: string
   projectDirectory?: string
+  installationDirectory?: string
 }): string[] {
   const asRulesFile = (directory: string) => `${directory.replace(/\/$/, "")}/RULES.md`
-  // The override names a file; the two directory sources are completed to their RULES.md.
+  // The override names a file; the directory sources are completed to their RULES.md.
   return [
     sources.override,
     sources.projectDirectory ? asRulesFile(sources.projectDirectory) : undefined,
+    sources.installationDirectory ? asRulesFile(sources.installationDirectory) : undefined,
     sources.pluginDirectory ? asRulesFile(sources.pluginDirectory) : undefined,
   ].filter((candidate): candidate is string => Boolean(candidate))
 }
@@ -252,10 +249,12 @@ export interface ContextEvent {
 }
 
 /**
+ * @param rpc the daemon client, which answers the semantic stage (purpose "nudge").
+ * @param directory the project directory, which the daemon reads RULES.md from.
  * @param catalogPaths candidate `RULES.md` locations in priority order (env override, project directory,
- * plugin directory). The first readable one with a Skill Catalog wins.
+ * plugin directory). The first readable one with a Skill Catalog wins for the local match.
  */
-export function skillNudge(catalogPaths: readonly string[]) {
+export function skillNudge(rpc: YesMemRPC, directory: string, catalogPaths: readonly string[]) {
   let catalog: SkillEntry[] | null = null
   let catalogText = ""
   let catalogHash = ""
@@ -344,7 +343,7 @@ export function skillNudge(catalogPaths: readonly string[]) {
           const pending = `${catalogHash}\u0000${hit.text}`
           if (pending !== lastPrecomputed) {
             lastPrecomputed = pending
-            precompute(key, hit.text, catalogText, () => {
+            precompute(rpc, directory, key, hit.text, event.sessionID, () => {
               if (lastPrecomputed === pending) lastPrecomputed = null
             })
           }
@@ -353,6 +352,14 @@ export function skillNudge(catalogPaths: readonly string[]) {
         matched = cached
       }
       if (!matched) return
+      // The answer must come from the catalogue this adapter matched against. Stage 1 reads the candidates
+      // above (an explicit override first), stage 2 asks the daemon, which reads the project's RULES.md: with
+      // an override set the two lists can differ, and the override is the authoritative one. Without this a
+      // name the override excluded could still be injected.
+      if (!catalog.some((entry) => entry.skill === matched)) {
+        debugLog("skill_nudge", `skip skill outside the catalogue: ${JSON.stringify(matched).substring(0, 80)}`)
+        return
+      }
       if (!isValidSkillName(matched)) {
         debugLog("skill_nudge", `reject malformed skill name: ${JSON.stringify(matched).substring(0, 80)}`)
         return

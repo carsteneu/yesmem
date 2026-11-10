@@ -186,17 +186,17 @@ opencode session
 
 The plugin contains no business logic — it intercepts opencode events, normalizes them into RPC calls, and injects the daemon's responses back into opencode's output. All intelligence (search, code graph, learning storage, rule evaluation) lives in the Go daemon — the plugin is a thin integration layer, exactly like the MCP server.
 
-### 10c. rule_guard — DeepSeek-Based Tool-Call Compliance
+### 10c. rule_guard — Tool-Call Compliance
 
-The `rule_guard` hook is the plugin's largest and most iterated component (~30 commits just for format tuning). It evaluates every tool call against the project's `RULES.md` and skill catalogue using DeepSeek, then decides whether to block, suggest, or pass the call.
+The `rule_guard` hook is the plugin's most iterated component (~30 commits just for format tuning). It decides whether to block, suggest, or pass a tool call. The judgement is not made in TypeScript: `rule_guard.ts` is an adapter over the daemon RPC `guard_check`, which runs the same core (`internal/guard`) as the Claude Code hook. The plugin picks the event, builds the context the daemon cannot see, calls the RPC and renders the verdict.
 
 #### How it works
 
-1. **Rule loading** — `loadRules()` reads `RULES.md` from the project root **once per guard instance** (`rulesCache` + `rulesLoaded` in `rule_guard.ts`; the instance is created once in `index.ts`). It keeps the lines matching `^\d+\.\s` and appends the raw `## Skill Catalog` section verbatim; the catalog is not parsed as YAML. A `RULES.md` edited mid-session is **not** picked up: the cached text stays, and since the decision cache is keyed on that text, the change only takes effect in the next opencode session.
+1. **The daemon loads the rules** — `guard.LoadRules` reads `RULES.md` from the call's `cwd` (falling back to the installation's copy), and `guard.PromptRules` keeps the lines matching `^\d+\.\s` and appends the `## Decision Policy` and `## Skill Catalog` sections. The plugin sends no rules and caches no rules; a `RULES.md` edited mid-session is read on the next call, and the daemon's 5 s answer cache is keyed on the resulting text.
 
-2. **DeepSeek evaluation** — On every `tool.execute.before` event, the guard sends the tool name + input + rules context to DeepSeek (`deepseek-v4-flash` by default, non-streaming). The LLM returns a structured decision: `BLOCK`, `SUGGEST`, or `PASS` with an explanation.
+2. **Evaluation** — On every `tool.execute.before` event the adapter sends tool name, tool input, cwd, session id, the recent conversation and a purpose (`guard`) to `guard_check`. The daemon's core resolves the model (see `docs/features/guard.md`), asks it non-streaming, and returns `BLOCK`, `SUGGEST`, `PASS` or `UNAVAILABLE`. The adapter keeps a 5 s event cache so an identical call is not sent twice.
 
-3. **BLOCK** — The tool call is rejected (`ToolError`). Used for rule violations that would cause data loss, commit pollution, or security issues. The message names the violated rule and carries a directive (e.g. "Fix the source learning instead of editing yesmem-ops.md"). For a tool that cannot be blocked, the log line becomes `BLOCK-IGNORED (tool cannot be blocked)`.
+3. **BLOCK** — The tool call is rejected (`ToolError`) when the tool may be refused (`write`, `edit`, `patch`, `shell`) and the core calls the decision enforceable. The message names the violated rule, collapsed to one line. A BLOCK the adapter may not enforce, or one the core downgraded, becomes an advisory note in the tool result instead.
 
 4. **SUGGEST** — The tool call proceeds, but a deferred directive is injected via `tool.execute.after`. The prefix is `[guard] ⚠️ MANDATORY CHECK — activate <skill> (use Skill tool)`. Used when the agent should have activated a skill before acting (e.g. bash call before memory search).
 
@@ -206,7 +206,7 @@ The `rule_guard` hook is the plugin's largest and most iterated component (~30 c
 
 `skipTools = {skill, subagent, todowrite}` are never evaluated. Additionally skipped:
 
-- **Non-blockable tools** — `canBlock` is true for `write`, `edit`, `patch` and `shell`. `read`, `grep` and `glob` can receive a SUGGEST but never a hard BLOCK; a violation there is logged as `BLOCK-IGNORED (tool cannot be blocked)`. A call the guard cannot judge is refused for `write`, `edit` and `patch`; a `shell` call and every other non-writing tool run and carry a `RULE GUARD UNAVAILABLE` notice instead
+- **Non-blockable tools** — `canBlock` is true for `write`, `edit`, `patch` and `shell`. `read`, `grep` and `glob` can receive a SUGGEST but never a hard BLOCK. A call the guard cannot judge (the model endpoint refused the request) is refused for `write`, `edit` and `patch`; a `shell` call and every other non-writing tool run and carry a `RULE GUARD UNAVAILABLE` notice instead. An unreachable daemon is not that case: it is a `PASS` with a reason
 - **Documentation targets** — a call whose file path ends in `.md`, `.txt`, `.rst`, `.pdf`; for `grep` the `include` pattern and for `glob` the `pattern` are checked the same way. A `shell` call has no file path, so the three path-based exemptions below and above cannot apply to it
 - **Edits to `RULES.md` or `rule_guard.ts`** — exempt so the guard cannot block its own maintenance (file tools only)
 
@@ -231,14 +231,7 @@ The final stable configuration (v2 hook names):
 
 #### API Key Resolution
 
-`resolveGuardConfig()` resolves the DeepSeek endpoint and key in this order:
-
-1. `YESMEM_GUARD_URL`, `YESMEM_GUARD_MODEL`, `YESMEM_GUARD_KEY`, `YESMEM_GUARD_NPM` env overrides
-2. The rule_guard model from the yesmem config (`deepseek-v4-flash` when unset)
-3. The provider's key plus endpoint from `~/.local/share/opencode/auth.json` — the DeepSeek entry when present, otherwise the first provider with a key and a URL
-4. A gateway key fallback (`auth.gateway.key`) when no provider key was found
-
-It is not hard-wired to `auth.deepseek.key`; with no resolvable key the guard logs `NO-KEY` and passes calls through unevaluated.
+The plugin does not resolve a key. `guardmodel.Resolve` in the daemon does, and `docs/features/guard.md` lists the order: `YESMEM_GUARD_URL`/`_KEY`/`_MODEL`/`_NPM`, then the provider search over `~/.cache/opencode/models.json` and `~/.local/share/opencode/auth.json` (config.yaml names the model), then `proxy.provider_targets` with the opencode `gateway` key, then an Anthropic credential. With no resolvable key the decision is `PASS` with the reason `no guard credential`, and the destructive pre-check still runs.
 
 ---
 

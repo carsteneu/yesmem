@@ -248,6 +248,7 @@ The proxy is **optional**. YesMem works fully without it. All MCP tools, briefin
 - **Agents talk to each other**: `send_to()`, `broadcast()`, typed messages across sessions
 - **Shared state**: multi-agent scratchpad for coordination
 - **Plans that persist**: `set_plan()`, `update_plan()`, checkpoint injection every 10k tokens
+- **DONE is checked, not believed**: before an agent is released, the daemon re-derives its commit, branch, test run, file list and plan state from the world
 
 ### Knowledge That Grows
 - **Index your docs**: Markdown, reStructuredText, PDF. Heading-aware chunking with rich metadata.

@@ -1,4 +1,4 @@
-package hooks
+package guard
 
 import "testing"
 

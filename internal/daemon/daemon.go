@@ -278,6 +278,7 @@ func Run(cfg Config) error {
 		}
 		handler.agentPermissionKick = ac.Agents.PermissionKick
 		handler.agentThemes = mergeAgentThemes(ac.Agents.Themes)
+		handler.SetDoneVerifyConfig(&ac.DoneVerify)
 		if d, err := time.ParseDuration(ac.Agents.PermissionKickDelay); err == nil && d > 0 {
 			handler.agentPermissionKickDelay = d
 		}

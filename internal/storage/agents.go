@@ -209,6 +209,11 @@ func (s *Store) AgentUpdate(id string, fields map[string]any) error {
 // decided on a row it read seconds earlier — the relay path sleeps between its
 // two socket writes — must not overwrite a stop or another guard's pause that
 // landed in between.
+//
+// The progress comparison coalesces: a fresh row stores NULL there and reads back
+// as an empty string, and a bare equality against the column would compare with
+// NULL and never match, so the first nudge or relay on a new row would silently do
+// nothing.
 func (s *Store) AgentUpdateIfMatches(id, status, progress string, fields map[string]any) (bool, error) {
 	setClauses, args, err := agentUpdateClauses(fields)
 	if err != nil || len(setClauses) == 0 {
@@ -216,7 +221,7 @@ func (s *Store) AgentUpdateIfMatches(id, status, progress string, fields map[str
 	}
 	args = append(args, id, status, progress)
 	res, err := s.db.Exec("UPDATE agents SET "+strings.Join(setClauses, ", ")+
-		" WHERE id = ? AND status = ? AND progress = ?", args...)
+		" WHERE id = ? AND status = ? AND COALESCE(progress, '') = ?", args...)
 	if err != nil {
 		return false, err
 	}

@@ -35,6 +35,13 @@ func mustField(label, pattern string) requiredField {
 	return requiredField{re: regexp.MustCompile(pattern), label: label}
 }
 
+// donePhaseCount is the length of the loop's phase contract: Phase 6 is the
+// daemon's verification, Phase 7 the handoff. Every count in the daemon uses
+// this number, so a seventh block cannot be added to the validator alone and
+// leave the idle, done-verify, stagnation and broken-toolcall layers counting
+// six.
+const donePhaseCount = 7
+
 // phaseValidations defines the v3 contract: what each phase MUST contain.
 var phaseValidations = compileValidations()
 
@@ -107,7 +114,22 @@ func compileValidations() []PhaseValidation {
 			},
 		},
 		{
-			Number: 6, Name: "FINISH",
+			// Phase 6 is the verification itself: the agent runs the pre-check
+			// and names its verdict here. A block that only says COMPLETE
+			// claims the phase without the fact it stands for, so the accepted
+			// proof is a required field of its own.
+			Number: 6, Name: "DAEMON-VERIFY",
+			IsStatusField: true,
+			RequiredFields: []requiredField{
+				mustField("Status", `(?m)^\*\*Status:\*\*\s+(COMPLETE|BLOCKED|IN PROGRESS)`),
+				// The parenthesised form is the shape the skill prints: a line
+				// that says "not accepted" or "never accepted" carries the word
+				// and none of the fact.
+				mustField("Vorab-Prüfung (accepted)", `(?m)^\*\*Vorab-Prüfung:\*\*[^\n]*\(\s*accepted\s*\)`),
+			},
+		},
+		{
+			Number: 7, Name: "FINISH",
 			IsStatusField: true,
 			RequiredFields: []requiredField{
 				mustField("Status", `(?m)^\*\*Status:\*\*\s+(COMPLETE|BLOCKED)`),
@@ -136,16 +158,16 @@ func detectTaskType(phase1 string) string {
 	return m[1]
 }
 
-// splitPhases splits scratchpad content into phase blocks keyed by phase number (1-6).
+// splitPhases splits scratchpad content into phase blocks keyed by phase number (1-7).
 func splitPhases(content string) map[int]string {
 	matches := phaseHeaderRe.FindAllStringSubmatchIndex(content, -1)
 	if len(matches) == 0 {
 		return nil
 	}
-	phases := make(map[int]string, 6)
+	phases := make(map[int]string, donePhaseCount)
 	for i, m := range matches {
 		phaseNum := parseIntOrZero(content[m[2]:m[3]])
-		if phaseNum < 1 || phaseNum > 6 {
+		if phaseNum < 1 || phaseNum > donePhaseCount {
 			continue
 		}
 		start := m[1]
@@ -174,7 +196,7 @@ func parseIntOrZero(s string) int {
 
 // FieldError describes a single validation failure in a phase block.
 type FieldError struct {
-	Phase  int    // phase number (1-6)
+	Phase  int    // phase number (1-7)
 	Field  string // what was expected, as the agent must write it (never the regex)
 	Detail string // why it failed
 }
@@ -182,7 +204,7 @@ type FieldError struct {
 // ValidationResult is the outcome of validating a complete yesloop scratchpad.
 type ValidationResult struct {
 	Compliant     bool         // all phase blocks pass validation
-	PhaseCount    int          // how many of 6 phase blocks were found
+	PhaseCount    int          // how many of the 7 phase blocks were found
 	MissingPhases []int        // phase numbers missing from the content
 	FieldErrors   []FieldError // individual field validation failures
 	// Phase5Evidence maps the review sub-phase key (cold-review, consequence,
@@ -313,7 +335,56 @@ func extractPhase5Evidence(phase5 string) map[string]string {
 // completedPhaseRe matches a phase block line with **Status:** COMPLETE.
 var completedPhaseRe = regexp.MustCompile(`(?m)^\*\*Status:\*\*\s+COMPLETE`)
 
-// CountCompletedPhases counts how many of the 6 phase blocks have **Status:** COMPLETE.
+// blockedStatusRe matches a phase block line with **Status:** BLOCKED.
+var blockedStatusRe = regexp.MustCompile(`(?m)^\*\*Status:\*\*\s+BLOCKED`)
+
+// lastPhaseBlock returns the highest phase number present and its block. A
+// pipeline is written in order, so the last block is where the agent stands.
+func lastPhaseBlock(content string) (int, string) {
+	phases := splitPhases(content)
+	last := 0
+	for number := range phases {
+		if number > last {
+			last = number
+		}
+	}
+	return last, phases[last]
+}
+
+// claimsPipelineEnd reports whether the agent claims the pipeline is finished:
+// the last two contract phases are written (7, or 6 for a loop that started
+// before the verification became its own phase) and every block up to there is
+// COMPLETE. A skeleton of headers, or a pipeline still being filled in, is not
+// a claim.
+func claimsPipelineEnd(content string) bool {
+	last, _ := lastPhaseBlock(content)
+	if last < donePhaseCount-1 {
+		return false
+	}
+	phases := splitPhases(content)
+	for number := 1; number <= last; number++ {
+		block, ok := phases[number]
+		if !ok || !completedPhaseRe.MatchString(block) {
+			return false
+		}
+	}
+	return true
+}
+
+// lastPhaseBlocked reports whether the agent's last block carries a BLOCKED
+// status, where the pipeline can actually stop: the handoff blocks. A blocked
+// Phase 1 is a legitimate pipeline stop, not a claim that the pipeline ended,
+// and chasing it would turn a documented state into a "dead agent" (the status
+// every early phase's validation explicitly allows).
+func lastPhaseBlocked(content string) bool {
+	last, block := lastPhaseBlock(content)
+	if last < donePhaseCount-1 {
+		return false
+	}
+	return blockedStatusRe.MatchString(block)
+}
+
+// CountCompletedPhases counts how many of the 7 phase blocks have **Status:** COMPLETE.
 // Useful for dead-agent-detection to assess how far a crashed agent got.
 func CountCompletedPhases(content string) int {
 	phases := splitPhases(content)
