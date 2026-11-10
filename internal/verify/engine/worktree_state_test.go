@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -46,13 +47,31 @@ func TestWorktreeStateChangesWithResidue(t *testing.T) {
 
 // A directory that is not a repository cannot be read: the state is empty, and a
 // key built from it stays usable instead of claiming a tree nobody looked at.
+//
+// The precondition is "git refuses to answer here", not "the path looks like a
+// temp dir": on a CI runner the temp dir can sit inside a checkout, and then git
+// answers and the contract is not the one under test.
 func TestWorktreeStateWithoutARepositoryIsEmpty(t *testing.T) {
-	if got := WorktreeState(t.TempDir()); got != "" {
+	dir := t.TempDir()
+	if top := gitToplevel(dir); top != "" {
+		t.Skipf("t.TempDir() (%s) lies inside the repository %s here; git answers, so there is no gap to test", dir, top)
+	}
+	if got := WorktreeState(dir); got != "" {
 		t.Errorf("state = %q for a directory that is no repository, want empty", got)
 	}
 	if got := WorktreeState(""); got != "" {
 		t.Errorf("state = %q without a path, want empty", got)
 	}
+}
+
+// gitToplevel returns the repository that contains dir, or "" when git refuses,
+// which is the state the caller wants to be told about.
+func gitToplevel(dir string) string {
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // worktreeRepo is a one-commit repository under the project's own temp space.

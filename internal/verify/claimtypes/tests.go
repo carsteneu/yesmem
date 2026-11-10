@@ -226,6 +226,18 @@ func testsVerdict(claim engine.Claim, outcome *engine.RunOutcome, argv []string)
 			WithSandboxed(outcome.Sandboxed).
 			WithClass(engine.ClassLimit)
 	}
+	// A run that exited non-zero without printing anything never reached the
+	// code. A sandbox that refuses to start looks exactly like this, and an
+	// empty output says nothing about a test, so it cannot refute the claim.
+	if strings.TrimSpace(outcome.RawOutput) == "" {
+		return engine.Unverifiable(fmt.Sprintf(
+			"the command exited %d and printed nothing; it stopped before it could say anything about the code%s",
+			outcome.Code, note)).
+			WithCommand(outcome.CommandDesc).
+			WithOutput(outcome.Output).
+			WithSandboxed(outcome.Sandboxed).
+			WithClass(engine.ClassEnvironment)
+	}
 	return engine.Refuted(fmt.Sprintf("claimed exit %d, actually exited %d%s",
 		claim.ClaimedExit, outcome.Code, note)).
 		WithCommand(outcome.CommandDesc).

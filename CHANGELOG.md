@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A silent exit is an environment gap, and the worktree test checks its precondition
 - Read quoted rules as text unless an interpreter runs them
 - Read the payload of a shell and keep the approval per line
 - Narrow the approval and bound the deletion gate's verdict
