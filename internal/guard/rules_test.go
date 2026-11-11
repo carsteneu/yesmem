@@ -70,6 +70,27 @@ func TestInstalledRulesGovernTheBlockSet(t *testing.T) {
 	}
 }
 
+// The shipped master is edited by hand, and its Decision Policy is what narrows the block set. The
+// same parser reads every paragraph there, so a text change can move which rules may block without
+// anybody touching Go. The literal table is the expectation.
+func TestTheShippedMasterKeepsTheBlockSet(t *testing.T) {
+	content, err := os.ReadFile(filepath.Join("..", "..", "RULES.md"))
+	if err != nil {
+		t.Skipf("the repository's RULES.md is not next to the package: %v", err)
+	}
+
+	set := blockableRuleNumbers(string(content))
+
+	if len(set) != len(policyBlockRules) {
+		t.Fatalf("block set of the shipped master = %v, want the literal set %v", set, policyBlockRules)
+	}
+	for number := range policyBlockRules {
+		if !set[number] {
+			t.Errorf("rule %d missing from the shipped master's block set %v", number, set)
+		}
+	}
+}
+
 // Without an installed policy the literal set holds: a fresh installation must not end up
 // with an empty block set because no file exists yet.
 func TestBlockSetWithoutAnInstalledPolicyIsTheLiteralSet(t *testing.T) {

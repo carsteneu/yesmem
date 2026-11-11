@@ -64,6 +64,17 @@ var (
 	}
 	knownRunnerModules = []string{"unittest", "pytest", "nose2", "difflib"}
 	pythonTokens       = map[string]bool{"python": true, "python2": true, "python3": true, "pytest": true, "py.test": true}
+	// A JavaScript run in the fresh checkout has no node_modules: the directory
+	// is ignored by git, and the sandbox has no network to install one. Node
+	// names the module it could not resolve and prints the "Require stack:"
+	// block below the error; neither line comes from a test.
+	missingNodeModuleRe = regexp.MustCompile(`(?m)^Error: Cannot find module '`)
+	requireStackRe      = regexp.MustCompile(`(?m)^Require stack:$`)
+	// A test that passed, in either reporter: the spec reporter marks it with a
+	// check, the TAP reporter prints "ok 1 - name". Node counts a test file that
+	// failed to load as one failing test, so a summary counter proves nothing.
+	nodeTestRanRe    = regexp.MustCompile(`(?m)^\s*(?:✔|ok [1-9]\d* - )`)
+	javascriptTokens = map[string]bool{"node": true, "npm": true, "yarn": true, "bun": true, "pnpm": true, "npx": true}
 	// A compiled toolchain needs a module cache and, in a fresh checkout, often
 	// a network. A checkout without either is an environment gap: the run says
 	// nothing about the code and must not read as a failing suite.
@@ -207,6 +218,15 @@ func testsVerdict(claim engine.Claim, outcome *engine.RunOutcome, argv []string)
 				WithSandboxed(outcome.Sandboxed).
 				WithClass(engine.ClassEnvironment)
 		}
+	}
+	if missingNodeModules(argv, outcome.RawOutput) {
+		return engine.Unverifiable(
+			"the checkout has no node_modules (the directory is ignored by git, the sandbox has no network); " +
+				"the run stopped before any test" + note).
+			WithCommand(outcome.CommandDesc).
+			WithOutput(outcome.Output).
+			WithSandboxed(outcome.Sandboxed).
+			WithClass(engine.ClassEnvironment)
 	}
 	if missingDependency(argv, outcome.RawOutput) {
 		return engine.Unverifiable(
@@ -403,6 +423,24 @@ func toolchainGap(argv []string, output string) bool {
 		}
 	}
 	return false
+}
+
+// missingNodeModules is true when a JavaScript run stopped at its imports.
+//
+// The checkout is a fresh clone and node_modules is ignored by git, so the
+// packages a suite needs never arrive, and the sandbox has no network to fetch
+// them. Node names the module it could not resolve and prints the require stack
+// below it; a run that stopped there executed no test. The output is
+// repository-controlled, so the signature only counts when the command itself is
+// a JavaScript runner and no test passed.
+func missingNodeModules(argv []string, output string) bool {
+	if len(argv) == 0 || nodeTestRanRe.MatchString(output) {
+		return false
+	}
+	if !javascriptTokens[filepath.Base(argv[0])] {
+		return false
+	}
+	return missingNodeModuleRe.MatchString(output) && requireStackRe.MatchString(output)
 }
 
 func missingDependency(argv []string, output string) bool {

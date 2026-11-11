@@ -1,6 +1,7 @@
 package guard
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -242,5 +243,145 @@ func TestAHeadingWithoutTheEndMarkerIsNotAProjectBlock(t *testing.T) {
 	}
 	if count := strings.Count(prompt, "## Skill Catalog"); count != 1 {
 		t.Errorf("the skill catalogue appears %d times, want once:\n%s", count, prompt)
+	}
+}
+
+// A yesloop run happens in a git worktree, and a worktree is a fresh checkout: the
+// PROJECT_RULES.md the operator keeps beside the main checkout is not in it, so the guard judged
+// without the project's deviations. The walk is the one git itself does — up to the first directory
+// that carries .git — and a worktree's .git file names the main checkout, which is where the rules
+// live.
+func TestAWorktreeReadsTheProjectRulesFromTheMainCheckout(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".claude", "yesmem")
+	writeRules(t, filepath.Join(dataDir, "RULES.md"), "1. Never auto-commit.\n")
+	_, worktree := writeWorktree(t, "Deploy target is staging.\n")
+
+	rules := LoadRules(dataDir, worktree)
+
+	if !strings.Contains(rules, "Deploy target is staging.") {
+		t.Fatalf("the worktree did not pick up the project's rules:\n%s", rules)
+	}
+	if !strings.Contains(rules, "1. Never auto-commit.") {
+		t.Errorf("the standard set was dropped:\n%s", rules)
+	}
+}
+
+// The nearest file wins: a worktree that carries deviations of its own states them, and the main
+// checkout's file does not overrule it.
+func TestAWorktreeOverlayWinsOverTheMainOne(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".claude", "yesmem")
+	writeRules(t, filepath.Join(dataDir, "RULES.md"), "1. Never auto-commit.\n")
+	_, worktree := writeWorktree(t, "Deploy target is staging.\n")
+	writeRules(t, filepath.Join(worktree, "PROJECT_RULES.md"), "Deploy target is this branch's sandbox.\n")
+
+	rules := LoadRules(dataDir, worktree)
+
+	if !strings.Contains(rules, "this branch's sandbox") {
+		t.Fatalf("the worktree's own file was ignored:\n%s", rules)
+	}
+	if strings.Contains(rules, "Deploy target is staging.") {
+		t.Errorf("the main checkout's file was composed as well:\n%s", rules)
+	}
+}
+
+// The harness hands the guard the session's directory, which may be below the project root. The
+// walk finds the checkout, so a subdirectory is judged against its project's rules instead of the
+// standard set alone.
+func TestASubdirectoryReadsTheProjectRulesOfItsCheckout(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".claude", "yesmem")
+	writeRules(t, filepath.Join(dataDir, "RULES.md"), "1. Never auto-commit.\n")
+	repo := t.TempDir()
+	writeRules(t, filepath.Join(repo, "PROJECT_RULES.md"), "Migrations never run against production.\n")
+	writeRules(t, filepath.Join(repo, ".git", "HEAD"), "ref: refs/heads/main\n")
+	sub := filepath.Join(repo, "packages", "app")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", sub, err)
+	}
+
+	rules := LoadRules(dataDir, sub)
+
+	if !strings.Contains(rules, "Migrations never run against production.") {
+		t.Fatalf("the subdirectory did not reach its checkout's rules:\n%s", rules)
+	}
+}
+
+// A directory that belongs to no checkout keeps the old behaviour: the standard set, no overlay
+// invented from a path that says nothing about a project.
+func TestADirectoryOutsideAnyCheckoutReadsTheStandardSet(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".claude", "yesmem")
+	writeRules(t, filepath.Join(dataDir, "RULES.md"), "1. Never auto-commit.\n")
+
+	rules := LoadRules(dataDir, filepath.Join(t.TempDir(), "loose"))
+
+	if rules != "1. Never auto-commit.\n" {
+		t.Fatalf("rules = %q, want the standard set alone", rules)
+	}
+}
+
+// writeWorktree lays out a main checkout with a linked worktree below it and returns both paths.
+// A linked worktree carries .git as a file that names the main checkout's git directory — that
+// line is the only thing that tells the guard where the project's rules live.
+func writeWorktree(t *testing.T, projectRules string) (main, worktree string) {
+	t.Helper()
+	main = t.TempDir()
+	writeRules(t, filepath.Join(main, "PROJECT_RULES.md"), projectRules)
+	writeRules(t, filepath.Join(main, ".git", "HEAD"), "ref: refs/heads/main\n")
+	worktree = filepath.Join(main, ".worktrees", "yesloop-example")
+	writeRules(t, filepath.Join(worktree, ".git"),
+		"gitdir: "+filepath.Join(main, ".git", "worktrees", "yesloop-example")+"\n")
+	return main, worktree
+}
+
+// A project's own rules are numbered in a reserved range, so they have an identity of their own:
+// the model can cite one and the citation cannot be mistaken for a standard rule of the same
+// number. Numbering alone is not enough — the number has to reach the catalogue a citation is
+// checked against, or downgradeUnknownCitation turns the block into a suggestion.
+func TestAProjectRuleInTheReservedRangeIsCitable(t *testing.T) {
+	raw := composeRules("1. Never auto-commit.\n", "1001. Never write into generated/.\n")
+
+	prompt := PromptRules(raw)
+
+	if !strings.Contains(prompt, "1001. Never write into generated/.") {
+		t.Fatalf("the project rule is not in the prompt:\n%s", prompt)
+	}
+	if !catalogueRuleNumbers(prompt)[1001] {
+		t.Errorf("rule 1001 is not among the citable rules of the prompt:\n%s", prompt)
+	}
+	decision := downgradeUnknownCitation(Decision{
+		Decision:   "BLOCK",
+		Violations: []string{"Rule 1001: writes into generated/"},
+	}, prompt)
+	if decision.Decision != "BLOCK" {
+		t.Errorf("a citation of the project's own rule was downgraded to %s (%s)",
+			decision.Decision, decision.Suggestion)
+	}
+}
+
+// The range is a boundary, not a convention: a project that numbers a rule below it would make
+// "Rule 25" resolve to the standard rule 25, and the guard would enforce a rule the text never
+// described. The text stays — it may be a real deviation — the number goes.
+func TestAProjectRuleBelowTheRangeLosesItsNumber(t *testing.T) {
+	raw := composeRules("25. No destructive command.\n",
+		"25. Never deploy on a Friday.\n999. Not this one either.\n1000. This one counts.\n")
+
+	prompt := PromptRules(raw)
+
+	for _, refused := range []string{"25. Never deploy on a Friday.", "999. Not this one either."} {
+		if strings.Contains(prompt, refused) {
+			t.Errorf("a project rule kept a number below %d:\n%s", projectRuleNumberFloor, prompt)
+		}
+	}
+	for _, kept := range []string{"Never deploy on a Friday.", "Not this one either.", "1000. This one counts."} {
+		if !strings.Contains(prompt, kept) {
+			t.Errorf("the prompt lost %q:\n%s", kept, prompt)
+		}
 	}
 }

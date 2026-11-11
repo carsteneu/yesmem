@@ -77,6 +77,18 @@ func TestAllowedByTokens(t *testing.T) {
 	}
 }
 
+// Every command the allowlist admits must also pass the argument rules. The two
+// lists are what a report is held to, and a name in one that the other refuses
+// turns an admitted command into an unverifiable run: the allowlist advertised
+// "node --test" while the abbreviation rule read "--test" as "--test-reporter".
+func TestDefaultAllowlistCommandsAreAdmitted(t *testing.T) {
+	for _, command := range DefaultCommandAllowlist {
+		if _, _, verdict := PrepareCommand(command, DefaultCommandAllowlist); verdict != nil {
+			t.Errorf("allowlisted command %q is refused: %s", command, verdict.Reason)
+		}
+	}
+}
+
 // The escape rules are what keeps a report command inside the checkout.
 func TestArgEscapesCheckout(t *testing.T) {
 	cases := []struct {
@@ -99,6 +111,14 @@ func TestArgEscapesCheckout(t *testing.T) {
 		{arg: "--eval=1", want: true},
 		{arg: "--ev=1", want: true},
 		{arg: "-e", want: false},
+		// node ships "--test" as a flag of its own (the allowlist admits
+		// "node --test"), so the abbreviation rule must not read it as
+		// "--test-reporter". A true abbreviation stays refused, and so does
+		// the exact dangerous name.
+		{arg: "--test", want: false},
+		{arg: "--tes", want: true},
+		{arg: "--test-reporter=spec", want: true},
+		{arg: "--test-reporter", want: true},
 		{arg: "~user/file", strict: true, want: true},
 		{arg: "~user/file", strict: false, want: false},
 		{arg: "a b", strict: true, want: true},

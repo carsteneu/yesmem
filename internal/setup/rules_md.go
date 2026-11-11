@@ -517,15 +517,19 @@ func seedProjectRules(projectDir string) (string, error) {
 	return path, writeRulesmdFile(path, renderProjectRulesmd(types))
 }
 
-// renderProjectRulesmd states the detected language rules the way a deviation file has to read: no numbers
-// anywhere, so a citation of a numbered rule keeps naming the standard set.
+// renderProjectRulesmd states the detected language rules the way a deviation file reads: the detected rules are
+// prose, and a rule the checkout wants to be citable is numbered in the reserved range.
 func renderProjectRulesmd(types []string) string {
 	var sb strings.Builder
 	sb.WriteString(`# Project rules for this checkout
 
 The standard rules live in the installation's RULES.md. This file states only where this project differs from
-them. Nothing here is numbered on purpose: a numbered rule in this file would be a rule the standard set does
-not carry, and the guard's catalogue would start citing it.
+them.
+
+Number a rule you want the guard to be able to BLOCK on as 1000 or higher, one line each
+("1000. Never write into generated/."). The reserved range keeps it apart from the standard set: the model may
+cite it, and the citation cannot be read as a standard rule of the same number. A lower number is stripped before
+the model sees the line — the standard set owns those numbers.
 
 ## Language rules detected from this checkout
 

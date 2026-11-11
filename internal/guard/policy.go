@@ -90,20 +90,37 @@ var numberedRuleHead = regexp.MustCompile(`(?m)^\s*(\d+)\.\s`)
 
 // catalogueRuleNumbers is the set of rules the prompt actually carries. Only the numbered catalogue counts:
 // the Decision Policy is prose and may be written as a numbered list, and its numbers must not make a rule
-// exist (YM-456). The project's deviation block is cut out for the same reason — it carries no rules by design,
-// and a numbered line in it would otherwise ground a citation of the standard rule of that number.
+// exist (YM-456). The project's deviations count, because a rule the checkout numbers in the reserved range is
+// one the model may cite; every line below that range was stripped of its number when the block was composed
+// (stripUnreservedNumbers), so it cannot ground a citation of the standard rule of the same number.
 func catalogueRuleNumbers(rules string) map[int]bool {
 	numbers := make(map[int]bool)
-	rules = standardRules(rules)
-	if index := strings.Index(rules, "## Decision Policy"); index >= 0 {
-		rules = rules[:index]
-	}
-	for _, match := range numberedRuleHead.FindAllStringSubmatch(rules, -1) {
+	for _, match := range numberedRuleHead.FindAllStringSubmatch(citableRulesText(rules), -1) {
 		if number, err := strconv.Atoi(match[1]); err == nil {
 			numbers[number] = true
 		}
 	}
 	return numbers
+}
+
+// citableRulesText is the rules text without the sections that carry no citable rule: the Decision Policy (prose,
+// possibly numbered) and the Skill Catalog (data). Everything else stays, the project's deviations included.
+func citableRulesText(rules string) string {
+	const policyHeading, policyEnd, catalogHeading = "## Decision Policy", "## End of Decision Policy", "## Skill Catalog"
+	start := strings.Index(rules, policyHeading)
+	if start < 0 {
+		return rules
+	}
+	rest := rules[start:]
+	end := strings.Index(rest, policyEnd)
+	if end < 0 {
+		return rules[:start]
+	}
+	after := rest[end+len(policyEnd):]
+	if catalog := strings.Index(after, catalogHeading); catalog >= 0 {
+		after = after[:catalog]
+	}
+	return rules[:start] + after
 }
 
 // downgradeUnknownCitation turns a BLOCK that cites no rule of the prompt into a notice. The prompt embeds

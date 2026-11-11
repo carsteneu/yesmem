@@ -58,3 +58,75 @@ func TestTheToolchainGapIsRecognisedInAFailingRun(t *testing.T) {
 		})
 	}
 }
+
+// A JavaScript run stops at its imports when the checkout has no node_modules:
+// the directory is ignored by git, the checkout is a fresh clone, and the
+// sandbox has no network. That run executed no test, so it cannot refute a green
+// claim. The output below is what node 24.12.0 prints for a file whose first
+// require cannot be resolved.
+func TestAMissingNodeModuleIsAnEnvironmentGap(t *testing.T) {
+	missingTypescript := `node:internal/modules/cjs/loader:1424
+  throw err;
+  ^
+
+Error: Cannot find module 'typescript'
+Require stack:
+- /checkout/tests/model/minimum-fit-abc.test.js
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1421:15)
+  code: 'MODULE_NOT_FOUND',
+  requireStack: [ '/checkout/tests/model/minimum-fit-abc.test.js' ]
+}
+
+Node.js v24.12.0
+✖ tests/model/minimum-fit-abc.test.js (106.849815ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+`
+	cases := []struct {
+		name   string
+		argv   []string
+		output string
+		want   bool
+	}{
+		{
+			name:   "the checkout has no node_modules",
+			argv:   []string{"node", "--test", "tests/*/*.test.js"},
+			output: missingTypescript,
+			want:   true,
+		},
+		{
+			name:   "the same failure inside a package manager",
+			argv:   []string{"npm", "test"},
+			output: missingTypescript,
+			want:   true,
+		},
+		{
+			name:   "a failing suite is not a missing module",
+			argv:   []string{"node", "--test", "tests/*/*.test.js"},
+			output: "✔ geometry clamps the pane (2.1ms)\n✖ minimum fit rounds down (1.3ms)\nℹ tests 2\nℹ pass 1\nℹ fail 1\n",
+			want:   false,
+		},
+		{
+			name:   "a run that passed tests got past its imports",
+			argv:   []string{"node", "--test", "tests/*/*.test.js"},
+			output: missingTypescript + "✔ geometry clamps the pane (2.1ms)\nℹ pass 1\n",
+			want:   false,
+		},
+		{
+			name:   "a program that is no JavaScript runner cannot claim the gap",
+			argv:   []string{"go", "test", "./..."},
+			output: missingTypescript,
+			want:   false,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := missingNodeModules(testCase.argv, testCase.output); got != testCase.want {
+				t.Fatalf("missingNodeModules = %v, want %v (output=%q)", got, testCase.want,
+					strings.TrimSpace(testCase.output))
+			}
+		})
+	}
+}
