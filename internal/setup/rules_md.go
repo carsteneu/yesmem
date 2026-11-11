@@ -467,6 +467,15 @@ func provablyUnchangedGenerated(content string) bool {
 	return rulesmdBodyDigest(body) == provenance.Body
 }
 
+// InstallRULESmd writes the installation's own copy of the standard rules into dataDir and returns the
+// path when it wrote one.
+//
+// Setup calls this, and so does the migration path of "yesmem update": nothing else writes the file, so
+// a machine that only ever updates would never receive a standard rule — not even the first one.
+func InstallRULESmd(dataDir string) (string, error) {
+	return installRULESmd(dataDir)
+}
+
 // installRULESmd writes the installation's own copy into dataDir, the file the guard enforces from
 // (guard.LoadInstalledRules) and the one place the standard rules are maintained.
 //
