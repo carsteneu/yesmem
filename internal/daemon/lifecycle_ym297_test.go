@@ -238,7 +238,8 @@ func TestYm297ReplaceContract(t *testing.T) {
 		}
 		err := ensureSingleInstance(dataDir, true)
 		if err == nil {
-			t.Fatalf("ensureSingleInstance(replace=true) with a foreign live PID = nil, want an error — a second daemon must not take over a live data dir")
+			t.Fatalf("ensureSingleInstance(replace=true) with a foreign live PID = nil, want an error — a second daemon must not take over a live data dir (%s)",
+				describeProcessIdentity(fixture2.Process.Pid))
 		}
 		if !strings.Contains(err.Error(), "not this installation's daemon") {
 			t.Errorf("error = %v, want it to name the identity mismatch", err)
@@ -250,6 +251,15 @@ func TestYm297ReplaceContract(t *testing.T) {
 			t.Errorf("the PID file of the foreign process was removed: %v", statErr)
 		}
 	})
+}
+
+// describeProcessIdentity reports what the identity check saw. A failure that only
+// says "not ours" cannot be told apart from a host that reports something else than
+// this test expects, and the CI runner is exactly that case.
+func describeProcessIdentity(pid int) string {
+	exe, exeErr := os.Readlink(fmt.Sprintf("%s/%d/exe", procRoot, pid))
+	return fmt.Sprintf("pid=%d selfBinaryPath=%q exe=%q exeErr=%v cmdline=%q gone=%v procRoot=%q",
+		pid, selfBinaryPath, exe, exeErr, readProcCmdline(pid), daemonProcGone(pid), procRoot)
 }
 
 // ym297SpawnAliveDaemonArgv starts a real process whose argv is
