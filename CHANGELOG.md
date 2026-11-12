@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Testing
 
+- Make the identity fixtures independent of path resolution and a listener race
 - Stop the network probe matching its own source line
 
 ## [2.5.1] - 2026-11-10

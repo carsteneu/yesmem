@@ -296,7 +296,15 @@ func ym297SpawnAliveDaemonArgv(t *testing.T) (string, *exec.Cmd) {
 		cmd.Wait()
 	})
 	time.Sleep(100 * time.Millisecond)
-	return bin, cmd
+	// Resolve the path before returning it: the identity check compares it against /proc/<pid>/exe,
+	// and the kernel reports that path with symlinks resolved. A t.TempDir() behind a symlink (a
+	// runner whose TMPDIR points into one) would otherwise pin an unresolved path, and the fixture
+	// would read as another installation's daemon.
+	resolved, err := filepath.EvalSymlinks(bin)
+	if err != nil {
+		t.Fatalf("resolve the fixture path: %v", err)
+	}
+	return resolved, cmd
 }
 
 // TestYm297NoBlindProcessSweep is the structural half: the daemon start must not
@@ -316,10 +324,18 @@ func TestYm297NoBlindProcessSweep(t *testing.T) {
 
 // ym297ServeFakeDaemon binds this data dir's socket and answers a ping, so the
 // socket-reachable branch of ensureSingleInstance is exercised (the branch where
-// the inverted stop contract did its damage).
+// the inverted stop contract did its damage). It returns only once the socket
+// accepts: a caller asking "does a daemon answer here" must not race the accept
+// loop, or the same test takes the socket branch on one machine and the PID branch
+// on another — two branches, two messages.
 func ym297ServeFakeDaemon(t *testing.T, dataDir string) {
 	t.Helper()
 	sock := SocketPath(dataDir)
+	// The kernel keeps a unix socket path in 108 bytes; past that, bind fails with EINVAL, which
+	// reads like a bug instead of the environment limit it is.
+	if len(sock) > 100 {
+		t.Skipf("the socket path would exceed the kernel's limit: %d bytes, %s", len(sock), sock)
+	}
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatalf("listen %s: %v", sock, err)
@@ -341,6 +357,18 @@ func ym297ServeFakeDaemon(t *testing.T, dataDir string) {
 			conn.Close()
 		}
 	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		conn, dialErr := net.Dial("unix", sock)
+		if dialErr == nil {
+			conn.Close()
+			return
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("the fake daemon never answered on %s: %v", sock, dialErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // TestYm297SocketBranchRefusesUnidentifiedDaemon covers the branch that a
@@ -374,7 +402,11 @@ func TestYm297SocketBranchRefusesUnidentifiedDaemon(t *testing.T) {
 		if err == nil {
 			t.Fatal("ensureSingleInstance(replace=true) with a foreign live PID = nil, want an error")
 		}
-		if !strings.Contains(err.Error(), "not this installation's daemon") {
+		// Either wording: the socket branch says "names no process that could be verified as this
+		// installation's daemon", the PID branch says "is alive but is not this installation's
+		// daemon". Both refuse for the same reason, and the branch depends on whether the dial
+		// reaches the listener before the check.
+		if !strings.Contains(err.Error(), "this installation's daemon") {
 			t.Errorf("error = %v, want the identity mismatch", err)
 		}
 		if _, statErr := os.Stat(SocketPath(dataDir)); statErr != nil {
