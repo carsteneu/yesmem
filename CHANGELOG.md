@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The recorder fix and the compare link
 - A release tags a green commit and carries real notes
 
+### Testing
+
+- Stop the network probe matching its own source line
+
 ## [2.5.1] - 2026-11-10
 
 ### Added
