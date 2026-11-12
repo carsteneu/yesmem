@@ -48,6 +48,16 @@ var (
 		"experimental-loader": true, "import": true, "test-reporter": true,
 		"toolexec": true,
 	}
+	// exactOptions are flags a program defines in their own right although the
+	// name is also the start of a dangerous one. The abbreviation rule exists
+	// for getopt-style parsers, where a prefix only stands for the longer name
+	// when it is unambiguous: "--test" has siblings ("--test-concurrency",
+	// "--test-reporter"), so it can never abbreviate one of them, and node
+	// defines it as the flag that starts its test runner — the allowlist admits
+	// "node --test" by name. A name belongs here only when a program in the
+	// allowlist documents it as an exact flag; an exact dangerous name still
+	// wins, because that is checked first.
+	exactOptions = map[string]bool{"test": true}
 )
 
 // FindBwrap is the bubblewrap binary, or "" when it is not available.
@@ -774,6 +784,9 @@ func dangerousOption(name string, allowShortPrefix bool) bool {
 	name = strings.ToLower(name)
 	if dangerousOptions[name] {
 		return true
+	}
+	if exactOptions[name] {
+		return false
 	}
 	if allowShortPrefix {
 		// Any abbreviation of a long option ("--ev" is "--eval").

@@ -211,7 +211,14 @@ func TestSandboxHasNoNetworkWithABoundCache(t *testing.T) {
 	// not about that rule.
 	t.Setenv("HOME", fixtureTmpRoot(t))
 
-	probe := "import socket; socket.create_connection(('1.1.1.1', 53), 3); print('REACHED')"
+	// The marker is assembled at run time: see the guard above.
+	probe := "import socket; socket.create_connection(('1.1.1.1', 53), 3); print(''.join(['REA','CHED']))"
+	// The probe's own source is echoed by Python in a traceback, so the marker must not appear in
+	// it verbatim: with Python 3.13+ a failed import/connection prints the offending line, and
+	// "REACHED" inside that line reads exactly like a successful connection.
+	if strings.Contains(probe, "REACHED") {
+		t.Fatalf("the probe carries its own marker in its source: %q", probe)
+	}
 	ctx := &engine.Ctx{
 		Repo:    repo,
 		TmpDir:  filepath.Join(fixtureTmpRoot(t), "toolchain-network"),

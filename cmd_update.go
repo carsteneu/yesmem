@@ -146,6 +146,18 @@ func runMigrateCmd() {
 		setup.PrintCapConflicts(os.Stdout, conflicts)
 	}
 
+	// 5b1. The installation's own RULES.md — the copy the guard enforces from. Setup writes it, but a
+	// machine that only ever updates never re-runs setup, so a release could not deliver a standard rule
+	// and a new installation could end up with no catalogue at all. Absent is written, a provably
+	// untouched copy refreshed, an operator-edited one kept.
+	if path, err := setup.InstallRULESmd(dataDir); err != nil {
+		fmt.Fprintf(os.Stderr, "  Rules warning: %v\n", err)
+	} else if path != "" {
+		fmt.Println("  Rules: installed")
+	} else {
+		fmt.Println("  Rules: OK")
+	}
+
 	// 5b2. Retired caps leave the catalog. The import path ignores their CAP.md
 	// and the export path never rewrites it; the row an earlier version stored is
 	// superseded here (YM-181, YM-197).

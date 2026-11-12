@@ -63,7 +63,8 @@ func TestLos56gStopAcceptsAnExitDuringTheIdentityCheck(t *testing.T) {
 	stopped, err := stopDaemonFromPidFile(dataDir)
 
 	if err != nil {
-		t.Fatalf("stopDaemonFromPidFile = %v, want nil — the process it was asked to stop did exit", err)
+		t.Fatalf("stopDaemonFromPidFile = %v, want nil — the process it was asked to stop did exit (%s)",
+			err, describeProcessIdentity(fixture.Process.Pid))
 	}
 	if !stopped {
 		t.Fatalf("stopped = false, want true — a daemon that exited during the grace period is stopped")

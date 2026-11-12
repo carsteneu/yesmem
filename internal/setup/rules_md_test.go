@@ -171,3 +171,40 @@ func TestInstalledCatalogueGroundsTheBlockableRules(t *testing.T) {
 		t.Errorf("rule 25 = %q, want the destructive-command rule", rules[25])
 	}
 }
+
+// A helper script in /tmp is gone after a reboot and unknown to the next reader: the checkout that used
+// it is the only place somebody looks. The rule belongs in the standard set rather than in one project's
+// taste, because every project runs into it.
+func TestTheStandardRulesKeepHelperScriptsInTheProject(t *testing.T) {
+	body := renderRulesmdBody()
+
+	if !strings.Contains(body, "## Helper Scripts") {
+		t.Errorf("the standard set has no Helper Scripts section:\n%s", body)
+	}
+	rule := regexp.MustCompile(`(?m)^\d+\.\s+Never place helper scripts in /tmp`)
+	if !rule.MatchString(body) {
+		t.Errorf("the standard set has no numbered rule against helper scripts in /tmp:\n%s", body)
+	}
+}
+
+// The Decision Policy is the only text a fresh installation reads about blocking. A project may number
+// its own rules from 1000 — that is enforced in Go and explained in the project notice — but without this
+// sentence the generated master never tells the model that such a citation exists.
+func TestTheGeneratedPolicyExplainsTheProjectNumbering(t *testing.T) {
+	policy := renderRulesmdBody()
+
+	start := strings.Index(policy, "## Decision Policy")
+	if start < 0 {
+		t.Fatal("the generated master has no Decision Policy")
+	}
+	policy = policy[start:]
+	if end := strings.Index(policy, "## Skill Catalog"); end >= 0 {
+		policy = policy[:end]
+	}
+
+	for _, want := range []string{"PROJECT_RULES.md", "1000 or higher"} {
+		if !strings.Contains(policy, want) {
+			t.Errorf("the generated Decision Policy does not mention %q:\n%s", want, policy)
+		}
+	}
+}

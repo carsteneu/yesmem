@@ -82,6 +82,9 @@ var rulesmdBestPractices = []string{
 	"Never add, remove or downgrade a dependency without explicit approval.",
 	"Never disable a check to make a command pass: no --no-verify, no skipped tests, no loosened gate.",
 	"Never merge a pull request via CLI or API; the user merges.",
+	"",
+	"## Helper Scripts",
+	"Never place helper scripts in /tmp: create a helper directory inside the project and put them there.",
 }
 
 // skillCatalogEntry represents one skill in the RULES.md YAML catalog.
@@ -418,6 +421,11 @@ action this turn. Only a rule that is decidable from the call's own arguments ma
   push under rule 3, branch protection under rule 4, the commit message format under rule 5.
 - **PASS** when no rule applies.
 
+A project states its deviations in PROJECT_RULES.md beside its code. A rule it numbers 1000 or higher
+belongs to that checkout: the model may cite it, and the guard enforces it against that text for writes.
+Numbers below 1000 belong to the standard set and are stripped from the project file before you see it,
+so a citation of one always means the standard rule.
+
 `
 
 // rulesmdProvenanceRecord matches the marker line: the version that wrote the file and what its body hashed to.
@@ -465,6 +473,15 @@ func provablyUnchangedGenerated(content string) bool {
 		return false
 	}
 	return rulesmdBodyDigest(body) == provenance.Body
+}
+
+// InstallRULESmd writes the installation's own copy of the standard rules into dataDir and returns the
+// path when it wrote one.
+//
+// Setup calls this, and so does the migration path of "yesmem update": nothing else writes the file, so
+// a machine that only ever updates would never receive a standard rule — not even the first one.
+func InstallRULESmd(dataDir string) (string, error) {
+	return installRULESmd(dataDir)
 }
 
 // installRULESmd writes the installation's own copy into dataDir, the file the guard enforces from
@@ -517,15 +534,19 @@ func seedProjectRules(projectDir string) (string, error) {
 	return path, writeRulesmdFile(path, renderProjectRulesmd(types))
 }
 
-// renderProjectRulesmd states the detected language rules the way a deviation file has to read: no numbers
-// anywhere, so a citation of a numbered rule keeps naming the standard set.
+// renderProjectRulesmd states the detected language rules the way a deviation file reads: the detected rules are
+// prose, and a rule the checkout wants to be citable is numbered in the reserved range.
 func renderProjectRulesmd(types []string) string {
 	var sb strings.Builder
 	sb.WriteString(`# Project rules for this checkout
 
 The standard rules live in the installation's RULES.md. This file states only where this project differs from
-them. Nothing here is numbered on purpose: a numbered rule in this file would be a rule the standard set does
-not carry, and the guard's catalogue would start citing it.
+them.
+
+Number a rule you want the guard to be able to BLOCK on as 1000 or higher, one line each
+("1000. Never write into generated/."). The reserved range keeps it apart from the standard set: the model may
+cite it, and the citation cannot be read as a standard rule of the same number. A lower number is stripped before
+the model sees the line — the standard set owns those numbers.
 
 ## Language rules detected from this checkout
 

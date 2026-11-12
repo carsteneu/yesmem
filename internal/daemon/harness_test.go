@@ -133,10 +133,42 @@ func insertCapRow(t *testing.T, h *Handler, name, project, body, sandbox, scope 
 // start time and peer credentials all come from /proc, and darwin exposes no
 // process table, so the supervision paths cannot answer there. The guard keeps
 // the reason in the output instead of a failure that reads like a bug.
+//
+// A readable table is not enough. The image that replaced ubuntu-24.04 answers an
+// empty cmdline for a child this process spawned (2026-11-12), so the identity
+// check reads "gone, and not ours" for a process that is alive: the tests that act
+// on that answer failed, and the ones that accept it passed for the wrong reason.
+// The probe asks the host once and skips with what it saw.
 func requireProcTable(t *testing.T) {
 	t.Helper()
 	if !procTableReadable {
 		t.Skip("the process table (/proc) is not available on this platform")
+	}
+	sleepBin, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Skipf("no sleep binary to probe the process table with: %v", err)
+	}
+	probe := exec.Command(sleepBin, "5")
+	if err := probe.Start(); err != nil {
+		t.Skipf("cannot start a probe process: %v", err)
+	}
+	defer func() {
+		probe.Process.Kill()
+		probe.Wait()
+	}()
+	// readProcCmdline, not the procCmdline seam: a test that pins the seam must not
+	// decide whether the host can answer.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		cmdline := readProcCmdline(probe.Process.Pid)
+		if strings.Contains(cmdline, "sleep") {
+			return
+		}
+		if !time.Now().Before(deadline) {
+			t.Skipf("this host does not expose a child's identity in /proc: /proc/%d/cmdline = %q after 2s",
+				probe.Process.Pid, cmdline)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 

@@ -238,7 +238,8 @@ func TestYm297ReplaceContract(t *testing.T) {
 		}
 		err := ensureSingleInstance(dataDir, true)
 		if err == nil {
-			t.Fatalf("ensureSingleInstance(replace=true) with a foreign live PID = nil, want an error — a second daemon must not take over a live data dir")
+			t.Fatalf("ensureSingleInstance(replace=true) with a foreign live PID = nil, want an error — a second daemon must not take over a live data dir (%s)",
+				describeProcessIdentity(fixture2.Process.Pid))
 		}
 		if !strings.Contains(err.Error(), "not this installation's daemon") {
 			t.Errorf("error = %v, want it to name the identity mismatch", err)
@@ -250,6 +251,15 @@ func TestYm297ReplaceContract(t *testing.T) {
 			t.Errorf("the PID file of the foreign process was removed: %v", statErr)
 		}
 	})
+}
+
+// describeProcessIdentity reports what the identity check saw. A failure that only
+// says "not ours" cannot be told apart from a host that reports something else than
+// this test expects, and the CI runner is exactly that case.
+func describeProcessIdentity(pid int) string {
+	exe, exeErr := os.Readlink(fmt.Sprintf("%s/%d/exe", procRoot, pid))
+	return fmt.Sprintf("pid=%d selfBinaryPath=%q exe=%q exeErr=%v cmdline=%q gone=%v procRoot=%q",
+		pid, selfBinaryPath, exe, exeErr, readProcCmdline(pid), daemonProcGone(pid), procRoot)
 }
 
 // ym297SpawnAliveDaemonArgv starts a real process whose argv is
@@ -265,7 +275,11 @@ func ym297SpawnAliveDaemonArgv(t *testing.T) (string, *exec.Cmd) {
 		t.Skip("yes binary not available")
 	}
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "daemon-argv-fixture")
+	// The name is part of the fixture: an image that ships uutils coreutils has `yes` as one applet of
+	// a multicall binary that dispatches on argv[0]'s basename. A copy under any other name exits at
+	// once with "unknown applet", and the test then sees a PID that is already gone (ubuntu-26 runner,
+	// 2026-11-12).
+	bin := filepath.Join(dir, "yes")
 	in, err := os.Open(src)
 	if err != nil {
 		t.Fatalf("open %s: %v", src, err)
@@ -295,8 +309,31 @@ func ym297SpawnAliveDaemonArgv(t *testing.T) (string, *exec.Cmd) {
 		cmd.Process.Kill()
 		cmd.Wait()
 	})
-	time.Sleep(100 * time.Millisecond)
-	return bin, cmd
+	// Wait for the argv to appear instead of sleeping a fixed 100ms, and stop with the observation
+	// when it never does: a fixture that exits at once is an environment answer, not a broken test.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if cmdline := readProcCmdline(cmd.Process.Pid); strings.Contains(cmdline, "daemon") {
+			break
+		}
+		if !time.Now().Before(deadline) {
+			t.Skipf("the fixture never showed its argv in /proc (cmdline=%q, exe=%v): this image's yes does not run under a copied name",
+				readProcCmdline(cmd.Process.Pid), func() error {
+					_, err := os.Readlink(fmt.Sprintf("%s/%d/exe", procRoot, cmd.Process.Pid))
+					return err
+				}())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// Resolve the path before returning it: the identity check compares it against /proc/<pid>/exe,
+	// and the kernel reports that path with symlinks resolved. A t.TempDir() behind a symlink (a
+	// runner whose TMPDIR points into one) would otherwise pin an unresolved path, and the fixture
+	// would read as another installation's daemon.
+	resolved, err := filepath.EvalSymlinks(bin)
+	if err != nil {
+		t.Fatalf("resolve the fixture path: %v", err)
+	}
+	return resolved, cmd
 }
 
 // TestYm297NoBlindProcessSweep is the structural half: the daemon start must not
@@ -316,10 +353,18 @@ func TestYm297NoBlindProcessSweep(t *testing.T) {
 
 // ym297ServeFakeDaemon binds this data dir's socket and answers a ping, so the
 // socket-reachable branch of ensureSingleInstance is exercised (the branch where
-// the inverted stop contract did its damage).
+// the inverted stop contract did its damage). It returns only once the socket
+// accepts: a caller asking "does a daemon answer here" must not race the accept
+// loop, or the same test takes the socket branch on one machine and the PID branch
+// on another — two branches, two messages.
 func ym297ServeFakeDaemon(t *testing.T, dataDir string) {
 	t.Helper()
 	sock := SocketPath(dataDir)
+	// The kernel keeps a unix socket path in 108 bytes; past that, bind fails with EINVAL, which
+	// reads like a bug instead of the environment limit it is.
+	if len(sock) > 100 {
+		t.Skipf("the socket path would exceed the kernel's limit: %d bytes, %s", len(sock), sock)
+	}
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatalf("listen %s: %v", sock, err)
@@ -341,6 +386,18 @@ func ym297ServeFakeDaemon(t *testing.T, dataDir string) {
 			conn.Close()
 		}
 	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		conn, dialErr := net.Dial("unix", sock)
+		if dialErr == nil {
+			conn.Close()
+			return
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("the fake daemon never answered on %s: %v", sock, dialErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // TestYm297SocketBranchRefusesUnidentifiedDaemon covers the branch that a
@@ -348,6 +405,7 @@ func ym297ServeFakeDaemon(t *testing.T, dataDir string) {
 // replacement must not remove its socket or take over its data dir unless the
 // PID file names a process that is verifiably ours.
 func TestYm297SocketBranchRefusesUnidentifiedDaemon(t *testing.T) {
+	requireProcTable(t)
 	oldExe := selfBinaryPath
 	t.Cleanup(func() { selfBinaryPath = oldExe })
 
@@ -374,7 +432,11 @@ func TestYm297SocketBranchRefusesUnidentifiedDaemon(t *testing.T) {
 		if err == nil {
 			t.Fatal("ensureSingleInstance(replace=true) with a foreign live PID = nil, want an error")
 		}
-		if !strings.Contains(err.Error(), "not this installation's daemon") {
+		// Either wording: the socket branch says "names no process that could be verified as this
+		// installation's daemon", the PID branch says "is alive but is not this installation's
+		// daemon". Both refuse for the same reason, and the branch depends on whether the dial
+		// reaches the listener before the check.
+		if !strings.Contains(err.Error(), "this installation's daemon") {
 			t.Errorf("error = %v, want the identity mismatch", err)
 		}
 		if _, statErr := os.Stat(SocketPath(dataDir)); statErr != nil {

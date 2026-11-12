@@ -5,6 +5,35 @@ All notable changes to YesMem are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Keep helper scripts in the project, not in /tmp
+- Read a project's rules from the checkout that contains the session
+- Number a project's own rules from a reserved range
+
+### Fixed
+
+- Install the standard rules on update, not only on setup
+- Read a missing node_modules as an environment gap
+- Read an exact flag that is also a prefix of a dangerous one
+
+### Documentation
+
+- Tell a fresh installation that a project may number its rules
+- Mirror the installed master and file the helper-script rule
+- The recorder fix and the compare link
+- A release tags a green commit and carries real notes
+
+### Testing
+
+- Give the argv fixture the name its applet dispatches on
+- Report what the identity check saw when it refuses
+- Ask the host whether it exposes a child's identity
+- Make the identity fixtures independent of path resolution and a listener race
+- Stop the network probe matching its own source line
+
 ## [2.5.1] - 2026-11-10
 
 ### Added
@@ -11033,6 +11062,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add comprehensive tests for generator and storage
 
 
+[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.5.1...HEAD
 [2.5.1]: https://github.com/carsteneu/yesmem/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/carsteneu/yesmem/compare/v2.4.2...v2.5.0
 [2.4.2]: https://github.com/carsteneu/yesmem/compare/v2.3.19...v2.4.2
