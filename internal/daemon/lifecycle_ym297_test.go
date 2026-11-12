@@ -275,7 +275,11 @@ func ym297SpawnAliveDaemonArgv(t *testing.T) (string, *exec.Cmd) {
 		t.Skip("yes binary not available")
 	}
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "daemon-argv-fixture")
+	// The name is part of the fixture: an image that ships uutils coreutils has `yes` as one applet of
+	// a multicall binary that dispatches on argv[0]'s basename. A copy under any other name exits at
+	// once with "unknown applet", and the test then sees a PID that is already gone (ubuntu-26 runner,
+	// 2026-11-12).
+	bin := filepath.Join(dir, "yes")
 	in, err := os.Open(src)
 	if err != nil {
 		t.Fatalf("open %s: %v", src, err)
@@ -305,7 +309,22 @@ func ym297SpawnAliveDaemonArgv(t *testing.T) (string, *exec.Cmd) {
 		cmd.Process.Kill()
 		cmd.Wait()
 	})
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the argv to appear instead of sleeping a fixed 100ms, and stop with the observation
+	// when it never does: a fixture that exits at once is an environment answer, not a broken test.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if cmdline := readProcCmdline(cmd.Process.Pid); strings.Contains(cmdline, "daemon") {
+			break
+		}
+		if !time.Now().Before(deadline) {
+			t.Skipf("the fixture never showed its argv in /proc (cmdline=%q, exe=%v): this image's yes does not run under a copied name",
+				readProcCmdline(cmd.Process.Pid), func() error {
+					_, err := os.Readlink(fmt.Sprintf("%s/%d/exe", procRoot, cmd.Process.Pid))
+					return err
+				}())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	// Resolve the path before returning it: the identity check compares it against /proc/<pid>/exe,
 	// and the kernel reports that path with symlinks resolved. A t.TempDir() behind a symlink (a
 	// runner whose TMPDIR points into one) would otherwise pin an unresolved path, and the fixture
