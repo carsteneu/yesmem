@@ -376,6 +376,7 @@ func ym297ServeFakeDaemon(t *testing.T, dataDir string) {
 // replacement must not remove its socket or take over its data dir unless the
 // PID file names a process that is verifiably ours.
 func TestYm297SocketBranchRefusesUnidentifiedDaemon(t *testing.T) {
+	requireProcTable(t)
 	oldExe := selfBinaryPath
 	t.Cleanup(func() { selfBinaryPath = oldExe })
 
