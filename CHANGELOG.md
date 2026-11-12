@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Testing
 
+- Give the agent-process fixture a script instead of a renamed applet
 - Give the argv fixture the name its applet dispatches on
 - Report what the identity check saw when it refuses
 - Ask the host whether it exposes a child's identity
