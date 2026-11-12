@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Keep helper scripts in the project, not in /tmp
 - Read a project's rules from the checkout that contains the session
 - Number a project's own rules from a reserved range
 
@@ -20,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Tell a fresh installation that a project may number its rules
+- Mirror the installed master and file the helper-script rule
 - The recorder fix and the compare link
 - A release tags a green commit and carries real notes
 

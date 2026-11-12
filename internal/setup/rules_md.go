@@ -82,6 +82,9 @@ var rulesmdBestPractices = []string{
 	"Never add, remove or downgrade a dependency without explicit approval.",
 	"Never disable a check to make a command pass: no --no-verify, no skipped tests, no loosened gate.",
 	"Never merge a pull request via CLI or API; the user merges.",
+	"",
+	"## Helper Scripts",
+	"Never place helper scripts in /tmp: create a helper directory inside the project and put them there.",
 }
 
 // skillCatalogEntry represents one skill in the RULES.md YAML catalog.
@@ -417,6 +420,11 @@ action this turn. Only a rule that is decidable from the call's own arguments ma
 - **SUGGEST** where authorisation or external state decides: auto-commit under rule 1, the test suite before a
   push under rule 3, branch protection under rule 4, the commit message format under rule 5.
 - **PASS** when no rule applies.
+
+A project states its deviations in PROJECT_RULES.md beside its code. A rule it numbers 1000 or higher
+belongs to that checkout: the model may cite it, and the guard enforces it against that text for writes.
+Numbers below 1000 belong to the standard set and are stripped from the project file before you see it,
+so a citation of one always means the standard rule.
 
 `
 
