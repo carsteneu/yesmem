@@ -8,12 +8,11 @@ import (
 )
 
 // The relate_learnings description named the four types and nothing else, so callers
-// kept getting the semantics wrong. Three of them are behaviours of
-// handleRelate/InsertTypedAssociation that no caller could read: the edge is directed
-// for search (the target surfaces when the source is a hit, not the other way round),
-// repeating a call stacks weight up to a cap, and a second call on the same pair with
-// another type overwrites the first. The fourth is the ranking order between the
-// types, which decides how strongly a neighbour is promoted.
+// kept getting the semantics wrong. Two of them are unreadable from the edge itself and
+// belong in the text: the direction (the target surfaces when the source is a hit, not
+// the other way round) and the ranking order between the types. The mistakes a caller
+// can see at the moment it makes them — a self-link, an unknown id, a replaced type —
+// are answered where they happen, not here (TestHandleRelate* in internal/daemon).
 func TestRelateLearningsDescriptionCarriesTheSemantics(t *testing.T) {
 	srv := &Server{}
 	srv.srv = mcpserver.NewMCPServer("test", "0.0.0")
@@ -35,8 +34,8 @@ func TestRelateLearningsDescriptionCarriesTheSemantics(t *testing.T) {
 		}
 		for _, want := range []struct{ phrase, why string }{
 			{"source", "the direction: the edge points away from learning_id_a"},
-			{"weight", "repeating a call stacks weight up to a cap"},
-			{"overwrites", "a second call with another type replaces the first"},
+			{"weight", "a repeated call only adds weight"},
+			{"one type", "a pair carries one type"},
 			{"depends_on", "the type that promotes strongest"},
 			{"relates_to", "the type the extraction already adds by itself"},
 		} {
