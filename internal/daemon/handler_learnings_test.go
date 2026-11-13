@@ -217,8 +217,8 @@ func TestHandleRememberAcceptsAnticipatedQueries(t *testing.T) {
 		Method: "remember",
 		Params: map[string]any{
 			"text":                "Reddit gibt 403 bei WebFetch",
-			"category":           "gotcha",
-			"project":            "yesmem",
+			"category":            "gotcha",
+			"project":             "yesmem",
 			"anticipated_queries": []any{"reddit 403", "webfetch blocked", "curl workaround reddit"},
 		},
 	})
@@ -1225,11 +1225,11 @@ func TestHandleRelateHappyPath(t *testing.T) {
 
 	resp1 := h.Handle(Request{
 		Method: "remember",
-		Params: map[string]any{"text": "Learning A for relation test", "category": "pattern", "project": "yesmem"},
+		Params: map[string]any{"text": "engine reads the allowlist before the argument rules", "category": "pattern", "project": "yesmem"},
 	})
 	resp2 := h.Handle(Request{
 		Method: "remember",
-		Params: map[string]any{"text": "Learning B for relation test", "category": "pattern", "project": "yesmem"},
+		Params: map[string]any{"text": "sandbox masks the home directory", "category": "pattern", "project": "yesmem"},
 	})
 	var r1, r2 map[string]any
 	json.Unmarshal(resp1.Result, &r1)
@@ -1300,11 +1300,11 @@ func TestHandleRelateAllValidTypes(t *testing.T) {
 	for _, relType := range validTypes {
 		resp1 := h.Handle(Request{
 			Method: "remember",
-			Params: map[string]any{"text": "Relation type test A " + relType, "category": "pattern", "project": "yesmem"},
+			Params: map[string]any{"text": "retry budget for the " + relType + " edges", "category": "pattern", "project": "yesmem"},
 		})
 		resp2 := h.Handle(Request{
 			Method: "remember",
-			Params: map[string]any{"text": "Relation type test B " + relType, "category": "pattern", "project": "yesmem"},
+			Params: map[string]any{"text": "sandbox profile forbids the " + relType + " writes", "category": "pattern", "project": "yesmem"},
 		})
 		var r1, r2 map[string]any
 		json.Unmarshal(resp1.Result, &r1)
@@ -1723,8 +1723,8 @@ func TestAttributeLearningProject(t *testing.T) {
 		{"fork session default without signal", "some generic note without paths", "", attrOpenencode, "", attrOpenencode, "session"},
 		{"fork ambiguous keeps session project", dup(attrYesmem) + " plus " + dup(attrDeepseek), "", attrOpenencode, "", attrOpenencode, "ambiguous"},
 		{"worktree token prefix-matches main repo", dup(subjectMain + "/.worktrees/yesloop-x"), "", "", subjectWorktree, subjectMain, "repo"},
-		{"trailing sentence dot still counts", dup(attrYesmem+"/a.go")+". Plus "+attrYesmem+"/b.go.", "", "", subjectWorktree, attrYesmem, "content"},
-		{"known worktree session path counts as main repo", dup(subjectMain+"/.worktrees/wt/ent"), "", subjectMain + "/.worktrees/wt", subjectWorktree, subjectMain, "session"},
+		{"trailing sentence dot still counts", dup(attrYesmem+"/a.go") + ". Plus " + attrYesmem + "/b.go.", "", "", subjectWorktree, attrYesmem, "content"},
+		{"known worktree session path counts as main repo", dup(subjectMain + "/.worktrees/wt/ent"), "", subjectMain + "/.worktrees/wt", subjectWorktree, subjectMain, "session"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

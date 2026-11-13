@@ -1357,10 +1357,13 @@ func (s *Server) registerTools() {
 
 	s.srv.AddTool(
 		mcplib.NewTool("relate_learnings",
-			mcplib.WithDescription("Create a semantic relationship between two learnings. Use after saving related learnings to build a knowledge graph. Supported relations: supports, contradicts, depends_on, relates_to."),
-			mcplib.WithNumber("learning_id_a", mcplib.Required(), mcplib.Description("Learning ID")),
-			mcplib.WithNumber("learning_id_b", mcplib.Required(), mcplib.Description("Learning ID")),
-			mcplib.WithString("relation_type", mcplib.Required(), mcplib.Description("supports|contradicts|depends_on|relates_to")),
+			mcplib.WithDescription("Create a typed edge between two learnings; the graph then surfaces one when the other is a search hit. "+
+				"Types, strongest promotion first: depends_on, supports, contradicts, relates_to — the extraction already adds relates_to by itself, "+
+				"so write an edge when the relation is stronger or of another kind. The edge is directed: relate_learnings(A, B) lets B surface when A is a hit. "+
+				"A pair carries one type, and a repeated call only adds weight."),
+			mcplib.WithNumber("learning_id_a", mcplib.Required(), mcplib.Description("Source learning ID — the edge points away from it")),
+			mcplib.WithNumber("learning_id_b", mcplib.Required(), mcplib.Description("Target learning ID — this one surfaces when the source is a search hit")),
+			mcplib.WithString("relation_type", mcplib.Required(), mcplib.Description("supports|contradicts|depends_on|relates_to — depends_on and supports promote strongest")),
 		), s.proxyCallFormat("relate_learnings", nil))
 
 	s.srv.AddTool(

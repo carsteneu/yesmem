@@ -2,8 +2,10 @@ package daemon
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -1086,10 +1088,42 @@ func (h *Handler) handleRelate(params map[string]any) Response {
 		return errorResponse("relation_type must be one of: supports, contradicts, depends_on, relates_to")
 	}
 
+	// A self-link promotes a learning towards itself and says nothing; the id ordering
+	// carries no meaning, so this is always a mistake.
+	if idA == idB {
+		return errorResponse(fmt.Sprintf("relate: learning %d cannot relate to itself — name the two learnings that belong together", idA))
+	}
+	// An edge to a learning that does not exist can never surface: the neighbour lookup
+	// skips missing rows, so the caller would believe in a relation that does nothing.
+	for _, id := range []int64{idA, idB} {
+		learning, err := h.store.GetLearning(id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return errorResponse(fmt.Sprintf("relate: no learning with id %d — look the id up with hybrid_search or query_facts", id))
+		}
+		if err != nil {
+			return errorResponse(fmt.Sprintf("relate: %v", err))
+		}
+		if learning == nil {
+			return errorResponse(fmt.Sprintf("relate: no learning with id %d — look the id up with hybrid_search or query_facts", id))
+		}
+	}
+
+	previous, err := h.store.AssociationPairType(idA, idB)
+	if err != nil {
+		return errorResponse(fmt.Sprintf("relate: %v", err))
+	}
+
 	if err := h.store.InsertTypedAssociation(idA, idB, relType); err != nil {
 		return errorResponse(fmt.Sprintf("relate: %v", err))
 	}
-	return jsonResponse(map[string]any{"status": "ok", "learning_id_a": idA, "learning_id_b": idB, "relation_type": relType})
+	out := map[string]any{"status": "ok", "learning_id_a": idA, "learning_id_b": idB, "relation_type": relType}
+	// A pair carries one type. Replacing is legitimate; doing it without a word is not,
+	// because the caller believes it added a relation where it removed one.
+	if previous != "" && previous != relType {
+		out["replaced"] = previous
+		out["note"] = fmt.Sprintf("a pair carries one type: %s replaced %s on %d -> %d", relType, previous, idA, idB)
+	}
+	return jsonResponse(out)
 }
 
 func (h *Handler) handleGetContradictingPairs(params map[string]any) Response {

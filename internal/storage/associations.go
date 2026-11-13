@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 
@@ -141,6 +142,26 @@ func (s *Store) EnsureTypedAssociation(sourceID, targetID int64, relType string)
 		DO UPDATE SET relation_type = excluded.relation_type`,
 		src, tgt, relType)
 	return err
+}
+
+// AssociationPairType returns the relation type on the directed edge from sourceID to
+// targetID, or "" when the pair carries none. The write path replaces a type on
+// conflict, and a caller that does not look first cannot tell a replacement from an
+// addition.
+func (s *Store) AssociationPairType(sourceID, targetID int64) (string, error) {
+	var relType string
+	err := s.readerDB().QueryRow(`
+		SELECT relation_type FROM associations
+		WHERE source_type = 'learning' AND source_id = ?
+		  AND target_type = 'learning' AND target_id = ?`,
+		fmt.Sprintf("%d", sourceID), fmt.Sprintf("%d", targetID)).Scan(&relType)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read association %d -> %d: %w", sourceID, targetID, err)
+	}
+	return relType, nil
 }
 
 // GetAssociationsByRelationType returns all edges from a node with a specific relation type.
