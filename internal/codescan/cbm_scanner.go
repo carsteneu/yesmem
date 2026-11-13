@@ -83,7 +83,7 @@ func (s *CBMScanner) Scan(rootDir string) (*ScanResult, error) {
 	rootDir = ResolveScanRoot(rootDir)
 
 	if isBlacklistedPath(rootDir) {
-		return nil, fmt.Errorf("cbm: directory %q is blacklisted (too large or system path)", rootDir)
+		return nil, stateError(ErrUnscannable, "directory %q is blacklisted (too large or system path)", rootDir)
 	}
 
 	bin := s.bin
@@ -108,7 +108,7 @@ func (s *CBMScanner) Scan(rootDir string) (*ScanResult, error) {
 		// never indexed (a worktree without its own index), so the failure is
 		// attributed to that directory instead of the repository (DT27 / YM-4).
 		if CBMIndexPath(rootDir) == "" {
-			return nil, fmt.Errorf("cbm: project %q not indexed (no CBM database for %q): %w", project, rootDir, err)
+			return nil, stateError(ErrNotIndexed, "project %q not indexed (no CBM database for %q): %v", project, rootDir, err)
 		}
 		return nil, fmt.Errorf("query files: %w", err)
 	}
@@ -116,7 +116,7 @@ func (s *CBMScanner) Scan(rootDir string) (*ScanResult, error) {
 		if s.ensureIndex != nil {
 			s.ensureIndex(rootDir)
 		}
-		return nil, fmt.Errorf("cbm: project %q not indexed (background indexing triggered)", project)
+		return nil, stateError(ErrNotIndexed, "project %q not indexed (background indexing triggered)", project)
 	}
 
 	// CBM labels some files as Module instead of File (inconsistent).

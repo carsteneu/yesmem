@@ -370,6 +370,12 @@ func (e *Extractor) RunEvolutionForScopeSince(store *storage.Store, scope map[st
 	return e.runEvolution(store, onSupersede, scope, afterID)
 }
 
+// evolutionBulkMaxTokens is the output budget of one bulk evolution call. The call hands
+// the model up to fifty learnings and expects a JSON verdict per candidate pair; the
+// 8192-token default cut that off, and a truncated or empty answer aborted the run
+// (2026-11-13, greenTile and ccm19_webpage). The model's own output limit is 65536.
+const evolutionBulkMaxTokens = 65536
+
 func (e *Extractor) runEvolution(store *storage.Store, onSupersede func(int64), scope map[string]map[string]struct{}, afterID int64) (int, int) {
 	categories, err := store.GetActiveCategories()
 	if err != nil {
@@ -615,7 +621,7 @@ func (e *Extractor) runEvolution(store *storage.Store, onSupersede func(int64), 
 			prompt := fmt.Sprintf("Project: %s, Category: %s (%d learnings)\n\n%s\nFind duplicates, near-duplicates, and contradictions. Apply the quality ranking from the system prompt.",
 				key.project, key.category, len(chunk), list.String())
 
-			response, err := e.client.CompleteJSON(BulkEvolutionSystemPrompt, prompt, EvolutionSchema())
+			response, err := e.client.CompleteJSON(BulkEvolutionSystemPrompt, prompt, EvolutionSchema(), WithMaxTokens(evolutionBulkMaxTokens))
 			if err != nil {
 				log.Printf("  warn: bulk evolution for %s: %v", chunkLabel, err)
 				consecutiveErrors++

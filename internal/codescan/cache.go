@@ -26,6 +26,10 @@ type ScanFailureStore interface {
 	ClearScanFailure(project string) error
 }
 
+// stateNow is the clock the daily state line is measured against. A seam, so a test can
+// move a day without waiting for one.
+var stateNow = time.Now
+
 // DefaultScanCooldown suppresses re-scans for 10 minutes after a failed scan.
 const DefaultScanCooldown = 10 * time.Minute
 
@@ -42,6 +46,26 @@ type CachedScanner struct {
 	cache         map[string]*cacheEntry
 	lastWasCached bool
 	cooldown      time.Duration
+	stateMu       sync.Mutex
+	stateLogged   map[string]string // directory -> day of the last state line
+}
+
+// noteState reports whether the state of this directory should be logged now, and
+// remembers that it was. A state does not become false by waiting, so one line a day
+// carries the same information as one per request.
+func (cs *CachedScanner) noteState(rootDir string, err error) bool {
+	day := stateNow().UTC().Format("2006-01-02")
+	cs.stateMu.Lock()
+	defer cs.stateMu.Unlock()
+	if cs.stateLogged == nil {
+		cs.stateLogged = make(map[string]string)
+	}
+	if cs.stateLogged[rootDir] == day {
+		return false
+	}
+	cs.stateLogged[rootDir] = day
+	log.Printf("[codescan] %q: %v (state, not a failure: no cooldown, next request asks again)", rootDir, err)
+	return true
 }
 
 type cacheEntry struct {
@@ -158,6 +182,13 @@ func (cs *CachedScanner) Scan(rootDir string) (*ScanResult, error) {
 	cs.lastWasCached = false
 	result, err := cs.inner.Scan(rootDir)
 	if err != nil {
+		// A state is not a failure: no cooldown entry, one line a day. Recording it as a
+		// failure made the next ten minutes answer "cooldown active", which reads like a
+		// transient problem and hides the real answer.
+		if IsState(err) {
+			cs.noteState(rootDir, err)
+			return nil, err
+		}
 		if cs.store != nil {
 			if fs, ok := cs.store.(ScanFailureStore); ok {
 				if recErr := fs.RecordScanFailure(cooldownKey, err.Error()); recErr != nil {

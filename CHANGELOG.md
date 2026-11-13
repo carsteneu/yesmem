@@ -9,12 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Own the code graph daemon's unit and version
 - Keep helper scripts in the project, not in /tmp
 - Read a project's rules from the checkout that contains the session
 - Number a project's own rules from a reserved range
 
 ### Fixed
 
+- Read the reference table CBM 0.12.1 puts before the rows
+- Treat a missing index as a state, not a failed scan
+- Give the bulk evolution call room for its verdict
 - Answer a mistake where it happens instead of in the tool prose
 - Install the standard rules on update, not only on setup
 - Read a missing node_modules as an environment gap

@@ -93,11 +93,15 @@ func (h *Handler) getCodeGraph(project string, params ...map[string]any) *codesc
 	scanner := codescan.NewCachedScanner(inner).WithStore(h.store)
 	result, err := scanner.Scan(projectDir)
 	if err != nil {
-		// A rebuild can fail for a transient reason (CBM busy or timing out, a
-		// scan cooldown from an earlier failure). Serving nothing would turn one
-		// hiccup into an outage of every code tool, so an already built graph is
-		// preferred over none — freshness is best-effort, availability is not.
-		log.Printf("[codescan] scan %q failed: %v", projectDir, err)
+		// The cache already writes a state line once a day. Logging it here as well put
+		// one line per request in the journal for a directory that cannot change.
+		if !codescan.IsState(err) {
+			// A rebuild can fail for a transient reason (CBM busy or timing out, a
+			// scan cooldown from an earlier failure). Serving nothing would turn one
+			// hiccup into an outage of every code tool, so an already built graph is
+			// preferred over none — freshness is best-effort, availability is not.
+			log.Printf("[codescan] scan %q failed: %v", projectDir, err)
+		}
 		if stale, ok := h.codeGraphs[cacheKey]; ok && stale.graph != nil {
 			return stale.graph
 		}

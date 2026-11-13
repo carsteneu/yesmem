@@ -799,6 +799,17 @@ func executeSetup(home, dataDir, binaryPath, model, apiKey, provider, terminal s
 		return ensureCBMBinary(dataDir)
 	})
 
+	// 9c. Its daemon needs a unit as well: started by whichever client comes first, it has
+	// no version, no restart, and every scan without it pays the cold start.
+	if runtime.GOOS == "linux" {
+		withSpinner("Setting up the code graph daemon", func() (string, error) {
+			if _, err := EnsureCBMUnit(home, CBMBinaryPath(dataDir)); err != nil {
+				return "", err
+			}
+			return "systemd", nil
+		})
+	}
+
 	// 10. Auto-start service
 	if autoStart {
 		withSpinner("Setting up auto-start", func() (string, error) {

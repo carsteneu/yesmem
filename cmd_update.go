@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/carsteneu/yesmem/internal/buildinfo"
@@ -223,6 +224,26 @@ func runMigrateCmd() {
 	// 7. systemd units: drop obsolete network-online.target wait (local-first services)
 	// and upgrade the daemon unit to the notify type with its watchdog. systemd
 	// only reads a rewritten unit after a reload, so a changed file needs one.
+	// 7b. The code graph daemon: an installation that predates this step has no unit, so
+	// whichever client touched the binary first started the daemon and nothing knows it.
+	// Without a running daemon every scan pays the full cold start — measured 4.5 s
+	// against 1.1 s — and without a version check the installation stays on whatever
+	// release setup downloaded once (0.10.8 while 0.12.1 was current, 2026-11-13).
+	if runtime.GOOS == "linux" {
+		if changed, err := setup.EnsureCBMUnit(home, setup.CBMBinaryPath(dataDir)); err != nil {
+			fmt.Fprintf(os.Stderr, "  CBM unit warning: %v\n", err)
+		} else if changed {
+			fmt.Println("  CBM daemon: unit written and started")
+		} else {
+			fmt.Println("  CBM daemon: unit OK")
+		}
+		if changed, err := setup.EnsureCBMVersion(dataDir, setup.InstalledCBMVersion(dataDir)); err != nil {
+			fmt.Fprintf(os.Stderr, "  CBM version warning: %v\n", err)
+		} else if changed {
+			fmt.Println("  CBM version: upgraded")
+		}
+	}
+
 	if n, err := setup.MigrateSystemdUnits(home, dataDir); err != nil {
 		fmt.Fprintf(os.Stderr, "  systemd units warning: %v\n", err)
 	} else {

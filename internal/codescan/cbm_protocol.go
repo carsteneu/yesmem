@@ -65,18 +65,37 @@ func parseCBMResponse(out []byte) (string, error) {
 // none of which contain spaces.
 func parseQueryTable(text string) ([][]interface{}, error) {
 	colCount := 0
+	inRefs := false
+	refs := make(map[string]string)
 	var rows [][]interface{}
 	seenHeader := false
 	for _, line := range strings.Split(text, "\n") {
 		switch {
+		case strings.HasPrefix(line, "rows_refs: "):
+			// 0.12.1: repeated values live in a table under this header, and the rows
+			// below name them as "@N+suffix".
+			seenHeader = true
+			inRefs = true
+		case strings.HasPrefix(line, "rows_ref_rule:"):
+			// The rule the format follows, not data.
 		case strings.HasPrefix(line, "rows: "):
 			seenHeader = true
+			inRefs = false
 			rest := strings.TrimPrefix(line, "rows: ")
 			if i := strings.Index(rest, "cols: "); i >= 0 {
 				spec := strings.TrimSuffix(strings.TrimPrefix(rest[i+len("cols: "):], ")"), ")")
 				colCount = len(strings.Fields(spec))
 			}
 		case strings.HasPrefix(line, "  "):
+			if inRefs {
+				// "id prefix": the prefix is everything after the first field.
+				id, prefix, ok := strings.Cut(strings.TrimSpace(line), " ")
+				if !ok {
+					return nil, fmt.Errorf("unexpected reference line: %q", line)
+				}
+				refs[id] = strings.TrimSpace(prefix)
+				continue
+			}
 			if colCount == 0 {
 				return nil, fmt.Errorf("unexpected data line: %q", line)
 			}
@@ -92,6 +111,17 @@ func parseQueryTable(text string) ([][]interface{}, error) {
 					}
 				}
 			}
+			for i := range row {
+				cell, isString := row[i].(string)
+				if !isString || !strings.HasPrefix(cell, "@") {
+					continue
+				}
+				resolved, err := resolveCellReference(cell, refs)
+				if err != nil {
+					return nil, err
+				}
+				row[i] = resolved
+			}
 			rows = append(rows, row)
 		}
 	}
@@ -99,4 +129,17 @@ func parseQueryTable(text string) ([][]interface{}, error) {
 		return nil, fmt.Errorf("no query table in output: %s", quoteForeignText(text))
 	}
 	return rows, nil
+}
+
+// resolveCellReference expands "@N+suffix" against the 0.12.1 reference table. An id
+// outside the table is an error, not an empty prefix: a dropped reference turns a wrong
+// path into a plausible one, and the consumer cannot tell.
+func resolveCellReference(cell string, refs map[string]string) (string, error) {
+	body := strings.TrimPrefix(cell, "@")
+	id, suffix, _ := strings.Cut(body, "+")
+	prefix, ok := refs[id]
+	if !ok {
+		return "", fmt.Errorf("reference @%s names no entry of the table", id)
+	}
+	return prefix + suffix, nil
 }
