@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Treat a missing index as a state, not a failed scan
+- Give the bulk evolution call room for its verdict
 - Answer a mistake where it happens instead of in the tool prose
 - Install the standard rules on update, not only on setup
 - Read a missing node_modules as an environment gap
