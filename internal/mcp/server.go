@@ -1357,10 +1357,16 @@ func (s *Server) registerTools() {
 
 	s.srv.AddTool(
 		mcplib.NewTool("relate_learnings",
-			mcplib.WithDescription("Create a semantic relationship between two learnings. Use after saving related learnings to build a knowledge graph. Supported relations: supports, contradicts, depends_on, relates_to."),
-			mcplib.WithNumber("learning_id_a", mcplib.Required(), mcplib.Description("Learning ID")),
-			mcplib.WithNumber("learning_id_b", mcplib.Required(), mcplib.Description("Learning ID")),
-			mcplib.WithString("relation_type", mcplib.Required(), mcplib.Description("supports|contradicts|depends_on|relates_to")),
+			mcplib.WithDescription("Create a typed edge between two learnings so the graph can surface one when the other is a search hit. "+
+				"Write one when the relation is a fact you can name: the extraction already adds relates_to by itself for learnings that share entities, "+
+				"so a manual edge is worth writing when the relation is stronger or of another kind. "+
+				"Types, strongest promotion first: depends_on, supports, contradicts, relates_to — depends_on and supports lift a neighbour's score above a generic relation. "+
+				"The edge is directed for search: relate_learnings(A, B) lets B surface when A is a hit, not the other way round, so call it both ways when the relation is mutual. "+
+				"Repeating a call on the same pair stacks weight and the promoted score caps at weight 3.0, so one call is normally enough. "+
+				"A second call on the same pair with another type overwrites the first: a pair carries one type. Never relate a learning to itself."),
+			mcplib.WithNumber("learning_id_a", mcplib.Required(), mcplib.Description("Source learning ID — the edge points away from it")),
+			mcplib.WithNumber("learning_id_b", mcplib.Required(), mcplib.Description("Target learning ID — this one surfaces when the source is a search hit")),
+			mcplib.WithString("relation_type", mcplib.Required(), mcplib.Description("supports|contradicts|depends_on|relates_to — depends_on and supports promote strongest")),
 		), s.proxyCallFormat("relate_learnings", nil))
 
 	s.srv.AddTool(

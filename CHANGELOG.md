@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Spell out what a relate_learnings edge does
 - Tell a fresh installation that a project may number its rules
 - Mirror the installed master and file the helper-script rule
 - The recorder fix and the compare link
