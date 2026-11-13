@@ -1487,22 +1487,29 @@ func TestIsAgentProcess_UnparseableCreatedAtFallsBackToCmdline(t *testing.T) {
 	}
 }
 
-// startNamedProcess spawns a real child whose argv[0] basename is name, so the
-// kernel's own cmdline carries it. Both isAgentProcess conjuncts are then read
-// from real /proc — no stub.
+// startNamedProcess spawns a real child whose argv carries name, so the kernel's own
+// cmdline is what isAgentProcess reads — no stub. isAgentProcess looks for the
+// backend's name anywhere in the argv, so a script whose path carries the name is
+// enough.
+//
+// A script, not a symlink to sleep: an image that ships sleep as one applet of a
+// multicall binary dispatches on argv[0]'s basename, so a symlink under another name
+// answers "unknown applet" and exits at once — the test then reads a live process as
+// gone (ubuntu-26 runner, 2026-11-12).
 func startNamedProcess(t *testing.T, name string) *exec.Cmd {
 	t.Helper()
 	sleepBin, err := exec.LookPath("sleep")
 	if err != nil {
 		t.Skipf("sleep not available: %v", err)
 	}
-	link := filepath.Join(t.TempDir(), name)
-	if err := os.Symlink(sleepBin, link); err != nil {
-		t.Skipf("symlink %s: %v", link, err)
+	script := filepath.Join(t.TempDir(), name)
+	// No exec: the shell must stay the process under the name the test asked for.
+	if err := os.WriteFile(script, []byte("#!/bin/sh\n"+sleepBin+" 30\n"), 0o755); err != nil {
+		t.Fatalf("write %s: %v", script, err)
 	}
-	cmd := exec.Command(link, "30")
+	cmd := exec.Command(script)
 	if err := cmd.Start(); err != nil {
-		t.Skipf("start %s: %v", link, err)
+		t.Skipf("start %s: %v", script, err)
 	}
 	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
 	return cmd

@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Testing
 
+- Wait for the release write instead of reading the recorder once
+- Give the agent-process fixture a script instead of a renamed applet
 - Give the argv fixture the name its applet dispatches on
 - Report what the identity check saw when it refuses
 - Ask the host whether it exposes a child's identity

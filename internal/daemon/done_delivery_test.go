@@ -628,9 +628,9 @@ func TestDONEDeliveryDoesNotCountARunningPreCheck(t *testing.T) {
 	if len(writes) == 0 {
 		t.Fatal("the agent was written nothing after the release")
 	}
-	if last := writes[len(writes)-1]; !strings.Contains(last, "aber die Zustellung") {
-		t.Errorf("release message %q does not ask for the payload the hold deferred", last)
-	}
+	// The release is what the agent needs to read; wait for it instead of reading the
+	// recorder once, because the tick writes over the socket asynchronously.
+	waitForWrite(t, rec, "aber die Zustellung")
 }
 
 // The delivery decided the verdict, so the guard tick that follows must not decide

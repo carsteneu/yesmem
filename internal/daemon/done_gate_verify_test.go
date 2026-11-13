@@ -123,6 +123,25 @@ func contentWrites(rec *fakeInjectSocket) []string {
 	return messages
 }
 
+// waitForWrite waits until a recorded write carries want and returns it. The guard writes over the
+// inject socket asynchronously, so a single read of the recorder races the tick: on a loaded runner
+// the last write was still the hold message (2 of 7 CI runs, 2026-11-12).
+func waitForWrite(t *testing.T, rec *fakeInjectSocket, want string) string {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		for _, write := range contentWrites(rec) {
+			if strings.Contains(write, want) {
+				return write
+			}
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("no write carried %q within 5s; writes = %q", want, contentWrites(rec))
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 // requireMessages waits for the inject socket to record want messages and fails
 // when they do not arrive.
 func requireMessages(t *testing.T, rec *fakeInjectSocket, want int) []string {
