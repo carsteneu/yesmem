@@ -64,15 +64,22 @@ func (s *Store) AutoResumeOrphans(
 
 		case OrphanResumeAttempt:
 			resumeErr := resume(o)
-			// The attempt moves the budget whether it succeeded or not.
-			if err := s.RecordOrphanResumeAttempt(o.ID); err != nil {
-				logf("[agent-recovery] cannot record attempt for %s: %v", o.ID, err)
-			}
 			if resumeErr != nil {
+				// Only the FAILURE moves the budget. A resume that dies within
+				// seconds has to fill it, or the loop never ends.
+				if err := s.RecordOrphanResumeAttempt(o.ID); err != nil {
+					logf("[agent-recovery] cannot record attempt for %s: %v", o.ID, err)
+				}
 				logf("[agent-recovery] %s: resume failed: %v", o.ID, resumeErr)
 				continue
 			}
-			logf("[agent-recovery] %s: resumed", o.ID)
+			// A resume that worked must not eat the budget: an agent that is up
+			// on every restart would be resumed on every restart and abandoned
+			// after three of them while functioning the whole time.
+			if err := s.ClearOrphanResumeBudget(o.ID); err != nil {
+				logf("[agent-recovery] cannot clear budget for %s: %v", o.ID, err)
+			}
+			logf("[agent-recovery] %s: resumed (budget reset)", o.ID)
 			attempted++
 		}
 	}

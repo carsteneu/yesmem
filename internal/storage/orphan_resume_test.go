@@ -1,9 +1,12 @@
 package storage
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
+
+var errTestResume = errors.New("resume refused for test")
 
 // seedOrphan writes one marked row with the fields the resume decision reads.
 func seedOrphan(t *testing.T, s *Store, id string, restartCount, maxRestarts int,
@@ -291,5 +294,55 @@ func TestAutoResumeDecision_OwnRowIsNotAHolder(t *testing.T) {
 	}
 	if holder != "" {
 		t.Fatalf("a stopped row must not count as its own section holder, got %q", holder)
+	}
+}
+
+// A resume that FAILED must move the budget — otherwise a resume that dies in
+// milliseconds never gives up and the loop runs forever.
+func TestAutoResumeOrphans_FailedResumeCountsAgainstBudget(t *testing.T) {
+	s := testStore(t)
+	seedOrphan(t, s, "agent-fails", 0, 3,
+		"2026-11-26T09:05:03Z", "2026-11-26T09:02:00Z")
+
+	attempted, cleared, gaveUp, superseded := s.AutoResumeOrphans(
+		[]OrphanedAgent{{ID: "agent-fails"}},
+		func(OrphanedAgent) error { return errTestResume },
+		func(string, ...any) {},
+	)
+	if attempted != 0 || cleared != 0 || gaveUp != 0 || superseded != 0 {
+		t.Fatalf("expected 0/0/0/0, got %d/%d/%d/%d", attempted, cleared, gaveUp, superseded)
+	}
+	var rc int
+	if err := s.db.QueryRow(`SELECT COALESCE(restart_count,0) FROM agents WHERE id='agent-fails'`).Scan(&rc); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if rc != 1 {
+		t.Fatalf("a failed resume must spend one attempt, got restart_count=%d", rc)
+	}
+}
+
+// A resume that WORKED must reset the budget. Counting successful resumes punishes
+// the agents that run best: one that is always up on a restart gets orphaned and
+// resumed on every start, and would be abandoned after three restarts while it was
+// functioning the whole time (agent-12 on 2026-11-26).
+func TestAutoResumeOrphans_SuccessfulResumeResetsBudget(t *testing.T) {
+	s := testStore(t)
+	seedOrphan(t, s, "agent-works", 2, 3,
+		"2026-11-26T09:05:03Z", "2026-11-26T09:02:00Z")
+
+	attempted, _, _, _ := s.AutoResumeOrphans(
+		[]OrphanedAgent{{ID: "agent-works"}},
+		func(OrphanedAgent) error { return nil },
+		func(string, ...any) {},
+	)
+	if attempted != 1 {
+		t.Fatalf("expected 1 resumed, got %d", attempted)
+	}
+	var rc int
+	if err := s.db.QueryRow(`SELECT COALESCE(restart_count,0) FROM agents WHERE id='agent-works'`).Scan(&rc); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if rc != 0 {
+		t.Fatalf("a successful resume must reset the budget, got restart_count=%d", rc)
 	}
 }

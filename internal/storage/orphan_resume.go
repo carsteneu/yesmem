@@ -170,11 +170,22 @@ func (s *Store) SectionHolderFor(id string) (string, error) {
 	return holder, nil
 }
 
-// RecordOrphanResumeAttempt counts the ATTEMPT, not the success. A resume that
-// dies within seconds must move the budget, otherwise the loop never ends.
+// RecordOrphanResumeAttempt counts a FAILED attempt. A resume that dies within
+// seconds must move the budget, otherwise the loop never ends.
 func (s *Store) RecordOrphanResumeAttempt(id string) error {
 	_, err := s.db.Exec(
 		`UPDATE agents SET restart_count = COALESCE(restart_count, 0) + 1 WHERE id = ?`, id)
+	return err
+}
+
+// ClearOrphanResumeBudget resets the counter after a resume that demonstrably
+// worked. Counting every resume — including the successful ones — punishes the
+// agents that run best: one that is always up when the daemon restarts gets
+// orphaned and resumed on every start, and would be abandoned after three
+// restarts while functioning the whole time. The budget guards a retry LOOP, not
+// a healthy agent's lifetime.
+func (s *Store) ClearOrphanResumeBudget(id string) error {
+	_, err := s.db.Exec(`UPDATE agents SET restart_count = 0 WHERE id = ?`, id)
 	return err
 }
 
