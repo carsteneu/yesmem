@@ -51,6 +51,13 @@ func parseAgentTime(s string) time.Time {
 	return time.Time{}
 }
 
+// defaultOrphanResumeBudget applies when a row carries no max_restarts. 753 of
+// 770 agent rows on this host have 0 there, so treating 0 as "no limit" would
+// leave the loop unguarded for almost every row — the opposite of what the
+// budget is for. A missing budget means "use the default", never "retry
+// forever".
+const defaultOrphanResumeBudget = 3
+
 // OrphanResumeDecision decides what startup does with one marked row. It reads
 // only, so the caller can log the decision before acting on it.
 func (s *Store) OrphanResumeDecision(id string) (OrphanResumeDecision, error) {
@@ -65,7 +72,11 @@ func (s *Store) OrphanResumeDecision(id string) (OrphanResumeDecision, error) {
 		return OrphanResumeAttempt, err
 	}
 
-	if maxRestarts > 0 && restartCount >= maxRestarts {
+	budget := maxRestarts
+	if budget <= 0 {
+		budget = defaultOrphanResumeBudget
+	}
+	if restartCount >= budget {
 		return OrphanResumeGiveUp, nil
 	}
 

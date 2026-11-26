@@ -83,6 +83,35 @@ func TestAutoResumeDecision_MissingTimestampsResumes(t *testing.T) {
 	}
 }
 
+// max_restarts=0 must NOT mean "unlimited". Most agent rows on this host carry
+// 0, so an unset budget has to fall back to a default — otherwise the loop guard
+// is inert for almost every row, which is the opposite of its purpose.
+func TestAutoResumeDecision_ZeroMaxRestartsUsesDefaultBudget(t *testing.T) {
+	s := testStore(t)
+
+	// One attempt below the default budget: still allowed.
+	seedOrphan(t, s, "agent-zero-under", defaultOrphanResumeBudget-1, 0,
+		"2026-11-26T09:05:03Z", "2026-11-26T09:02:00Z")
+	d, err := s.OrphanResumeDecision("agent-zero-under")
+	if err != nil {
+		t.Fatalf("decision: %v", err)
+	}
+	if d != OrphanResumeAttempt {
+		t.Fatalf("expected attempt below the default budget, got %v", d)
+	}
+
+	// At the default budget: give up, even though max_restarts says 0.
+	seedOrphan(t, s, "agent-zero-at", defaultOrphanResumeBudget, 0,
+		"2026-11-26T09:05:03Z", "2026-11-26T09:02:00Z")
+	d, err = s.OrphanResumeDecision("agent-zero-at")
+	if err != nil {
+		t.Fatalf("decision: %v", err)
+	}
+	if d != OrphanResumeGiveUp {
+		t.Fatalf("expected give-up at the default budget with max_restarts=0, got %v", d)
+	}
+}
+
 // Recording an attempt must increment restart_count — the count of ATTEMPTS, not
 // successes, otherwise a resume that dies in seconds never fills the budget.
 func TestRecordOrphanResumeAttempt_IncrementsCounter(t *testing.T) {
