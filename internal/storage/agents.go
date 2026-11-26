@@ -1284,3 +1284,43 @@ func normalizeAgentStatus(s string) string {
 	}
 	return s
 }
+
+// OrphanedAgent identifies one row that a daemon restart marked as reattachable.
+type OrphanedAgent struct {
+	ID                string
+	Project           string
+	Section           string
+	OpenCodeSessionID string
+	WorkDir           string
+	StoppedAt         string
+}
+
+// OrphanedAgents lists the rows AgentRecoverOrphaned closed but did not resume.
+// The marker was written and never read, so a restart turned live work into a
+// labelled graveyard that no command and no log line pointed at (YM: pulse
+// survives a reboot but not a restart). Naming the rows at startup is the
+// smallest step that makes them actionable.
+func (s *Store) OrphanedAgents() ([]OrphanedAgent, error) {
+	rows, err := s.db.Query(`SELECT id,
+			COALESCE(project, ''), COALESCE(section, ''),
+			COALESCE(opencode_session_id, ''), COALESCE(work_dir, ''),
+			COALESCE(stopped_at, '')
+		FROM agents
+		WHERE COALESCE(orphan_reattachable, 0) = 1
+		ORDER BY stopped_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []OrphanedAgent
+	for rows.Next() {
+		var a OrphanedAgent
+		if err := rows.Scan(&a.ID, &a.Project, &a.Section,
+			&a.OpenCodeSessionID, &a.WorkDir, &a.StoppedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}

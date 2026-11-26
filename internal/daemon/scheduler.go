@@ -82,6 +82,13 @@ func (s *Scheduler) AddJob(job ScheduledJob) error {
 		return fmt.Errorf("invalid cron %q: %w", job.Cron, err)
 	}
 	s.jobs[job.ID] = &job
+	// Seed the last fire time from the persisted last run. Without it the in-memory
+	// map starts empty, every interval job looks due at once, and a daemon restart
+	// fires the entire schedule — and shifts each job's phase, because the catch-up
+	// run becomes the new reference (Issue #176).
+	if !job.LastRun.IsZero() {
+		s.lastFire[job.ID] = job.LastRun
+	}
 	if err == nil {
 		s.crons[job.ID] = c
 	}

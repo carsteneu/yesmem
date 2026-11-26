@@ -69,11 +69,16 @@ func TestBuildThinkReminder_NonClaudeUsesSelectiveSearchText(t *testing.T) {
 	s := &Server{thinkCounters: make(map[string]int)}
 
 	r := s.buildThinkReminder("thread-1", "", true)
-	if !strings.Contains(r, "hybrid_search()") {
+	if !strings.Contains(r, "hybrid_search") {
 		t.Error("expected hybrid_search in non-Claude reminder")
 	}
-	if !strings.Contains(r, "MANDATORY") {
-		t.Error("expected MANDATORY wording in non-Claude reminder")
+	// Deliberate change (fork patch, carried onto v2.5.1): the non-Claude reminder
+	// no longer shouts MANDATORY — it offers the lookup instead of ordering it.
+	if strings.Contains(r, "MANDATORY") {
+		t.Error("non-Claude reminder must not use MANDATORY wording any more")
+	}
+	if !strings.Contains(r, "Consider checking your memory") {
+		t.Error("expected the softer 'Consider checking your memory' wording")
 	}
 	if strings.Contains(r, "unsure about past decisions") {
 		t.Error("non-Claude reminder should use shorter wording")

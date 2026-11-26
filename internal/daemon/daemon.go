@@ -339,6 +339,20 @@ func Run(cfg Config) error {
 	if err == nil && (reconnected > 0 || reattachable > 0 || deleted > 0) {
 		log.Printf("Agent recovery: %d reconnected, %d kept (resumable or unverified), %d deleted (daemon restart)", reconnected, reattachable, deleted)
 	}
+	// The sweep marks rows reattachable and never resumes them: the work is on
+	// disk but no agent owns it. Name them now (cheap, so the restart does not
+	// look like a quiet shutdown) and resume them AFTER the notify below: a
+	// resume spawns a process, and a slow one must not delay READY=1 into the
+	// unit's TimeoutStartSec.
+	var restartOrphans []storage.OrphanedAgent
+	if orphans, oerr := store.OrphanedAgents(); oerr == nil && len(orphans) > 0 {
+		restartOrphans = orphans
+		log.Printf("[agent-recovery] %d agent(s) orphaned by a restart:", len(orphans))
+		for _, o := range orphans {
+			log.Printf("[agent-recovery]   %s  project=%s section=%s opencode_session=%s stopped_at=%s",
+				o.ID, o.Project, o.Section, o.OpenCodeSessionID, o.StoppedAt)
+		}
+	}
 
 	handler.IndexProgress = func() (total, done, skipped int, running bool) {
 		return int(atomic.LoadInt64(&indexTotal)),
@@ -371,6 +385,19 @@ func Run(cfg Config) error {
 			return sendNotifyTo(addr, state)
 		})
 		stripNotifyVars()
+	}
+
+	// Nothing resumes an orphaned agent by itself, so the chain stops after a
+	// restart until someone reattaches it. This runs AFTER READY=1 on purpose:
+	// resume spawns a process, and a slow or hanging resume must never delay the
+	// unit's readiness into TimeoutStartSec — that would turn one bad resume into
+	// a restart loop.
+	if len(restartOrphans) > 0 {
+		go func(orphans []storage.OrphanedAgent) {
+			attempted, cleared, gaveUp, superseded := handler.autoResumeOrphans(orphans)
+			log.Printf("[agent-recovery] outcome: %d resumed, %d marker(s) cleared (work continued), %d abandoned (budget spent), %d superseded (section held)",
+				attempted, cleared, gaveUp, superseded)
+		}(restartOrphans)
 	}
 
 	// Restricted socket for sandboxed runs (YM-267). A job gets this one mounted
