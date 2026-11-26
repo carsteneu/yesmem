@@ -82,10 +82,13 @@ func (s *Store) AutoResumeOrphans(
 				logf("[agent-recovery] %s: resume failed: %v", o.ID, resumeErr)
 				continue
 			}
-			// Deliberately no counter reset: restart_count keeps counting failed
-			// resumes only, so the number stays meaningful ("how often did it
-			// fail") instead of describing a lifetime.
-			logf("[agent-recovery] %s: resumed", o.ID)
+			// A success clears the failure streak. restart_count is a FAILURE
+			// SERIES, not a lifetime balance: three failures from days ago must not
+			// block an agent that is healthy today.
+			if err := s.ClearOrphanResumeBudget(o.ID); err != nil {
+				logf("[agent-recovery] cannot clear failure streak for %s: %v", o.ID, err)
+			}
+			logf("[agent-recovery] %s: resumed (failure streak cleared)", o.ID)
 			attempted++
 		}
 	}

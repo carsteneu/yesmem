@@ -190,12 +190,11 @@ func (s *Store) RecordOrphanResumeAttempt(id string) error {
 	return err
 }
 
-// ClearOrphanResumeBudget resets the counter after a resume that demonstrably
-// worked. Counting every resume — including the successful ones — punishes the
-// agents that run best: one that is always up when the daemon restarts gets
-// orphaned and resumed on every start, and would be abandoned after three
-// restarts while functioning the whole time. The budget guards a retry LOOP, not
-// a healthy agent's lifetime.
+// ClearOrphanResumeBudget clears the failure streak after a resume that worked.
+// restart_count counts a SERIES of failures, not a lifetime balance: three
+// failures from days ago must not block an agent that is healthy today. Counting
+// every attempt — including successful ones — is what abandoned agents that were
+// running the whole time (agent-12, 2026-11-26: 3/3 with zero failed resumes).
 func (s *Store) ClearOrphanResumeBudget(id string) error {
 	_, err := s.db.Exec(`UPDATE agents SET restart_count = 0 WHERE id = ?`, id)
 	return err

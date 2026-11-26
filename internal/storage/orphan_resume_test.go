@@ -329,10 +329,10 @@ func TestAutoResumeOrphans_FailedResumeCountsAgainstBudget(t *testing.T) {
 	}
 }
 
-// A resume that WORKED must not spend the budget. restart_count counts failures
-// only, so a functioning agent never fills it — and it keeps its meaning as
-// "how often did a resume fail" instead of describing a lifetime.
-func TestAutoResumeOrphans_SuccessfulResumeDoesNotSpendBudget(t *testing.T) {
+// A resume that WORKED clears the failure streak. restart_count is a SERIES of
+// failures, not a lifetime balance — three failures from days ago must not block
+// an agent that is healthy today (agent-12: 3/3 with zero failed resumes).
+func TestAutoResumeOrphans_SuccessfulResumeResetsBudget(t *testing.T) {
 	s := testStore(t)
 	seedOrphan(t, s, "agent-works", 2, 3,
 		"2026-11-26T09:05:03Z", "2026-11-26T09:02:00Z")
@@ -349,7 +349,7 @@ func TestAutoResumeOrphans_SuccessfulResumeDoesNotSpendBudget(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT COALESCE(restart_count,0) FROM agents WHERE id='agent-works'`).Scan(&rc); err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	if rc != 2 {
-		t.Fatalf("a successful resume must not change the failure counter, got restart_count=%d", rc)
+	if rc != 0 {
+		t.Fatalf("a successful resume must clear the failure streak, got restart_count=%d", rc)
 	}
 }

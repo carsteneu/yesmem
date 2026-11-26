@@ -37,13 +37,22 @@ func TestAutoResumeOrphans_RunningAgentSurvivesRestarts(t *testing.T) {
 	_ = cleared
 	_ = superseded
 
-	// The next restart must resume it again instead of giving up.
+	// The next restart must resume it again instead of giving up: with the reset,
+	// restart_count is back to 0 after the success and 0 >= 3 is false.
 	decision, err := s.OrphanResumeDecision("agent-live")
 	if err != nil {
 		t.Fatalf("decision: %v", err)
 	}
 	if decision != OrphanResumeAttempt {
 		t.Fatalf("after a successful resume the next restart must attempt again, got %v", decision)
+	}
+
+	var rc int
+	if err := s.db.QueryRow(`SELECT COALESCE(restart_count,0) FROM agents WHERE id='agent-live'`).Scan(&rc); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if rc != 0 {
+		t.Fatalf("the success must clear the failure streak, got restart_count=%d", rc)
 	}
 }
 
