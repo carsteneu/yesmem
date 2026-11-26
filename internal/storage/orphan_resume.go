@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"database/sql"
 	"fmt"
 	"time"
 )
@@ -16,6 +17,11 @@ const (
 	OrphanResumeClearMarker
 	// OrphanResumeGiveUp: the attempt budget is spent. Abandon loudly.
 	OrphanResumeGiveUp
+	// OrphanResumeSkipSection: another live agent owns this project+section, so a
+	// resume would be refused anyway. Skipping keeps the attempt budget intact:
+	// burning a try on a call that cannot succeed would leave the row abandoned
+	// after three restarts without ever having run.
+	OrphanResumeSkipSection
 )
 
 func (d OrphanResumeDecision) String() string {
@@ -109,6 +115,13 @@ func (s *Store) OrphanResumeDecision(id string) (OrphanResumeDecision, error) {
 		return OrphanResumeGiveUp, nil
 	}
 
+	// Section-Frage vor dem Resume: handleResumeAgent refuses a resume while
+	// another live agent owns the same project+section. Checking here keeps the
+	// attempt budget intact instead of spending it on a call that cannot succeed.
+	if holder, herr := s.SectionHolderFor(id); herr == nil && holder != "" {
+		return OrphanResumeSkipSection, nil
+	}
+
 	// stopped_at states its zone (+01:00); last_activity_at does not and is
 	// written in local time. Each is read with the shape it actually has.
 	stopped := parseZoneBoundTime(stoppedAt)
@@ -124,6 +137,33 @@ func (s *Store) OrphanResumeDecision(id string) (OrphanResumeDecision, error) {
 	}
 
 	return OrphanResumeAttempt, nil
+}
+
+// SectionHolderFor returns the ID of another live agent that owns the same
+// project+section as the given row, or "" when the section is free. The live
+// statuses mirror what handleResumeAgent treats as "owns its section".
+func (s *Store) SectionHolderFor(id string) (string, error) {
+	var project, section string
+	if err := s.db.QueryRow(
+		`SELECT COALESCE(project,''), COALESCE(section,'') FROM agents WHERE id = ?`, id,
+	).Scan(&project, &section); err != nil {
+		return "", err
+	}
+	if section == "" {
+		return "", nil
+	}
+	var holder string
+	err := s.db.QueryRow(`SELECT id FROM agents
+		WHERE project = ? AND section = ? AND id != ?
+		  AND status IN ('running', 'pending', 'spawning', 'paused')
+		LIMIT 1`, project, section, id).Scan(&holder)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return holder, nil
 }
 
 // RecordOrphanResumeAttempt counts the ATTEMPT, not the success. A resume that

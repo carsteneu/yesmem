@@ -11,9 +11,9 @@ import (
 func TestAutoResumeOrphans_EmptyListIsNoop(t *testing.T) {
 	h, _ := mustHandler(t)
 
-	attempted, cleared, gaveUp := h.autoResumeOrphans(nil)
-	if attempted != 0 || cleared != 0 || gaveUp != 0 {
-		t.Fatalf("expected 0/0/0, got %d/%d/%d", attempted, cleared, gaveUp)
+	attempted, cleared, gaveUp, blocked := h.autoResumeOrphans(nil)
+	if attempted != 0 || cleared != 0 || gaveUp != 0 || blocked != 0 {
+		t.Fatalf("expected 0/0/0/0, got %d/%d/%d/%d", attempted, cleared, gaveUp, blocked)
 	}
 }
 
@@ -36,9 +36,9 @@ func TestAutoResumeOrphans_WiresStoreDecision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("orphans: %v", err)
 	}
-	attempted, cleared, gaveUp := h.autoResumeOrphans(orphans)
-	if attempted != 0 || cleared != 1 || gaveUp != 0 {
-		t.Fatalf("expected 0/1/0, got %d/%d/%d", attempted, cleared, gaveUp)
+	attempted, cleared, gaveUp, blocked := h.autoResumeOrphans(orphans)
+	if attempted != 0 || cleared != 1 || gaveUp != 0 || blocked != 0 {
+		t.Fatalf("expected 0/1/0/0, got %d/%d/%d/%d", attempted, cleared, gaveUp, blocked)
 	}
 
 	var marker int

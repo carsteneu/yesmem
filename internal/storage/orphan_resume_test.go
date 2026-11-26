@@ -204,3 +204,44 @@ func TestClearOrphanMarker_KeepsRow(t *testing.T) {
 		t.Fatalf("expected status kept at stopped, got %q", status)
 	}
 }
+
+// A section can only have one live agent. If another agent holds it, a resume
+// would be refused by handleResumeAgent — so the attempt must not be spent on a
+// call that cannot succeed. Otherwise the row burns its budget across three
+// restarts without ever having had a chance to run.
+func TestAutoResumeDecision_SectionHeldSkips(t *testing.T) {
+	s := testStore(t)
+	seedOrphan(t, s, "agent-waiting", 0, 3,
+		"2026-11-26T09:05:03Z", "2026-11-26T09:02:00Z")
+	if _, err := s.db.Exec(`INSERT INTO agents
+		(id, project, section, session_id, status, progress, orphan_reattachable,
+		 opencode_session_id, work_dir)
+		VALUES ('agent-holder', '/p', 'sec', 'ses-h', 'running', 'working', 0,
+		 'oc-h', '/p')`); err != nil {
+		t.Fatalf("seed holder: %v", err)
+	}
+
+	decision, err := s.OrphanResumeDecision("agent-waiting")
+	if err != nil {
+		t.Fatalf("decision: %v", err)
+	}
+	if decision != OrphanResumeSkipSection {
+		t.Fatalf("expected skip-section while another agent holds it, got %v", decision)
+	}
+}
+
+// A stopped row must not count as its own holder, otherwise every row would
+// block itself. Only live statuses own a section.
+func TestAutoResumeDecision_OwnRowIsNotAHolder(t *testing.T) {
+	s := testStore(t)
+	seedOrphan(t, s, "agent-self", 0, 3,
+		"2026-11-26T09:05:03Z", "2026-11-26T09:02:00Z")
+
+	holder, err := s.SectionHolderFor("agent-self")
+	if err != nil {
+		t.Fatalf("holder: %v", err)
+	}
+	if holder != "" {
+		t.Fatalf("a stopped row must not count as its own section holder, got %q", holder)
+	}
+}

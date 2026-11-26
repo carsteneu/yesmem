@@ -23,7 +23,7 @@ func (s *Store) AutoResumeOrphans(
 	orphans []OrphanedAgent,
 	resume func(OrphanedAgent) error,
 	logf func(format string, args ...any),
-) (attempted, cleared, gaveUp int) {
+) (attempted, cleared, gaveUp, blocked int) {
 	if logf == nil {
 		logf = log.Printf
 	}
@@ -49,6 +49,12 @@ func (s *Store) AutoResumeOrphans(
 				"UPDATE agents SET orphan_reattachable=0 WHERE id='%s'", o.ID, o.ID)
 			gaveUp++
 
+		case OrphanResumeSkipSection:
+			holder, _ := s.SectionHolderFor(o.ID)
+			logf("[agent-recovery] %s: skipped — section %q is held by live agent %s; "+
+				"no budget spent, retried on the next start", o.ID, o.Section, holder)
+			blocked++
+
 		case OrphanResumeAttempt:
 			resumeErr := resume(o)
 			// The attempt moves the budget whether it succeeded or not.
@@ -63,5 +69,5 @@ func (s *Store) AutoResumeOrphans(
 			attempted++
 		}
 	}
-	return attempted, cleared, gaveUp
+	return attempted, cleared, gaveUp, blocked
 }
