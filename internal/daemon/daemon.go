@@ -394,9 +394,9 @@ func Run(cfg Config) error {
 	// a restart loop.
 	if len(restartOrphans) > 0 {
 		go func(orphans []storage.OrphanedAgent) {
-			attempted, cleared, gaveUp, blocked := handler.autoResumeOrphans(orphans)
-			log.Printf("[agent-recovery] outcome: %d resumed, %d marker(s) cleared, %d abandoned (budget spent), %d skipped (section held)",
-				attempted, cleared, gaveUp, blocked)
+			attempted, cleared, gaveUp, superseded := handler.autoResumeOrphans(orphans)
+			log.Printf("[agent-recovery] outcome: %d resumed, %d marker(s) cleared (work continued), %d abandoned (budget spent), %d superseded (section held)",
+				attempted, cleared, gaveUp, superseded)
 		}(restartOrphans)
 	}
 
