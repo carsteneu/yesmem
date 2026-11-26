@@ -30,25 +30,54 @@ func (d OrphanResumeDecision) String() string {
 	return "unknown"
 }
 
-// parseAgentTime accepts the two shapes this database carries: RFC3339 as Go
-// writes it ("2026-11-26T09:05:03Z", UTC) and SQLite's CURRENT_TIMESTAMP
-// ("2026-11-26 09:05:03", also UTC but without the marker). Anything else
-// returns the zero time so the caller can treat it as unknown.
-func parseAgentTime(s string) time.Time {
+// The two timestamp columns of agents are written by different code paths and do
+// NOT share a format or a zone. Measured 2026-11-26:
+//
+//	stopped_at       2026-11-26T07:01:12+01:00   RFC3339, carries +01:00
+//	last_activity_at 2026-11-26 07:04:53         space separator, NO zone, local
+//
+// Parsing both as UTC shifts last_activity_at by the local offset and flips the
+// comparison: agent-09 (activity 09:02 local, stop 09:05 local = 08:05 UTC) looks
+// like "worked after the stop" when it did not. String comparison is worse still:
+// ' ' (0x20) sorts before 'T' (0x54), so stopped_at always loses.
+var (
+	timeZoneBoundLayouts = []string{time.RFC3339Nano, time.RFC3339}
+	timeLocalLayouts     = []string{"2006-01-02 15:04:05", "2006-01-02T15:04:05"}
+)
+
+// parseZoneBoundTime parses a timestamp that states its own offset.
+func parseZoneBoundTime(s string) time.Time {
 	if s == "" {
 		return time.Time{}
 	}
-	for _, layout := range []string{
-		time.RFC3339Nano,
-		time.RFC3339,
-		"2006-01-02T15:04:05",
-		"2006-01-02 15:04:05",
-	} {
+	for _, layout := range timeZoneBoundLayouts {
 		if t, err := time.Parse(layout, s); err == nil {
 			return t.UTC()
 		}
 	}
 	return time.Time{}
+}
+
+// parseLocalTime parses a timestamp with no zone, interpreting it in the
+// machine's local zone — which is how last_activity_at is written.
+func parseLocalTime(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	for _, layout := range timeLocalLayouts {
+		if t, err := time.ParseInLocation(layout, s, time.Local); err == nil {
+			return t.UTC()
+		}
+	}
+	return time.Time{}
+}
+
+// parseAnyAgentTime is the lenient fallback: either shape, each in its own zone.
+func parseAnyAgentTime(s string) time.Time {
+	if t := parseZoneBoundTime(s); !t.IsZero() {
+		return t
+	}
+	return parseLocalTime(s)
 }
 
 // defaultOrphanResumeBudget applies when a row carries no max_restarts. 753 of
@@ -80,8 +109,16 @@ func (s *Store) OrphanResumeDecision(id string) (OrphanResumeDecision, error) {
 		return OrphanResumeGiveUp, nil
 	}
 
-	stopped := parseAgentTime(stoppedAt)
-	activity := parseAgentTime(lastActivity)
+	// stopped_at states its zone (+01:00); last_activity_at does not and is
+	// written in local time. Each is read with the shape it actually has.
+	stopped := parseZoneBoundTime(stoppedAt)
+	if stopped.IsZero() {
+		stopped = parseAnyAgentTime(stoppedAt)
+	}
+	activity := parseLocalTime(lastActivity)
+	if activity.IsZero() {
+		activity = parseAnyAgentTime(lastActivity)
+	}
 	if !stopped.IsZero() && !activity.IsZero() && activity.After(stopped) {
 		return OrphanResumeClearMarker, nil
 	}

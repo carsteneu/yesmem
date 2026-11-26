@@ -83,9 +83,58 @@ func TestAutoResumeDecision_MissingTimestampsResumes(t *testing.T) {
 	}
 }
 
-// max_restarts=0 must NOT mean "unlimited". Most agent rows on this host carry
-// 0, so an unset budget has to fall back to a default — otherwise the loop guard
-// is inert for almost every row, which is the opposite of its purpose.
+// The two columns do NOT share a format: stopped_at carries its zone
+// (T...+01:00), last_activity_at is local time with a space separator and no
+// zone. This is the real-world shape and the case that used to be wrong:
+// agent-09 stopped 09:05+01:00, last activity 09:02 local — three minutes BEFORE
+// the stop, so it needs a resume, not a cleared marker.
+func TestAutoResumeDecision_MixedFormatsNoWorkAfterStop(t *testing.T) {
+	s := testStore(t)
+	seedOrphan(t, s, "agent-mixed", 0, 3,
+		"2026-11-26T09:05:03+01:00", "2026-11-26 09:02:00")
+
+	decision, err := s.OrphanResumeDecision("agent-mixed")
+	if err != nil {
+		t.Fatalf("decision: %v", err)
+	}
+	if decision != OrphanResumeAttempt {
+		t.Fatalf("activity predates the stop, expected attempt, got %v", decision)
+	}
+}
+
+// Same mixed formats, but the activity is genuinely after the stop:
+// agent-07 stopped 07:01:12+01:00, last activity 07:04:53 local.
+func TestAutoResumeDecision_MixedFormatsWorkAfterStop(t *testing.T) {
+	s := testStore(t)
+	seedOrphan(t, s, "agent-mixed2", 0, 3,
+		"2026-11-26T07:01:12+01:00", "2026-11-26 07:04:53")
+
+	decision, err := s.OrphanResumeDecision("agent-mixed2")
+	if err != nil {
+		t.Fatalf("decision: %v", err)
+	}
+	if decision != OrphanResumeClearMarker {
+		t.Fatalf("activity is after the stop, expected clear-marker, got %v", decision)
+	}
+}
+
+// A string comparison would always favour stopped_at (' ' sorts before 'T'), so
+// this case pins that the decision is time-based, not lexical.
+func TestAutoResumeDecision_NotAStringComparison(t *testing.T) {
+	s := testStore(t)
+	// Lexically "2026-11-26 10:00:00" > "2026-11-26T09:00:00+01:00" is false,
+	// but as times 10:00 local (09:00 UTC) is after 09:00+01:00 (08:00 UTC).
+	seedOrphan(t, s, "agent-lex", 0, 3,
+		"2026-11-26T09:00:00+01:00", "2026-11-26 10:00:00")
+
+	decision, err := s.OrphanResumeDecision("agent-lex")
+	if err != nil {
+		t.Fatalf("decision: %v", err)
+	}
+	if decision != OrphanResumeClearMarker {
+		t.Fatalf("time comparison says after, expected clear-marker, got %v", decision)
+	}
+}
 func TestAutoResumeDecision_ZeroMaxRestartsUsesDefaultBudget(t *testing.T) {
 	s := testStore(t)
 
