@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,16 +20,23 @@ import (
 	"github.com/carsteneu/yesmem/internal/models"
 	"github.com/carsteneu/yesmem/internal/proxy"
 	"github.com/carsteneu/yesmem/internal/repo"
+	"github.com/carsteneu/yesmem/internal/storage"
 )
 
-func (h *Handler) handleExecuteCap(params map[string]any) Response {
+func (h *Handler) handleExecuteCap(params map[string]any) (resp Response) {
 	name := stringOr(params, "name", "")
-	if name == "" {
-		return errorResponse("name required")
-	}
 	fn := stringOr(params, "fn", "")
 	argsJSON := stringOr(params, "args", "{}")
 	sessionID := stringOr(params, "_session_id", "")
+
+	start := time.Now()
+	defer func() {
+		h.logCapUsage(name, fn, sessionID, start, resp, argsJSON)
+	}()
+
+	if name == "" {
+		return errorResponse("name required")
+	}
 
 	meta, project, err := h.loadCapMeta(name, h.capCallerProject(params))
 	if err != nil {
@@ -35,6 +44,25 @@ func (h *Handler) handleExecuteCap(params map[string]any) Response {
 	}
 
 	return h.fireCapHandler(meta, project, fn, argsJSON, sessionID)
+}
+
+func (h *Handler) logCapUsage(name, fn, sessionID string, start time.Time, resp Response, argsJSON string) {
+	defer func() { _ = recover() }()
+	if h.store == nil {
+		return
+	}
+	sum := sha256.Sum256([]byte(argsJSON))
+	_ = h.store.LogCapUsage(storage.CapUsageEntry{
+		CapName:   name,
+		Fn:        fn,
+		SessionID: sessionID,
+		StartedAt: start,
+		Duration:  time.Since(start),
+		OK:        resp.Error == "",
+		Error:     resp.Error,
+		ArgsHash:  hex.EncodeToString(sum[:]),
+		ArgsLen:   len(argsJSON),
+	})
 }
 
 // capCallerProject answers which project a cap call stands in. An explicit

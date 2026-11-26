@@ -56,7 +56,7 @@ func (s *Server) buildThinkReminder(threadID string, sessionID string, nonClaude
 
 	reminder := "<system-reminder>\n"
 	if nonClaude {
-		reminder += "MANDATORY! YOU MUST hybrid_search() before relying on memory.\n"
+		reminder += "Consider checking your memory (hybrid_search) if you're unsure or need context.\n"
 	} else {
 		reminder += "Before acting — do you already know something about this? Use hybrid_search() to check your memory first.\n"
 		reminder += "Do not repeat memory lookups for the same question unless a new concrete hypothesis appears.\n"
