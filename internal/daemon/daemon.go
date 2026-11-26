@@ -339,6 +339,17 @@ func Run(cfg Config) error {
 	if err == nil && (reconnected > 0 || reattachable > 0 || deleted > 0) {
 		log.Printf("Agent recovery: %d reconnected, %d kept (resumable or unverified), %d deleted (daemon restart)", reconnected, reattachable, deleted)
 	}
+	// The sweep marks rows reattachable and never resumes them: the work is on
+	// disk but no agent owns it. Name them, or the restart looks like a quiet
+	// shutdown and the transcript is never picked up again.
+	if orphans, oerr := store.OrphanedAgents(); oerr == nil && len(orphans) > 0 {
+		log.Printf("[agent-recovery] %d agent(s) orphaned by a restart and not resumed:", len(orphans))
+		for _, o := range orphans {
+			log.Printf("[agent-recovery]   %s  project=%s section=%s opencode_session=%s work_dir=%s stopped_at=%s",
+				o.ID, o.Project, o.Section, o.OpenCodeSessionID, o.WorkDir, o.StoppedAt)
+		}
+		log.Printf("[agent-recovery] resume each with the MCP tool resume_agent(agent_id=<id>); there is no CLI command for it")
+	}
 
 	handler.IndexProgress = func() (total, done, skipped int, running bool) {
 		return int(atomic.LoadInt64(&indexTotal)),
