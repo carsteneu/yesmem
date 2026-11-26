@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -101,12 +102,13 @@ const defaultOrphanResumeBudget = 3
 // only, so the caller can log the decision before acting on it.
 func (s *Store) OrphanResumeDecision(id string) (OrphanResumeDecision, error) {
 	var restartCount, maxRestarts int
-	var stoppedAt, lastActivity string
+	var stoppedAt, lastActivity, section string
 	err := s.db.QueryRow(`SELECT
 			COALESCE(restart_count, 0), COALESCE(max_restarts, 0),
-			COALESCE(stopped_at, ''), COALESCE(last_activity_at, '')
+			COALESCE(stopped_at, ''), COALESCE(last_activity_at, ''),
+			COALESCE(section, '')
 		FROM agents WHERE id = ?`, id,
-	).Scan(&restartCount, &maxRestarts, &stoppedAt, &lastActivity)
+	).Scan(&restartCount, &maxRestarts, &stoppedAt, &lastActivity, &section)
 	if err != nil {
 		return OrphanResumeAttempt, err
 	}
@@ -117,6 +119,16 @@ func (s *Store) OrphanResumeDecision(id string) (OrphanResumeDecision, error) {
 	}
 	if restartCount >= budget {
 		return OrphanResumeGiveUp, nil
+	}
+
+	// A schedule-driven section gets a fresh agent from the next cron run, so a
+	// resumed predecessor would never receive another input (measured with the
+	// proxy request trace on 2026-11-26: reattached, then no request for 5m28s).
+	// This is a heuristic on the section NAME, not a real schedule lookup: the
+	// scheduled_jobs table has no section column and the section only appears in
+	// the job's prompt text. It matches our naming convention, nothing more.
+	if strings.HasPrefix(section, "sched-") {
+		return OrphanResumeSuperseded, nil
 	}
 
 	// Section-Frage vor dem Resume: handleResumeAgent refuses a resume while

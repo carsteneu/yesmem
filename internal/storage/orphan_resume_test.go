@@ -12,13 +12,21 @@ var errTestResume = errors.New("resume refused for test")
 func seedOrphan(t *testing.T, s *Store, id string, restartCount, maxRestarts int,
 	stoppedAt, lastActivity string) {
 	t.Helper()
+	seedOrphanInSection(t, s, id, "sec", restartCount, maxRestarts, stoppedAt, lastActivity)
+}
+
+// seedOrphanInSection is seedOrphan with an explicit section, needed by the
+// schedule-driven cases.
+func seedOrphanInSection(t *testing.T, s *Store, id, section string, restartCount, maxRestarts int,
+	stoppedAt, lastActivity string) {
+	t.Helper()
 	if _, err := s.db.Exec(`INSERT INTO agents
 		(id, project, section, session_id, status, progress, orphan_reattachable,
 		 opencode_session_id, work_dir, restart_count, max_restarts,
 		 stopped_at, last_activity_at)
-		VALUES (?, '/p', 'sec', ?, 'stopped', 'orphaned-reattachable', 1,
+		VALUES (?, '/p', ?, ?, 'stopped', 'orphaned-reattachable', 1,
 		 ?, '/p', ?, ?, ?, ?)`,
-		id, "ses-"+id, "oc-"+id, restartCount, maxRestarts, stoppedAt, lastActivity); err != nil {
+		id, section, "ses-"+id, "oc-"+id, restartCount, maxRestarts, stoppedAt, lastActivity); err != nil {
 		t.Fatalf("seed %s: %v", id, err)
 	}
 }
@@ -321,11 +329,10 @@ func TestAutoResumeOrphans_FailedResumeCountsAgainstBudget(t *testing.T) {
 	}
 }
 
-// A resume that WORKED must reset the budget. Counting successful resumes punishes
-// the agents that run best: one that is always up on a restart gets orphaned and
-// resumed on every start, and would be abandoned after three restarts while it was
-// functioning the whole time (agent-12 on 2026-11-26).
-func TestAutoResumeOrphans_SuccessfulResumeResetsBudget(t *testing.T) {
+// A resume that WORKED must not spend the budget. restart_count counts failures
+// only, so a functioning agent never fills it — and it keeps its meaning as
+// "how often did a resume fail" instead of describing a lifetime.
+func TestAutoResumeOrphans_SuccessfulResumeDoesNotSpendBudget(t *testing.T) {
 	s := testStore(t)
 	seedOrphan(t, s, "agent-works", 2, 3,
 		"2026-11-26T09:05:03Z", "2026-11-26T09:02:00Z")
@@ -342,7 +349,7 @@ func TestAutoResumeOrphans_SuccessfulResumeResetsBudget(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT COALESCE(restart_count,0) FROM agents WHERE id='agent-works'`).Scan(&rc); err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	if rc != 0 {
-		t.Fatalf("a successful resume must reset the budget, got restart_count=%d", rc)
+	if rc != 2 {
+		t.Fatalf("a successful resume must not change the failure counter, got restart_count=%d", rc)
 	}
 }

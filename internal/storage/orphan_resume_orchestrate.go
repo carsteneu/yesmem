@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"log"
+	"strings"
 )
 
 // AutoResumeOrphans is the step AFTER AgentRecoverOrphaned. The sweep keeps rows
@@ -54,32 +55,37 @@ func (s *Store) AutoResumeOrphans(
 
 		case OrphanResumeSuperseded:
 			holder, _ := s.SectionHolderFor(o.ID)
-			reason := fmt.Sprintf("superseded by %s, which holds the section", holder)
+			var reason string
+			if strings.HasPrefix(o.Section, "sched-") {
+				reason = fmt.Sprintf("superseded by schedule (section %q gets a fresh agent)", o.Section)
+			} else if holder != "" {
+				reason = fmt.Sprintf("superseded by %s, which holds the section", holder)
+			} else {
+				reason = "superseded"
+			}
 			if err := s.ClearOrphanMarker(o.ID, reason); err != nil {
 				logf("[agent-recovery] cannot close superseded %s: %v", o.ID, err)
 				continue
 			}
-			logf("[agent-recovery] %s: superseded by %s — marker cleared, no resume attempt spent", o.ID, holder)
+			logf("[agent-recovery] %s: %s — marker cleared, no resume attempt spent", o.ID, reason)
 			superseded++
 
 		case OrphanResumeAttempt:
 			resumeErr := resume(o)
 			if resumeErr != nil {
-				// Only the FAILURE moves the budget. A resume that dies within
-				// seconds has to fill it, or the loop never ends.
+				// Only the FAILURE moves the budget: a resume that returns is not
+				// a failed attempt, and counting it was what abandoned agents that
+				// were running the whole time.
 				if err := s.RecordOrphanResumeAttempt(o.ID); err != nil {
 					logf("[agent-recovery] cannot record attempt for %s: %v", o.ID, err)
 				}
 				logf("[agent-recovery] %s: resume failed: %v", o.ID, resumeErr)
 				continue
 			}
-			// A resume that worked must not eat the budget: an agent that is up
-			// on every restart would be resumed on every restart and abandoned
-			// after three of them while functioning the whole time.
-			if err := s.ClearOrphanResumeBudget(o.ID); err != nil {
-				logf("[agent-recovery] cannot clear budget for %s: %v", o.ID, err)
-			}
-			logf("[agent-recovery] %s: resumed (budget reset)", o.ID)
+			// Deliberately no counter reset: restart_count keeps counting failed
+			// resumes only, so the number stays meaningful ("how often did it
+			// fail") instead of describing a lifetime.
+			logf("[agent-recovery] %s: resumed", o.ID)
 			attempted++
 		}
 	}
