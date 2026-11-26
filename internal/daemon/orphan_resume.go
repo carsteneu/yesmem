@@ -10,7 +10,7 @@ import (
 // autoResumeOrphans wires the resume decision to the MCP handler. The decision
 // logic and the budget live in storage.AutoResumeOrphans (testable without a
 // daemon); this only supplies the "how do I resume" action.
-func (h *Handler) autoResumeOrphans(orphans []storage.OrphanedAgent) (attempted, cleared, gaveUp, blocked int) {
+func (h *Handler) autoResumeOrphans(orphans []storage.OrphanedAgent) (attempted, cleared, gaveUp, superseded int) {
 	return h.store.AutoResumeOrphans(orphans, func(o storage.OrphanedAgent) error {
 		params := map[string]any{"to": o.ID}
 		if o.OpenCodeSessionID != "" {

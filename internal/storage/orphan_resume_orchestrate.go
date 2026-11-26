@@ -1,6 +1,9 @@
 package storage
 
-import "log"
+import (
+	"fmt"
+	"log"
+)
 
 // AutoResumeOrphans is the step AFTER AgentRecoverOrphaned. The sweep keeps rows
 // whose backend session still exists on disk and marks them reattachable
@@ -23,7 +26,7 @@ func (s *Store) AutoResumeOrphans(
 	orphans []OrphanedAgent,
 	resume func(OrphanedAgent) error,
 	logf func(format string, args ...any),
-) (attempted, cleared, gaveUp, blocked int) {
+) (attempted, cleared, gaveUp, superseded int) {
 	if logf == nil {
 		logf = log.Printf
 	}
@@ -49,11 +52,15 @@ func (s *Store) AutoResumeOrphans(
 				"UPDATE agents SET orphan_reattachable=0 WHERE id='%s'", o.ID, o.ID)
 			gaveUp++
 
-		case OrphanResumeSkipSection:
+		case OrphanResumeSuperseded:
 			holder, _ := s.SectionHolderFor(o.ID)
-			logf("[agent-recovery] %s: skipped — section %q is held by live agent %s; "+
-				"no budget spent, retried on the next start", o.ID, o.Section, holder)
-			blocked++
+			reason := fmt.Sprintf("superseded by %s, which holds the section", holder)
+			if err := s.ClearOrphanMarker(o.ID, reason); err != nil {
+				logf("[agent-recovery] cannot close superseded %s: %v", o.ID, err)
+				continue
+			}
+			logf("[agent-recovery] %s: superseded by %s — marker cleared, no resume attempt spent", o.ID, holder)
+			superseded++
 
 		case OrphanResumeAttempt:
 			resumeErr := resume(o)
@@ -69,5 +76,5 @@ func (s *Store) AutoResumeOrphans(
 			attempted++
 		}
 	}
-	return attempted, cleared, gaveUp, blocked
+	return attempted, cleared, gaveUp, superseded
 }

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -205,11 +206,11 @@ func TestClearOrphanMarker_KeepsRow(t *testing.T) {
 	}
 }
 
-// A section can only have one live agent. If another agent holds it, a resume
-// would be refused by handleResumeAgent — so the attempt must not be spent on a
-// call that cannot succeed. Otherwise the row burns its budget across three
-// restarts without ever having had a chance to run.
-func TestAutoResumeDecision_SectionHeldSkips(t *testing.T) {
+// A section can only have one live agent. If another agent holds it, this row is
+// superseded — it can never take the section back while the successor lives, so
+// the marker must be closed with the successor named instead of parking the row
+// forever or spending its attempt budget.
+func TestAutoResumeDecision_SectionHeldIsSuperseded(t *testing.T) {
 	s := testStore(t)
 	seedOrphan(t, s, "agent-waiting", 0, 3,
 		"2026-11-26T09:05:03Z", "2026-11-26T09:02:00Z")
@@ -225,8 +226,55 @@ func TestAutoResumeDecision_SectionHeldSkips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decision: %v", err)
 	}
-	if decision != OrphanResumeSkipSection {
-		t.Fatalf("expected skip-section while another agent holds it, got %v", decision)
+	if decision != OrphanResumeSuperseded {
+		t.Fatalf("expected superseded while another agent holds the section, got %v", decision)
+	}
+}
+
+// The orchestration must CLOSE the marker for a superseded row, naming the
+// successor — and must not touch restart_count. Parking the row (marker stays)
+// would keep the orphan count high forever; spending the attempt would let the
+// budget run out on a call that can never succeed.
+func TestAutoResumeOrphans_SupersededClearsMarkerWithoutSpendingBudget(t *testing.T) {
+	s := testStore(t)
+	seedOrphan(t, s, "agent-behind", 0, 3,
+		"2026-11-26T09:05:03Z", "2026-11-26T09:02:00Z")
+	if _, err := s.db.Exec(`INSERT INTO agents
+		(id, project, section, session_id, status, progress, orphan_reattachable,
+		 opencode_session_id, work_dir)
+		VALUES ('agent-front', '/p', 'sec', 'ses-f', 'running', 'working', 0,
+		 'oc-f', '/p')`); err != nil {
+		t.Fatalf("seed holder: %v", err)
+	}
+
+	called := false
+	attempted, cleared, gaveUp, superseded := s.AutoResumeOrphans(
+		[]OrphanedAgent{{ID: "agent-behind", Section: "sec"}},
+		func(OrphanedAgent) error { called = true; return nil },
+		func(string, ...any) {},
+	)
+	if called {
+		t.Fatal("resume must not be called for a superseded row")
+	}
+	if attempted != 0 || cleared != 0 || gaveUp != 0 || superseded != 1 {
+		t.Fatalf("expected 0/0/0/1, got %d/%d/%d/%d", attempted, cleared, gaveUp, superseded)
+	}
+
+	var marker, restartCount int
+	var progress string
+	if err := s.db.QueryRow(`SELECT COALESCE(orphan_reattachable,0),
+			COALESCE(restart_count,0), COALESCE(progress,'')
+		FROM agents WHERE id='agent-behind'`).Scan(&marker, &restartCount, &progress); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if marker != 0 {
+		t.Fatalf("expected marker cleared, got %d", marker)
+	}
+	if restartCount != 0 {
+		t.Fatalf("a structurally impossible resume must not spend the budget, got restart_count=%d", restartCount)
+	}
+	if !strings.Contains(progress, "superseded by agent-front") {
+		t.Fatalf("progress should name the successor, got %q", progress)
 	}
 }
 

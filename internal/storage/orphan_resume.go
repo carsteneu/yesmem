@@ -17,11 +17,13 @@ const (
 	OrphanResumeClearMarker
 	// OrphanResumeGiveUp: the attempt budget is spent. Abandon loudly.
 	OrphanResumeGiveUp
-	// OrphanResumeSkipSection: another live agent owns this project+section, so a
-	// resume would be refused anyway. Skipping keeps the attempt budget intact:
-	// burning a try on a call that cannot succeed would leave the row abandoned
-	// after three restarts without ever having run.
-	OrphanResumeSkipSection
+	// OrphanResumeSuperseded: another live agent owns this project+section, so
+	// this row can never become the active one again — it was replaced, not
+	// blocked. Resuming is structurally impossible, and spending an attempt on it
+	// would burn the budget on a call that cannot succeed. Closing the marker with
+	// the successor named is the honest answer, and it makes the orphan count
+	// actually go down instead of parking the row forever.
+	OrphanResumeSuperseded
 )
 
 func (d OrphanResumeDecision) String() string {
@@ -32,6 +34,8 @@ func (d OrphanResumeDecision) String() string {
 		return "clear-marker"
 	case OrphanResumeGiveUp:
 		return "give-up"
+	case OrphanResumeSuperseded:
+		return "superseded"
 	}
 	return "unknown"
 }
@@ -116,10 +120,10 @@ func (s *Store) OrphanResumeDecision(id string) (OrphanResumeDecision, error) {
 	}
 
 	// Section-Frage vor dem Resume: handleResumeAgent refuses a resume while
-	// another live agent owns the same project+section. Checking here keeps the
-	// attempt budget intact instead of spending it on a call that cannot succeed.
+	// another live agent owns the same project+section. Such a row is superseded —
+	// it can never take the section back while the successor lives.
 	if holder, herr := s.SectionHolderFor(id); herr == nil && holder != "" {
-		return OrphanResumeSkipSection, nil
+		return OrphanResumeSuperseded, nil
 	}
 
 	// stopped_at states its zone (+01:00); last_activity_at does not and is
