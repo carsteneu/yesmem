@@ -84,6 +84,7 @@ func (s *Store) createSchema() error {
 		tableReplPatternObservations,
 		tableScheduledJobs,
 		tableBashJobRuns,
+		tableCapUsage,
 	}
 	for _, ddl := range tables {
 		if _, err := s.db.Exec(ddl); err != nil {

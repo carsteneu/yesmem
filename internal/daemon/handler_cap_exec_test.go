@@ -207,3 +207,68 @@ func TestExecuteCapExplicitTimeoutReportsTimedOut(t *testing.T) {
 		t.Errorf("error should not leak raw signal: killed, got: %s", resp.Error)
 	}
 }
+
+func TestHandleExecuteCap_LogsUsage(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs bash on PATH")
+	}
+	h, store := mustHandler(t)
+	los35bUnsandboxed(t, h)
+
+	// Fehlerpfad 1: no name
+	h.handleExecuteCap(map[string]any{})
+	// Fehlerpfad 2: unknown cap
+	h.handleExecuteCap(map[string]any{"name": "nonexistent"})
+	// Erfolg
+	h.handleSaveCap(map[string]any{
+		"name":         "usage_cap",
+		"description":  "logs a call",
+		"handler_bash": "echo ok",
+		"scope":        "user",
+	})
+	if resp := h.handleExecuteCap(map[string]any{"name": "usage_cap"}); resp.Error != "" {
+		t.Fatalf("execute error: %s", resp.Error)
+	}
+
+	ok, failed, err := store.CapUsageCounts()
+	if err != nil {
+		t.Fatalf("counts: %v", err)
+	}
+	if ok != 1 || failed != 2 {
+		t.Fatalf("expected 1 ok / 2 failed, got %d / %d", ok, failed)
+	}
+}
+
+func TestHandleExecuteCap_ArgsHashedNotStored(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs bash on PATH")
+	}
+	h, store := mustHandler(t)
+	los35bUnsandboxed(t, h)
+
+	h.handleSaveCap(map[string]any{
+		"name":         "secret_cap",
+		"description":  "takes an argument",
+		"handler_bash": "echo done",
+		"scope":        "user",
+	})
+	h.handleExecuteCap(map[string]any{
+		"name": "secret_cap",
+		"args": `{"token":"hunter2-should-not-appear"}`,
+	})
+
+	var hash string
+	var argLen int
+	var name string
+	var err error
+	name, hash, argLen, err = store.CapUsageLast()
+	if err != nil {
+		t.Fatalf("last: %v", err)
+	}
+	if name != "secret_cap" || hash == "" || argLen == 0 {
+		t.Fatalf("expected secret_cap with hash+len, got %q %q / %d", name, hash, argLen)
+	}
+	if strings.Contains(hash, "hunter2") {
+		t.Fatal("argument plaintext leaked into args_hash")
+	}
+}
