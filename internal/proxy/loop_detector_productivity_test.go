@@ -67,6 +67,37 @@ func toolUseBlock(name string) map[string]any {
 	return map[string]any{"type": "tool_use", "name": name, "input": map[string]any{}}
 }
 
+// Shell is judged by its command: commits and builds create artifacts, lookups do not.
+func TestHasProductiveTool_ShellByCommand(t *testing.T) {
+	productive := []string{
+		"git commit -m 'x'",
+		"cd /tmp && git push",
+		"make build",
+		"go test ./internal/proxy/",
+		"echo hi > out.txt",
+	}
+	for _, cmd := range productive {
+		msg := toolUseMessage("shell", map[string]any{"command": cmd})
+		if !hasProductiveTool(msg) {
+			t.Errorf("shell %q must count as productive", cmd)
+		}
+	}
+
+	consumptive := []string{
+		"git log --oneline -3",
+		"ls -l",
+		"grep -rn foo .",
+		"cat file.txt",
+		"systemctl --user status yesmem",
+	}
+	for _, cmd := range consumptive {
+		msg := toolUseMessage("shell", map[string]any{"command": cmd})
+		if hasProductiveTool(msg) {
+			t.Errorf("shell %q must NOT count as productive", cmd)
+		}
+	}
+}
+
 // toolUseMessage builds a single assistant message holding one tool_use block.
 func toolUseMessage(name string, input map[string]any) map[string]any {
 	return map[string]any{

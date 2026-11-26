@@ -535,11 +535,73 @@ func hasProductiveTool(msg map[string]any) bool {
 			continue
 		}
 		name, _ := b["name"].(string)
-		if name != "" && productiveTools[strings.ToLower(name)] {
+		if name == "" {
+			continue
+		}
+		lower := strings.ToLower(name)
+		if productiveTools[lower] {
 			return true
+		}
+		// Shell is neither inherently productive nor consumptive: `git commit`
+		// creates something, `git log` does not. Judge by the command.
+		if lower == "shell" || lower == "bash" {
+			if input, ok := b["input"].(map[string]any); ok {
+				if cmd, _ := input["command"].(string); shellCommandIsProductive(cmd) {
+					return true
+				}
+			}
 		}
 	}
 	return false
+}
+
+// mutatingShellCommands are the leading words of shell invocations that create or
+// change state. Everything else (git log, ls, grep, cat, systemctl status) is a
+// lookup and stays consumptive — that is what the idle detector is meant to catch.
+var mutatingShellCommands = []string{
+	"git add", "git commit", "git push", "git merge", "git rebase", "git tag",
+	"git checkout -b", "git stash pop", "git apply", "git cherry-pick",
+	"make", "go build", "go test", "go install", "go generate",
+	"cp ", "mv ", "rm ", "mkdir", "touch", "tee ", "chmod", "chown",
+	"systemctl --user restart", "systemctl --user start", "systemctl --user stop",
+	"npm install", "npm run", "pip install", "pip3 install",
+	"sqlite3 " , "python3 -", "bash -c", "sh -c",
+}
+
+// shellCommandIsProductive reports whether a shell command line mutates state.
+func shellCommandIsProductive(cmd string) bool {
+	cmd = strings.TrimSpace(cmd)
+	if cmd == "" {
+		return false
+	}
+	lower := strings.ToLower(cmd)
+	// Output redirection creates or overwrites a file, whatever the command is.
+	if strings.Contains(lower, " > ") || strings.Contains(lower, ">>") {
+		return true
+	}
+	for _, prefix := range mutatingShellCommands {
+		if strings.Contains(lower, prefix) {
+			// "git commit --dry-run" or "git log --grep=commit" would slip through
+			// Contains, so require the command to actually start a segment with it.
+			for _, segment := range splitShellSegments(lower) {
+				if strings.HasPrefix(segment, prefix) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// splitShellSegments splits a command line into its individual commands.
+func splitShellSegments(cmd string) []string {
+	replacer := strings.NewReplacer("&&", "\n", "||", "\n", ";", "\n", "|", "\n")
+	parts := strings.Split(replacer.Replace(cmd), "\n")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		out = append(out, strings.TrimSpace(p))
+	}
+	return out
 }
 
 // --- Warning formatting ---
