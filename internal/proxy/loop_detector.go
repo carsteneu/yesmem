@@ -15,6 +15,7 @@ const (
 	LoopIdenticalCycle LoopType = iota + 1
 	LoopEditTestError
 	LoopRepeatedError
+	LoopIdleConsumer
 )
 
 // LoopSignal describes a detected loop.
@@ -73,27 +74,57 @@ const (
 	minIdenticalRepetitions = 2
 	minEditTestCycles       = 3
 	minRepeatedErrors       = 3
+	minIdleCycles           = 3 // consecutive assistant turns without productive tools
 	// loopWarningResetAfter is how many consecutive signal-free checks clear the
 	// warning count. One is not enough: a loop whose pattern sits on the window
 	// boundary flickers (signal, no signal, signal) and would never escalate.
 	loopWarningResetAfter = 2
 )
 
+// productiveTools are tools that produce new output / create artifacts.
+// Tools not in this set are considered consumptive (read-only / query / status).
+var productiveTools = map[string]bool{
+	"Write":                   true,
+	"Edit":                    true,
+	"yesmem_remember":         true,
+	"yesmem_scratchpad_write": true,
+	"yesmem_spawn_agent":      true,
+	"yesmem_save_cap":         true,
+	"webfetch":                true,
+	"task":                    true,
+	"yesmem_broadcast":        true,
+	"yesmem_send_to":          true,
+	"yesmem_relay_agent":      true,
+	"yesmem_set_plan":         true,
+	"yesmem_set_config":       true,
+	"yesmem_pin":              true,
+	"yesmem_ingest_docs":      true,
+	"yesmem_schedule":         true,
+}
+
 // DetectLoop checks the message history for real-time loop patterns.
 // Returns the first detected signal, or nil if no loop is found.
 func DetectLoop(messages []any) *LoopSignal {
 	calls := extractRecentToolCalls(messages, loopWindowSize)
-	if len(calls) < 2 {
-		return nil
+
+	if len(calls) >= 2 {
+		if sig := detectIdenticalCycle(calls); sig != nil {
+			return sig
+		}
+		if sig := detectEditTestErrorCycle(calls); sig != nil {
+			return sig
+		}
+		if sig := detectRepeatedError(calls); sig != nil {
+			return sig
+		}
 	}
 
-	if sig := detectIdenticalCycle(calls); sig != nil {
-		return sig
-	}
-	if sig := detectEditTestErrorCycle(calls); sig != nil {
-		return sig
-	}
-	if sig := detectRepeatedError(calls); sig != nil {
+	// Idle consumer loop (no productive tools across turns) is checked LAST, as a
+	// fallback: the specific signals above are more informative, and probing this
+	// one first masked them (identical-cycle and repeated-error fixtures were
+	// reported as consumer-only loops). It works on raw messages, so it does not
+	// depend on the tool-call window being long enough.
+	if sig := detectIdleConsumer(messages); sig != nil {
 		return sig
 	}
 	return nil
@@ -442,12 +473,91 @@ func detectRepeatedError(calls []ToolCallEntry) *LoopSignal {
 	return nil
 }
 
+// detectIdleConsumer scans the message history for consecutive assistant turns
+// that contain no productive tool calls (read-only / status-only responses).
+// This detects the "idle consumer loop": agent responds to watchdog pokes with
+// hybrid_search + status text but never creates, writes, or spawns anything.
+func detectIdleConsumer(messages []any) *LoopSignal {
+	idleTurns := 0
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg, ok := messages[i].(map[string]any)
+		if !ok {
+			continue
+		}
+		role, _ := msg["role"].(string)
+
+		if role == "assistant" {
+			if !hasProductiveTool(msg) {
+				idleTurns++
+				if idleTurns >= minIdleCycles {
+					return &LoopSignal{
+						Type:        LoopIdleConsumer,
+						CycleLen:    1,
+						Repetitions: idleTurns,
+						Description: fmt.Sprintf("consumer-only loop: %d consecutive responses without productive action", idleTurns),
+					}
+				}
+			} else {
+				// A productive turn breaks the idle cycle
+				return nil
+			}
+		}
+		// Skip user messages (tool results, watchdog pokes)
+	}
+	return nil
+}
+
+// hasProductiveTool checks whether an assistant message contains at least one
+// tool_use block whose tool name is in the productiveTools set.
+func hasProductiveTool(msg map[string]any) bool {
+	content, ok := msg["content"].([]any)
+	if !ok {
+		return false
+	}
+	for _, block := range content {
+		b, ok := block.(map[string]any)
+		if !ok {
+			continue
+		}
+		if b["type"] != "tool_use" {
+			continue
+		}
+		name, _ := b["name"].(string)
+		if name != "" && productiveTools[name] {
+			return true
+		}
+	}
+	return false
+}
+
 // --- Warning formatting ---
 
 // FormatLoopWarning generates the warning text injected into the system prompt.
 // warningLevel escalates: 1 = first warning, 2 = ignored first, 3+ = persistent.
 func FormatLoopWarning(signal *LoopSignal, warningLevel int) string {
 	const prefix = "[YesMem Loop Detection]"
+
+	// Idle consumer loop gets its own escalation: direct, urgent, blocks on level 3
+	if signal.Type == LoopIdleConsumer {
+		switch {
+		case warningLevel == 1:
+			return fmt.Sprintf(
+				"%s WARNING: %s. You are responding to pokes with status updates only — no write, edit, spawn, webfetch, or remember calls. This is a consumer loop. Your NEXT response MUST contain at least one productive tool call (Write, Edit, spawn_agent, webfetch, task, yesmem_remember, or yesmem_scratchpad_write).",
+				prefix, signal.Description,
+			)
+		case warningLevel == 2:
+			return fmt.Sprintf(
+				"%s ALERT: consumer loop persists despite warning #1. %s. WAKE UP. You have been responding without creating anything for %d consecutive turns. This is the second warning. Your next response MUST create something new or the proxy will escalate.",
+				prefix, signal.Description, signal.Repetitions,
+			)
+		default:
+			return fmt.Sprintf(
+				"%s FORCED MODE: consumer loop persists (warning #%d). %s. You are now in READ-ONLY RESTRICTION. Your responses are blocked until you produce a response with at least one productive tool call (Write, Edit, spawn_agent, webfetch, task, remember, scratchpad_write). DO NOT respond with status text alone.",
+				prefix, warningLevel, signal.Description,
+			)
+		}
+	}
+
 	switch {
 	case warningLevel <= 1:
 		return fmt.Sprintf(
