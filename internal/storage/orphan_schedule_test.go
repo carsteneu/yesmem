@@ -86,7 +86,9 @@ func TestAutoResumeOrphans_ScheduleSectionIsSuperseded(t *testing.T) {
 	if marker != 0 {
 		t.Fatalf("expected marker cleared, got %d", marker)
 	}
-	if !strings.Contains(progress, "superseded by schedule") {
-		t.Fatalf("progress should name the reason, got %q", progress)
+	if !strings.Contains(progress, "superseded by schedule") &&
+		!strings.Contains(progress, "schedule retired") &&
+		!strings.Contains(progress, "schedule disabled") {
+		t.Fatalf("progress should name the schedule reason, got %q", progress)
 	}
 }

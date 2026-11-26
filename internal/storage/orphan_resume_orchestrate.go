@@ -57,11 +57,11 @@ func (s *Store) AutoResumeOrphans(
 			holder, _ := s.SectionHolderFor(o.ID)
 			var reason string
 			if strings.HasPrefix(o.Section, "sched-") {
-				reason = fmt.Sprintf("superseded by schedule (section %q gets a fresh agent)", o.Section)
+				reason = s.supersededReason(o.Section)
 			} else if holder != "" {
 				reason = fmt.Sprintf("superseded by %s, which holds the section", holder)
 			} else {
-				reason = "superseded"
+				reason = "superseded by a younger agent in the same section"
 			}
 			if err := s.ClearOrphanMarker(o.ID, reason); err != nil {
 				logf("[agent-recovery] cannot close superseded %s: %v", o.ID, err)

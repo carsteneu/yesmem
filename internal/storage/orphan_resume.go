@@ -124,10 +124,16 @@ func (s *Store) OrphanResumeDecision(id string) (OrphanResumeDecision, error) {
 	// A schedule-driven section gets a fresh agent from the next cron run, so a
 	// resumed predecessor would never receive another input (measured with the
 	// proxy request trace on 2026-11-26: reattached, then no request for 5m28s).
-	// This is a heuristic on the section NAME, not a real schedule lookup: the
-	// scheduled_jobs table has no section column and the section only appears in
-	// the job's prompt text. It matches our naming convention, nothing more.
+	// The mapping is the naming convention section = "sched-" + job name; there is
+	// no section column on scheduled_jobs, and the section inside a job's prompt is
+	// free text. Whoever changes the convention must adjust this branch with it.
 	if strings.HasPrefix(section, "sched-") {
+		return OrphanResumeSuperseded, nil
+	}
+
+	// Safety net for the cases where the convention does not hold: a younger agent
+	// in the same section means this row was replaced.
+	if younger, yerr := s.HasYoungerSibling(id); yerr == nil && younger {
 		return OrphanResumeSuperseded, nil
 	}
 
