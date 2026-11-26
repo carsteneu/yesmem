@@ -83,15 +83,27 @@ const (
 
 // productiveTools are tools that produce new output / create artifacts.
 // Tools not in this set are considered consumptive (read-only / query / status).
+//
+// Names must be lower-case: the proxy sees the raw tool_use names exactly as the
+// client sends them, and those are lower-case ("write", "edit", "execute"). The
+// original fork list used "Write"/"Edit" and therefore never matched anything —
+// every turn looked consumptive and the idle loop fired on normal work.
+// "execute" is code mode: one call runs arbitrary code, so it counts as productive.
 var productiveTools = map[string]bool{
-	"Write":                   true,
-	"Edit":                    true,
+	"write":                   true,
+	"edit":                    true,
+	"multiedit":               true,
+	"patch":                   true,
+	"execute":                 true,
+	"task":                    true,
+	"webfetch":                true,
 	"yesmem_remember":         true,
 	"yesmem_scratchpad_write": true,
 	"yesmem_spawn_agent":      true,
 	"yesmem_save_cap":         true,
-	"webfetch":                true,
-	"task":                    true,
+	"yesmem_register_caps":    true,
+	"yesmem_cap_store":        true,
+	"yesmem_execute_cap":      true,
 	"yesmem_broadcast":        true,
 	"yesmem_send_to":          true,
 	"yesmem_relay_agent":      true,
@@ -523,7 +535,7 @@ func hasProductiveTool(msg map[string]any) bool {
 			continue
 		}
 		name, _ := b["name"].(string)
-		if name != "" && productiveTools[name] {
+		if name != "" && productiveTools[strings.ToLower(name)] {
 			return true
 		}
 	}
